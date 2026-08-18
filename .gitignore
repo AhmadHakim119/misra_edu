@@ -1,0 +1,42 @@
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python environments and caches
+.venv/
+venv/
+misra_ocr_env/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Editor, OS, and local agent state
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Uploaded assessment papers contain student PII. Never commit them.
+misra_backend/storage/uploads/*
+!misra_backend/storage/uploads/.gitkeep
+
+# Local OCR/debug artifacts and paper copies
+tmp/
+misra_backend/check_order_*.png
+misra_backend/test_*.png
+misra_backend/test_*.jpg
+misra_backend/test_*.jpeg
+misra_backend/Quiz5_stu_copy.pdf
+misra_ui/
+misra_backend/seed_*.py
+misra-frontend/INSTRUCTIONS.md
+misra-frontend/pages/dashboard-placeholder.html
+
+# Logs and local databases
+*.log
+*.sqlite
+*.sqlite3

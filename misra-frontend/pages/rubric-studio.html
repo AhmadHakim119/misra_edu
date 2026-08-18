@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rubric Studio · MISRA EDU</title>
+  <link rel="icon" type="image/png" href="../assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css">
+</head>
+<body class="workspace-body" data-page="rubric">
+  <main class="workspace-content" id="workspace-content">
+    <header class="page-heading">
+      <div><h1>Rubric Studio</h1><p>Turn instructor intent into granular, versioned grading criteria. AI suggestions always remain drafts until you approve them.</p></div>
+    </header>
+
+    <section class="workspace-card card-pad" style="margin-bottom:20px">
+      <div class="control-row">
+        <div class="field"><label for="rubric-exam">Assessment</label><select class="input select" id="rubric-exam"><option value="">Loading assessments…</option></select></div>
+        <a class="btn btn-secondary" id="upload-link" href="upload.html">Upload papers</a>
+      </div>
+    </section>
+
+    <div class="rubric-layout">
+      <aside class="workspace-card card-pad question-panel">
+        <div class="section-head"><div><h2 class="section-title">Questions</h2><p class="section-copy" id="question-count">Choose an assessment first.</p></div></div>
+        <div class="question-list" id="question-list"></div>
+        <details style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line)">
+          <summary style="cursor:pointer;font-size:13.5px;font-weight:600;color:var(--celadon-700)">Add question</summary>
+          <form id="question-form" style="margin-top:14px">
+            <div class="field"><label for="question-number">Number</label><input class="input" id="question-number" name="question_number" required placeholder="e.g. 2a"></div>
+            <div class="field"><label for="question-text">Question text</label><textarea class="input textarea" id="question-text" name="question_text" required></textarea></div>
+            <div class="field"><label for="question-score">Maximum score</label><input class="input" id="question-score" name="max_score" type="number" min="0.25" step="0.25" required></div>
+            <div class="field"><label for="criterion-title">Initial criterion</label><input class="input" id="criterion-title" name="criterion_title" required placeholder="e.g. Correct method and result"></div>
+            <div class="field"><label for="criterion-description">What earns credit</label><textarea class="input textarea" id="criterion-description" name="criterion_description" required></textarea></div>
+            <button class="btn btn-primary btn-block" type="submit">Add question</button>
+          </form>
+        </details>
+      </aside>
+
+      <section class="rubric-editor" id="rubric-workspace" aria-live="polite"></section>
+    </div>
+  </main>
+  <script src="../js/app.js"></script><script src="../js/api.js?v=11"></script><script src="../js/workspace.js?v=5"></script><script src="../js/rubric-studio.js?v=2"></script>
+</body>
+</html>

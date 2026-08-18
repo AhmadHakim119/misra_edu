@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Review extraction · MISRA EDU</title>
+  <link rel="icon" type="image/png" href="../assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=9">
+</head>
+<body class="workspace-body" data-page="submissions">
+  <main class="workspace-content" id="workspace-content">
+    <header class="page-heading">
+      <div><a class="back-link" href="submissions.html">← Extraction results</a><h1 id="submission-title">Review extraction</h1><p id="submission-meta">Loading persisted OCR results…</p></div>
+      <div class="page-actions">
+        <select class="input select compact-select" id="grade-mode" aria-label="Grading mode"><option value="auto">Adaptive mode</option><option value="text_only">Text only</option><option value="image_text">Image + text</option></select>
+        <button class="btn btn-primary" id="grade-all" type="button" disabled>Grade all answers</button>
+      </div>
+    </header>
+    <div id="submission-error" aria-live="assertive"></div>
+    <details class="workspace-card metadata-editor" id="metadata-editor">
+      <summary>Paper identity and instructor</summary>
+      <form id="metadata-form">
+        <div class="metadata-fields">
+          <div class="field"><label for="student-name">Student name</label><input class="input" id="student-name" maxlength="255" autocomplete="off"></div>
+          <div class="field"><label for="student-number">Student number</label><input class="input" id="student-number" maxlength="100" autocomplete="off"></div>
+          <div class="field"><label for="instructor-name">Instructor name</label><input class="input" id="instructor-name" maxlength="255" autocomplete="off"><span class="field-hint">Updates the instructor displayed for this course.</span></div>
+        </div>
+        <button class="btn btn-secondary" type="submit">Save paper details</button>
+      </form>
+    </details>
+    <section id="readiness-panel" aria-live="polite"><div class="skel" style="height:118px"></div></section>
+    <section id="unmatched-panel" aria-live="polite"></section>
+    <div class="extraction-layout">
+      <aside class="source-viewer workspace-card" id="source-viewer">
+        <div class="source-viewer-head"><div><h2 class="section-title">Original paper</h2><p class="section-copy" id="page-label">Page 1</p></div><div class="page-stepper"><button type="button" id="previous-page" aria-label="Previous page">←</button><button type="button" id="next-page" aria-label="Next page">→</button></div></div>
+        <div class="page-recovery-toolbar" id="page-recovery-toolbar" hidden><div><strong>Missing an answer?</strong><span>Scan this page again for handwriting and selected choices.</span></div><button class="btn btn-secondary" id="reextract-page" type="button" disabled>Re-extract page</button></div>
+        <div class="page-recovery-panel" id="page-recovery-panel" hidden aria-live="polite"></div>
+        <div class="paper-frame"><img id="page-image" src="../assets/logo.png" alt="Original submitted paper page"></div>
+      </aside>
+      <section class="workspace-card extraction-list-panel">
+        <div class="extraction-list-head">
+          <div><h2 class="section-title">Question mapping</h2><p class="section-copy" id="mapping-copy">Checking expected answers and source segments…</p></div>
+          <div class="segmented" aria-label="Filter questions"><button type="button" aria-pressed="true" data-filter="all">All</button><button type="button" aria-pressed="false" data-filter="issues">Issues</button><button type="button" aria-pressed="false" data-filter="missing">Missing</button></div>
+        </div>
+        <div class="mapping-guide"><strong>How to correct a mapping</strong><p>Each segment is one OCR fragment. Choose another question, then press <b>Move segment</b>. Fragments previously assigned from the unmatched list can also be removed as noise. Every completed action is saved immediately.</p></div>
+        <div id="question-mappings" aria-live="polite"><div class="loading-list card-pad"><div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
+      </section>
+    </div>
+  </main>
+  <script src="../js/app.js"></script><script src="../js/api.js?v=9"></script><script src="../js/workspace.js?v=5"></script><script src="../js/submission.js?v=9"></script>
+</body>
+</html>

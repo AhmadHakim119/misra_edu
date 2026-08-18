@@ -1,0 +1,299 @@
+/* ==========================================================================
+   MISRA EDU — Base / Reset / Primitives
+   ========================================================================== */
+
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--porcelain);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.55;
+  min-height: 100dvh;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+img, svg { display: block; max-width: 100%; }
+
+a { color: inherit; text-decoration: none; }
+
+button, input, textarea, select {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+
+button { cursor: pointer; background: none; border: none; }
+
+ul, ol { list-style: none; }
+
+h1, h2, h3, h4 {
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+/* ---- Focus visibility (a11y — never suppressed) ---- */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--r-sm);
+}
+
+/* ---- Layout primitives ---- */
+.wrap {
+  width: 100%;
+  max-width: var(--page-max);
+  margin-inline: auto;
+  padding-inline: 24px;
+}
+
+@media (min-width: 768px) {
+  .wrap { padding-inline: 32px; }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- Typography scale ---- */
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--celadon-700);
+}
+
+.eyebrow::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--celadon-500);
+}
+
+h1.display {
+  font-size: clamp(2.4rem, 4.6vw, 3.8rem);
+  letter-spacing: -0.03em;
+  line-height: 1.03;
+}
+
+.lede {
+  font-size: 1.05rem;
+  color: var(--ink-soft);
+  line-height: 1.65;
+  max-width: 52ch;
+}
+
+/* ---- Buttons (shape-locked: pill for interactive controls) ---- */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 13px 26px;
+  border-radius: var(--r-pill);
+  font-weight: 600;
+  font-size: 15px;
+  white-space: nowrap;
+  transition: transform var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out),
+              background-color var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out);
+}
+
+.btn:active { transform: scale(0.97); }
+
+.btn-primary {
+  background: var(--celadon-600);
+  color: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.btn-primary:hover {
+  background: var(--celadon-700);
+  box-shadow: var(--shadow-md);
+}
+.btn-primary:active { transform: translateY(0) scale(0.97); }
+
+.btn-secondary {
+  background: var(--surface);
+  color: var(--slate-800);
+  border: 1.5px solid var(--line-strong);
+}
+.btn-secondary:hover {
+  border-color: var(--celadon-500);
+  color: var(--celadon-700);
+  background: var(--celadon-50);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--slate-700);
+  padding: 13px 20px;
+}
+.btn-ghost:hover { color: var(--ink); background: var(--surface-sunken); }
+
+.btn-block { width: 100%; }
+
+.btn[disabled] {
+  opacity: 0.55;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+/* ---- Cards ---- */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ---- Form elements ---- */
+.field { display: flex; flex-direction: column; gap: 7px; margin-bottom: 18px; }
+
+.field label {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--slate-800);
+}
+
+.field-hint {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+
+.field-error {
+  font-size: 12.5px;
+  color: var(--danger);
+  display: none;
+  align-items: center;
+  gap: 6px;
+}
+
+.field.is-invalid .field-error { display: flex; }
+.field.is-invalid input {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.input {
+  padding: 13px 16px;
+  border-radius: var(--r-md);
+  border: 1.5px solid var(--line-strong);
+  background: var(--surface-sunken);
+  font-size: 15px;
+  color: var(--ink);
+  transition: border-color var(--dur-fast) var(--ease-out),
+              background-color var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.input::placeholder { color: #726D7C; }
+
+.input:hover { border-color: var(--slate-500); }
+
+.input:focus {
+  outline: none;
+  border-color: var(--celadon-600);
+  background: var(--surface);
+  box-shadow: var(--focus-ring);
+}
+
+.input-group { position: relative; }
+.input-group .input { width: 100%; }
+.input-group-icon {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ink-soft);
+  display: flex;
+}
+
+/* ---- Badge ---- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: var(--r-pill);
+  font-size: 12px;
+  font-weight: 600;
+}
+.badge-celadon { background: var(--celadon-100); color: var(--celadon-900); }
+.badge-slate { background: var(--surface-sunken); color: var(--slate-700); }
+
+/* ---- Divider with label ---- */
+.divider-label {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  margin: 22px 0;
+}
+.divider-label::before,
+.divider-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--line);
+}
+
+/* ---- Skeleton loaders ---- */
+.skel {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border-radius: var(--r-sm);
+}
+.skel::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 20%, var(--line) 50%, transparent 80%);
+  transform: translateX(-100%);
+  animation: skel-shimmer 1.4s linear infinite;
+}
+@keyframes skel-shimmer {
+  to { transform: translateX(100%); }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .btn-primary:hover { transform: translateY(-1px); }
+}
+
+/* ---- Scroll reveal (JS toggles .is-visible) ---- */
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition: opacity var(--dur-slow) var(--ease-out),
+              transform var(--dur-slow) var(--ease-out);
+}
+.reveal.is-visible { opacity: 1; transform: translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { opacity: 1; transform: none; }
+}
+
+/* If JS never runs, content must still be visible. */
+.no-js .reveal { opacity: 1; transform: none; }

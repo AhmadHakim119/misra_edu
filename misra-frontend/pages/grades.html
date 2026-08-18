@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grades · MISRA EDU</title>
+  <link rel="icon" type="image/png" href="../assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=11">
+</head>
+<body class="workspace-body" data-page="grades">
+  <main class="workspace-content" id="workspace-content">
+    <header class="page-heading">
+      <div><h1>Grades</h1><p>Open recorded scores, criterion feedback, source pages, and answers waiting for instructor review.</p></div>
+    </header>
+    <section class="workspace-card card-pad gradebook-controls" aria-label="Grade filters">
+      <div class="field"><label for="grades-exam">Assessment</label><select class="input select" id="grades-exam"><option value="">All assessments</option></select></div>
+      <div class="field"><label for="grades-status">Review status</label><select class="input select" id="grades-status"><option value="all">All recorded grades</option><option value="attention">Needs review</option><option value="clear">Not flagged</option></select></div>
+    </section>
+    <section class="workspace-card gradebook-sheet" aria-labelledby="grades-list-title">
+      <div class="grade-results-head"><div><h2 class="section-title" id="grades-list-title">Recorded results</h2><p class="section-copy" id="grades-list-copy">Loading persisted grades…</p></div></div>
+      <div id="grades-result" aria-live="polite"><div class="loading-list card-pad"><div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
+    </section>
+  </main>
+  <script src="../js/app.js"></script><script src="../js/api.js?v=10"></script><script src="../js/workspace.js?v=5"></script><script src="../js/grades.js?v=1"></script>
+</body>
+</html>

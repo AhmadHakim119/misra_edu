@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Instructor overview · MISRA EDU</title>
+  <link rel="icon" type="image/png" href="../assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/tokens.css">
+  <link rel="stylesheet" href="../css/base.css">
+  <link rel="stylesheet" href="../css/workspace.css">
+</head>
+<body class="workspace-body" data-page="dashboard">
+  <main class="workspace-content" id="workspace-content">
+    <header class="page-heading">
+      <div>
+        <h1>Instructor overview</h1>
+        <p>Live assessment activity, rubric readiness, and review work from the MISRA grading engine.</p>
+      </div>
+      <div class="page-actions">
+        <a class="btn btn-secondary" href="rubric-studio.html">Open Rubric Studio</a>
+        <a class="btn btn-primary" href="upload.html">Upload papers</a>
+      </div>
+    </header>
+
+    <section class="stats-grid" aria-label="Assessment summary" id="dashboard-stats">
+      <div class="workspace-card stat"><div class="skel" style="height:54px"></div></div>
+      <div class="workspace-card stat"><div class="skel" style="height:54px"></div></div>
+      <div class="workspace-card stat"><div class="skel" style="height:54px"></div></div>
+      <div class="workspace-card stat"><div class="skel" style="height:54px"></div></div>
+    </section>
+
+    <div class="dashboard-grid">
+      <section class="workspace-card card-pad">
+        <div class="section-head">
+          <div><h2 class="section-title">Recent assessments</h2><p class="section-copy">Select an assessment to manage its rubric or upload work.</p></div>
+          <a class="link-button" href="assessments.html">View all</a>
+        </div>
+        <div id="recent-assessments" class="loading-list" aria-live="polite">
+          <div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div>
+        </div>
+      </section>
+
+      <aside class="stack">
+        <section class="workspace-card card-pad">
+          <div class="section-head"><div><h2 class="section-title">Review attention</h2><p class="section-copy">Answers the system has routed to an instructor.</p></div></div>
+          <div id="review-summary" aria-live="polite"><div class="skel" style="height:108px"></div></div>
+        </section>
+        <section class="workspace-card card-pad">
+          <h2 class="section-title">Recommended workflow</h2>
+          <p class="section-copy" style="margin-bottom:15px">Approve a granular rubric before grading a new batch. This keeps evaluation snapshots traceable.</p>
+          <a class="btn btn-secondary btn-block" href="rubric-studio.html">Review rubrics</a>
+        </section>
+      </aside>
+    </div>
+  </main>
+  <script src="../js/app.js"></script>
+  <script src="../js/api.js?v=3"></script>
+  <script src="../js/workspace.js?v=5"></script>
+  <script src="../js/dashboard.js"></script>
+</body>
+</html>

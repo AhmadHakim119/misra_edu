@@ -1,0 +1,78 @@
+/* ==========================================================================
+   MISRA EDU — Design Tokens
+   Palette extracted exactly from the product logo. No approximated hexes.
+   ========================================================================== */
+
+:root {
+  /* ---- Logo palette (exact) ---- */
+  --porcelain:      #F8F9F2;
+  --ivory:          #F8FBF2;
+  --celadon:        #B1D2BB;
+  --rosy-granite:   #777382;
+  --dim-grey:       #757180;
+
+  /* ---- Derived neutrals (same hue family, generated for contrast/rhythm) ---- */
+  --ink:            #2E2C33;   /* body text — deepened dim-grey, not pure black */
+  --ink-soft:       #5B5764;   /* secondary text */
+  --line:           #E4E5DD;   /* hairline borders — porcelain tinted toward granite */
+  --line-strong:    #D3D5C9;
+  --surface:        #FFFFFF;   /* card surface */
+  --surface-sunken: #F1F3EA;   /* recessed panels, inputs */
+
+  /* ---- Celadon ramp (accent — the ONE accent color for this project) ---- */
+  --celadon-50:     #EEF5F0;
+  --celadon-100:    #DCEBE1;
+  --celadon-300:    #B1D2BB;   /* = logo celadon */
+  --celadon-500:    #7FAE8E;   /* accessible mid-tone for text-on-light */
+  --celadon-600:    #567F65;   /* primary button fill (4.5:1+ with white text) */
+  --celadon-700:    #4C7259;   /* button hover / pressed */
+  --celadon-900:    #2E4436;   /* deep accent for dark contexts */
+
+  /* ---- Slate ramp (granite/dim-grey family — used for chrome, nav, footer) ---- */
+  --slate-500:      var(--dim-grey);
+  --slate-600:      #655F6E;
+  --slate-700:      #524D5A;
+  --slate-800:      #423E48;
+  --slate-900:      #302D35;
+
+  /* ---- Semantic ---- */
+  --danger:         #B3564A;   /* rotated from celadon-complement, muted, not saturated red */
+  --danger-bg:      #F7EBE9;
+  --focus-ring:      0 0 0 3px rgba(98, 143, 113, 0.35);
+
+  /* ---- Radii (locked scale: soft system throughout) ---- */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+
+  /* ---- Shadows (tinted toward slate hue, never pure black) ---- */
+  --shadow-sm: 0 1px 2px rgba(48, 45, 53, 0.06), 0 1px 1px rgba(48, 45, 53, 0.04);
+  --shadow-md: 0 6px 20px rgba(48, 45, 53, 0.08), 0 2px 6px rgba(48, 45, 53, 0.05);
+  --shadow-lg: 0 20px 48px rgba(48, 45, 53, 0.14), 0 4px 12px rgba(48, 45, 53, 0.06);
+  --shadow-focus: var(--focus-ring);
+
+  /* ---- Type scale ---- */
+  --font-sans: 'Outfit', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+
+  /* ---- Motion ---- */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 150ms;
+  --dur-base: 280ms;
+  --dur-slow: 520ms;
+
+  /* ---- Layout ---- */
+  --page-max: 1180px;
+  --nav-h: 76px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

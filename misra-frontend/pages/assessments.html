@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Assessments · MISRA EDU</title>
+  <link rel="icon" type="image/png" href="../assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=7">
+</head>
+<body class="workspace-body" data-page="assessments">
+  <main class="workspace-content" id="workspace-content">
+    <header class="page-heading"><div><h1>Assessments</h1><p>Every assessment stored in MISRA, with live question, submission, and review counts.</p></div><div class="page-actions"><a class="btn btn-primary" href="#new-assessment">New assessment</a></div></header>
+    <div class="setup-stack">
+    <details class="workspace-card suggestion-panel" id="new-course">
+      <summary>Create a course</summary>
+      <p class="section-copy setup-copy">Add a real course to this workspace. Until sign-in is connected, institution and instructor ownership are inherited from one of your existing courses.</p>
+      <form id="course-form">
+        <div class="suggestion-fields">
+          <div class="field wide"><label for="course-owner">Ownership profile</label><select class="input select" id="course-owner" name="owner_course_id" required><option value="">Loading existing courses…</option></select><span class="field-hint">Choose any course belonging to the same institution and instructor.</span></div>
+          <div class="field"><label for="course-code">Course code</label><input class="input" id="course-code" name="course_code" maxlength="50" required placeholder="CS2071" autocomplete="off"></div>
+          <div class="field"><label for="course-term">Term</label><input class="input" id="course-term" name="term" maxlength="50" placeholder="Spring 2022" autocomplete="off"></div>
+          <div class="field wide"><label for="course-title">Course title</label><input class="input" id="course-title" name="title" maxlength="255" required placeholder="Database Systems" autocomplete="off"></div>
+          <div class="field wide"><label for="course-instructor">Instructor name</label><input class="input" id="course-instructor" name="instructor_name" maxlength="255" required placeholder="Zain Balfagih" autocomplete="name"></div>
+        </div>
+        <button class="btn btn-primary" type="submit">Create course</button>
+      </form>
+    </details>
+    <details class="workspace-card suggestion-panel" id="new-assessment">
+      <summary style="cursor:pointer;font-weight:600">Create an assessment</summary>
+      <p class="section-copy" style="margin:7px 0 16px">Choose an existing course. Institution ownership is inherited from that persisted course.</p>
+      <form id="assessment-form">
+        <div class="suggestion-fields">
+          <div class="field"><label for="assessment-course">Course</label><select class="input select" id="assessment-course" name="course_id" required><option value="">Loading courses…</option></select></div>
+          <div class="field"><label for="assessment-language">Language</label><select class="input select" id="assessment-language" name="language"><option value="en">English</option><option value="ar">Arabic</option><option value="mixed">Mixed</option></select></div>
+          <div class="field wide"><label for="assessment-title">Assessment title</label><input class="input" id="assessment-title" name="title" required placeholder="e.g. Numerical Analysis Midterm"></div>
+        </div>
+        <button class="btn btn-primary" type="submit">Create assessment</button>
+      </form>
+    </details>
+    </div>
+    <section class="workspace-card" aria-labelledby="assessment-list-title">
+      <div class="card-pad section-head" style="margin:0"><div><h2 class="section-title" id="assessment-list-title">Assessment catalog</h2><p class="section-copy">Open Rubric Studio before grading a new assessment.</p></div></div>
+      <div style="overflow-x:auto" id="assessment-table"><div class="card-pad loading-list"><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
+    </section>
+  </main>
+  <script src="../js/app.js"></script><script src="../js/api.js?v=7"></script><script src="../js/workspace.js?v=5"></script><script src="../js/assessments.js?v=7"></script>
+</body>
+</html>

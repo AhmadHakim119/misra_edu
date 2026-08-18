@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MISRA EDU · Multimodal Intelligent Secure Assessment</title>
+<meta name="description" content="MISRA EDU is a thesis prototype for OCR extraction, rubric-based grading, multimodal evidence review, and AI-instructor agreement evaluation.">
+<link rel="icon" type="image/png" href="assets/logo.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/tokens.css">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/layout.css">
+<link rel="stylesheet" href="css/landing.css">
+</head>
+<body data-page="home">
+
+<a class="visually-hidden" href="#main">Skip to content</a>
+
+<!-- ============ NAV ============ -->
+<header class="nav">
+  <div class="nav-inner">
+    <a class="brand" href="index.html">
+      <img class="brand-mark" src="assets/logo-transparent.png" alt="MISRA EDU">
+      <span class="brand-word">MISRA <span>EDU</span></span>
+    </a>
+
+    <nav class="nav-links" aria-label="Primary">
+      <a class="nav-link" href="#platform">Platform</a>
+      <a class="nav-link" href="#how-it-works">How it works</a>
+      <a class="nav-link" href="#security">Data handling</a>
+      <a class="nav-link" href="#faq">FAQ</a>
+    </nav>
+
+    <div class="nav-actions">
+      <a class="btn btn-ghost" href="pages/dashboard.html">Open workspace</a>
+      <a class="btn btn-primary" href="pages/assessments.html">Set up assessment</a>
+      <button class="nav-menu-btn" data-menu-toggle aria-label="Open menu" aria-expanded="false">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="mobile-drawer" data-mobile-drawer>
+    <a class="nav-link" href="#platform">Platform</a>
+    <a class="nav-link" href="#how-it-works">How it works</a>
+    <a class="nav-link" href="#security">Data handling</a>
+    <a class="nav-link" href="#faq">FAQ</a>
+    <div class="mobile-drawer-actions">
+      <a class="btn btn-secondary btn-block" href="pages/dashboard.html">Open workspace</a>
+      <a class="btn btn-primary btn-block" href="pages/assessments.html">Set up assessment</a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+  <!-- ============ HERO ============ -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div class="hero-copy">
+        <span class="eyebrow">Multimodal grading, human oversight</span>
+        <h1 class="display">Handwritten exams, graded <em>fairly</em>, explained clearly.</h1>
+        <p class="lede">MISRA EDU reads a student's handwriting, whether in Arabic, English, or mixed STEM notation, matches it to your rubric, and shows its reasoning for every point awarded.</p>
+
+        <div class="hero-ctas">
+          <a class="btn btn-primary" href="pages/dashboard.html">Open instructor workspace</a>
+          <a class="btn btn-secondary" href="#how-it-works">See how it works</a>
+        </div>
+
+        <div class="hero-trust">
+          <div class="hero-trust-icons">
+            <span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Local thesis prototype</span>
+            <span><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6 9 17l-5-5"/></svg>Every score is reviewable</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-visual" aria-hidden="true">
+        <div class="hv-card hv-card-source">
+          <div class="hv-doc-line w-40" style="background:var(--celadon-100)"></div>
+          <div class="hv-doc-line w-90"></div>
+          <div class="hv-doc-line w-70"></div>
+          <div class="hv-doc-line w-90"></div>
+          <div class="hv-doc-line w-50"></div>
+        </div>
+
+        <div class="hv-card hv-card-main">
+          <div class="badge badge-celadon" style="margin-bottom:14px">Question 3a</div>
+          <div class="hv-doc-line w-90"></div>
+          <div class="hv-doc-line w-70"></div>
+          <div class="hv-tag-row">
+            <span class="badge badge-slate">Clear legibility</span>
+            <span class="badge badge-celadon">LaTeX detected</span>
+          </div>
+        </div>
+
+        <div class="hv-card hv-card-score">
+          <div class="hv-score-row">
+            <div class="hv-score-ring">9/10</div>
+            <div>
+              <div class="hv-score-label">Rubric match</div>
+              <div class="hv-score-value">Correct method, minor rounding</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="hv-badge-float">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 4 5v6c0 5 3.4 9 8 11 4.6-2 8-6 8-11V5l-8-3Z"/></svg>
+          Illustrative confidence 97%
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ TRUST STRIP ============ -->
+  <div class="trust-strip">
+    <div class="wrap">
+      <p class="trust-strip-label">Evaluated with real answer sets across technical subjects</p>
+      <div class="trust-strip-row">
+        <svg viewBox="0 0 120 26" width="110"><text x="0" y="19" font-family="Outfit, sans-serif" font-weight="600" font-size="17" fill="currentColor">Mathematics</text></svg>
+        <svg viewBox="0 0 120 26" width="100"><text x="0" y="19" font-family="Outfit, sans-serif" font-weight="600" font-size="17" fill="currentColor">Physics</text></svg>
+        <svg viewBox="0 0 120 26" width="110"><text x="0" y="19" font-family="Outfit, sans-serif" font-weight="600" font-size="17" fill="currentColor">Discrete math</text></svg>
+        <svg viewBox="0 0 150 26" width="140"><text x="0" y="19" font-family="Outfit, sans-serif" font-weight="600" font-size="17" fill="currentColor">Database systems</text></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PLATFORM / BENTO ============ -->
+  <section class="section" id="platform">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="eyebrow">Platform</span>
+        <h2>One pipeline, from scanned page to reviewed result.</h2>
+        <p class="lede">Every step is visible to the instructor, not just the final number.</p>
+      </div>
+
+      <div class="bento">
+        <div class="bento-cell span-4 tone-slate reveal">
+          <div class="bento-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h7M7 16h4"/></svg>
+          </div>
+          <h3>Reads handwriting in Arabic, English, and mixed notation</h3>
+          <p>Equations render as clean LaTeX. Code-switched sentences stay intact instead of being flattened into one language.</p>
+          <div class="bento-visual">
+            <div class="bento-bar" style="height:38%"></div>
+            <div class="bento-bar" style="height:70%"></div>
+            <div class="bento-bar" style="height:52%"></div>
+            <div class="bento-bar" style="height:88%"></div>
+            <div class="bento-bar" style="height:64%"></div>
+            <div class="bento-bar" style="height:44%"></div>
+          </div>
+        </div>
+
+        <div class="bento-cell span-2 tone-celadon reveal">
+          <div class="bento-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2 4 5v6c0 5 3.4 9 8 11 4.6-2 8-6 8-11V5l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg>
+          </div>
+          <h3>Confidence, not just a score</h3>
+          <p>Every answer carries a confidence signal, so low-certainty cases route to a person before a grade is final.</p>
+        </div>
+
+        <div class="bento-cell span-3 tone-surface reveal">
+          <div class="bento-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          </div>
+          <h3>Criterion-by-criterion grading</h3>
+          <p>Points are awarded against the rubric you write, one criterion at a time, with a reason attached to each.</p>
+        </div>
+
+        <div class="bento-cell span-3 tone-surface reveal">
+          <div class="bento-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 4v16h16"/><path d="M8 15l3-4 3 3 5-6"/></svg>
+          </div>
+          <h3>Built for real scan batches</h3>
+          <p>Upload a full class set as one PDF. Page-level sources make every extracted answer traceable and correctable.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ HOW IT WORKS ============ -->
+  <section class="section" id="how-it-works">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <span class="eyebrow">Process</span>
+        <h2>From paper to reviewed result in four steps.</h2>
+      </div>
+
+      <div class="pipeline">
+        <div class="pipeline-step reveal">
+          <div class="pipeline-num">1</div>
+          <div class="pipeline-body">
+            <h3>Upload the exam batch</h3>
+            <p>Drop in a single scanned PDF covering an entire class, or individual student files. Batches split automatically by page count per student.</p>
+          </div>
+        </div>
+        <div class="pipeline-step reveal">
+          <div class="pipeline-num">2</div>
+          <div class="pipeline-body">
+            <h3>Extraction runs page by page</h3>
+            <p>Handwritten text, equations, and student identity fields are extracted and matched to the correct question, regardless of physical page order.</p>
+          </div>
+        </div>
+        <div class="pipeline-step reveal">
+          <div class="pipeline-num">3</div>
+          <div class="pipeline-body">
+            <h3>Rubric grading with reasoning</h3>
+            <p>Each answer is scored criterion by criterion against the rubric you built, with written reasoning attached to the result.</p>
+          </div>
+        </div>
+        <div class="pipeline-step reveal">
+          <div class="pipeline-num">4</div>
+          <div class="pipeline-body">
+            <h3>Instructor review and resolution</h3>
+            <p>Review flags and grading disagreements stay visible. The instructor can approve or override a result and record the human label for evaluation.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ STATS ============ -->
+  <section class="section" style="padding-top:0">
+    <div class="wrap">
+      <div class="stat-strip reveal">
+        <div class="stat-cell">
+          <div class="stat-value">2</div>
+          <div class="stat-label">Languages read natively</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value">3</div>
+          <div class="stat-label">Confidence signals per answer</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value">V2</div>
+          <div class="stat-label">Versioned rubric schema</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-value">Human</div>
+          <div class="stat-label">Final review authority</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ DATA HANDLING ============ -->
+  <section class="section" id="security">
+    <div class="wrap">
+      <div class="security-panel reveal">
+        <div class="security-copy">
+          <span class="eyebrow">Prototype boundary</span>
+          <h2>Clear about what is protected today—and what comes next.</h2>
+          <p>MISRA currently runs as a trusted local thesis prototype. Authentication and production deployment controls remain explicit future work.</p>
+        </div>
+
+        <div class="security-list">
+          <div class="security-item">
+            <div class="security-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+            <div><h4>Trusted local access</h4><p>The current workspace is intended for a controlled development machine, not an internet-facing deployment.</p></div>
+          </div>
+          <div class="security-item">
+            <div class="security-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2 4 5v6c0 5 3.4 9 8 11 4.6-2 8-6 8-11V5l-8-3Z"/></svg></div>
+            <div><h4>Private repository hygiene</h4><p>Uploaded papers and local environment secrets are excluded from Git; only an empty upload placeholder is versioned.</p></div>
+          </div>
+          <div class="security-item">
+            <div class="security-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
+            <div><h4>Every identity match is reviewable</h4><p>Uncertain OCR of a student's name or ID is never auto-confirmed. A person resolves it.</p></div>
+          </div>
+          <div class="security-item">
+            <div class="security-item-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20V10M18 20V4M6 20v-4"/></svg></div>
+            <div><h4>Grading lineage</h4><p>Grading runs retain their mode, model, prompt, rubric version, score, confidence, and response for later comparison.</p></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PROJECT PRINCIPLE ============ -->
+  <section class="section">
+    <div class="wrap">
+      <div class="quote-block reveal">
+        <div class="quote-mark">&ldquo;</div>
+        <p class="quote-text">A useful grading system should show why a point was awarded, preserve the evidence it used, and make instructor correction part of the workflow.</p>
+        <div class="quote-attrib">
+          <div class="quote-avatar">M</div>
+          <div>
+            <div class="quote-name">MISRA-EDU</div>
+            <div class="quote-role">Project design principle</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FAQ ============ -->
+  <section class="section" id="faq">
+    <div class="wrap" style="max-width:760px">
+      <div class="section-head centered reveal">
+        <span class="eyebrow">FAQ</span>
+        <h2>Common questions</h2>
+      </div>
+
+      <div class="faq-list reveal">
+        <details class="faq-item">
+          <summary>Is authentication available?</summary>
+          <p>Not yet. The current build is a local instructor prototype. Real account authentication and institution-level authorization are planned before any public deployment.</p>
+        </details>
+        <details class="faq-item">
+          <summary>What languages does grading support?</summary>
+          <p>Arabic, English, and mixed Arabic/English answers, including STEM notation rendered as LaTeX.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Can an instructor override a grade?</summary>
+          <p>Yes. An instructor can approve or override an AI result, add review notes, and preserve the human decision as an evaluation label.</p>
+        </details>
+        <details class="faq-item">
+          <summary>Where is student data stored?</summary>
+          <p>Papers are stored on the local application machine and grading records are stored in MariaDB. Selected page content is sent to Gemini for OCR and grading, so the prototype should use only approved test data.</p>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ FINAL CTA ============ -->
+  <section class="section" style="padding-top:0">
+    <div class="wrap">
+      <div class="cta-band reveal">
+        <h2>Ready to explore the working prototype?</h2>
+        <p>Open the instructor workspace or create an assessment using the local development setup.</p>
+        <div class="cta-actions">
+          <a class="btn btn-primary" href="pages/dashboard.html">Open workspace</a>
+          <a class="btn btn-ghost" href="pages/assessments.html">Set up assessment</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<!-- ============ FOOTER ============ -->
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div>
+        <div class="footer-brand-word">MISRA <span>EDU</span></div>
+        <p class="footer-desc">Multimodal Intelligent Secure Assessment. Rubric-based grading for handwritten exams, built for Arabic and English classrooms.</p>
+      </div>
+      <div>
+        <div class="footer-col-title">Product</div>
+        <div class="footer-links">
+          <a href="#platform">Platform</a>
+          <a href="#how-it-works">How it works</a>
+          <a href="#security">Security</a>
+        </div>
+      </div>
+      <div>
+        <div class="footer-col-title">Account</div>
+        <div class="footer-links">
+          <a href="pages/login.html">Sign in</a>
+          <a href="pages/signup.html">Create account</a>
+        </div>
+      </div>
+      <div>
+        <div class="footer-col-title">Legal</div>
+        <div class="footer-links">
+          <a href="#">Privacy policy</a>
+          <a href="#">Terms of service</a>
+          <a href="#">Data processing</a>
+        </div>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>&copy; 2026 MISRA EDU. All rights reserved.</span>
+      <div class="footer-bottom-links">
+        <a href="#">Status</a>
+        <a href="#">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<style>
+.faq-list { display: flex; flex-direction: column; gap: 12px; }
+.faq-item {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: 18px 20px;
+}
+.faq-item summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 15px;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.faq-item summary::-webkit-details-marker { display: none; }
+.faq-item summary::after {
+  content: '+';
+  font-size: 20px;
+  color: var(--celadon-600);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.faq-item[open] summary::after { transform: rotate(45deg); }
+.faq-item p { margin-top: 12px; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
+</style>
+
+<script src="js/app.js"></script>
+</body>
+</html>
