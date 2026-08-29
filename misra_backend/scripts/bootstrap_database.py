@@ -1,8 +1,8 @@
 """Create or verify the current MISRA database schema.
 
 For a new empty database, run with --create. For an existing database, the
-script performs a read-only schema check and points to migrations_manual when
-an older column or table is missing. It never replays migrations blindly.
+script performs a read-only schema check and reports missing structures. It
+never changes an existing database unless an explicit upgrade script is run.
 """
 
 from __future__ import annotations
@@ -73,8 +73,8 @@ def main() -> int:
             print(f"  - {table_name}: {', '.join(columns)}")
 
     print(
-        "Existing databases must apply the relevant SQL files in "
-        "migrations_manual/ in numeric order. Back up the database first."
+        "Existing databases must run the relevant explicit upgrade script. "
+        "Back up the database first."
     )
     return 1
 

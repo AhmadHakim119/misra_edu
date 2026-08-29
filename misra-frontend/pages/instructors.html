@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Instructor accounts · MISRA EDU</title>
+  <link rel="icon" type="image/png" href="../assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=14">
+</head>
+<body class="workspace-body" data-page="instructors" data-page-title="Instructor accounts">
+  <main class="workspace-content" id="workspace-content">
+    <header class="page-heading"><div><h1>Instructor accounts</h1><p>Create and manage access for instructors in your institution. Public account registration remains disabled.</p></div><div class="page-actions"><a class="btn btn-primary" href="#create-instructor">Add instructor</a></div></header>
+    <details class="workspace-card suggestion-panel instructor-create" id="create-instructor">
+      <summary>Create an instructor account</summary>
+      <p class="section-copy setup-copy">Set a temporary password, then share it through a secure channel. MISRA requires the instructor to replace it after signing in.</p>
+      <form id="create-instructor-form" novalidate>
+        <div class="suggestion-fields">
+          <div class="field"><label for="instructor-name">Full name</label><input class="input" id="instructor-name" name="full_name" maxlength="255" autocomplete="name" required></div>
+          <div class="field"><label for="instructor-email">Institutional email</label><input class="input" type="email" id="instructor-email" name="email" maxlength="255" autocomplete="email" required></div>
+          <div class="field"><label for="instructor-password">Temporary password</label><input class="input" type="password" id="instructor-password" name="temporary_password" minlength="10" maxlength="1024" autocomplete="new-password" required></div>
+          <div class="field"><label for="instructor-password-confirm">Confirm temporary password</label><input class="input" type="password" id="instructor-password-confirm" name="confirm_password" minlength="10" maxlength="1024" autocomplete="new-password" required></div>
+        </div>
+        <p class="form-message" id="create-instructor-message" aria-live="polite"></p>
+        <button class="btn btn-primary" type="submit">Create instructor</button>
+      </form>
+    </details>
+    <section class="workspace-card instructor-directory" aria-labelledby="instructor-list-title">
+      <div class="card-pad section-head"><div><h2 class="section-title" id="instructor-list-title">Institution directory</h2><p class="section-copy" id="instructor-list-copy">Loading instructor accounts…</p></div></div>
+      <div id="instructor-list" aria-live="polite"><div class="loading-list card-pad"><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
+    </section>
+  </main>
+  <script src="../js/app.js"></script><script src="../js/api.js?v=14"></script><script src="../js/workspace.js?v=11"></script><script src="../js/instructors.js?v=1"></script>
+</body>
+</html>

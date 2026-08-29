@@ -3,8 +3,10 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Answer, GradingRun, ReviewLabel
+from models import Answer, GradingRun, ReviewLabel, Submission, User
 from schemas.review_input import ReviewResolutionRequest
+from services.auth_dependencies import require_instructor
+from services.audit_service import record_audit_event
 
 router = APIRouter(prefix="/api", tags=["review"])
 
@@ -14,8 +16,17 @@ def resolve_review(
     answer_id: str,
     request: ReviewResolutionRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
 ):
-    answer = db.query(Answer).filter(Answer.id == answer_id).first()
+    answer = (
+        db.query(Answer)
+        .join(Submission, Submission.id == Answer.submission_id)
+        .filter(
+            Answer.id == answer_id,
+            Submission.institution_id == user.institution_id,
+        )
+        .first()
+    )
     if not answer:
         raise HTTPException(status_code=404, detail="Answer not found")
 
@@ -83,6 +94,26 @@ def resolve_review(
             detail=f"human_score must be between 0 and {max_score}.",
         )
 
+    human_criteria_scores = (
+        [item.model_dump() for item in request.human_criteria_scores]
+        if request.human_criteria_scores
+        else None
+    )
+    if human_criteria_scores:
+        expected_criteria = {
+            str(item.get("criterion_id")): float(item.get("max_points") or 0)
+            for item in (ai_criteria_scores_snapshot or [])
+        }
+        supplied_criteria = {
+            item["criterion_id"]: float(item["max_points"])
+            for item in human_criteria_scores
+        }
+        if expected_criteria and supplied_criteria != expected_criteria:
+            raise HTTPException(
+                status_code=422,
+                detail="Instructor criterion scores must match the graded rubric criteria.",
+            )
+
     if request.apply_as_current:
         if request.action == "override":
             answer.teacher_override_score = human_score
@@ -93,6 +124,7 @@ def resolve_review(
 
         answer.teacher_notes = request.reviewer_notes
         answer.needs_review = False
+        answer.reviewed_by = user.id
         answer.reviewed_at = func.now()
 
     if selected_run:
@@ -127,11 +159,28 @@ def resolve_review(
     label.ai_needs_review_snapshot = ai_needs_review_snapshot
     label.ai_criteria_scores_snapshot = ai_criteria_scores_snapshot
     label.was_review_warranted = request.was_review_warranted
-    label.human_criteria_scores = request.human_criteria_scores
+    label.human_criteria_scores = human_criteria_scores
     label.reviewer_notes = request.reviewer_notes
     label.label_source = request.label_source
+    label.labeled_by = user.id
     label.rubric_version_id = (
         selected_run.rubric_version_id if selected_run else None
+    )
+
+    record_audit_event(
+        db,
+        institution_id=user.institution_id,
+        actor_id=user.id,
+        action="grade_overridden" if request.action == "override" else "grade_approved",
+        entity_type="answer",
+        entity_id=answer.id,
+        details={
+            "submission_id": answer.submission_id,
+            "grading_run_id": selected_run.id if selected_run else None,
+            "ai_score": ai_score,
+            "human_score": human_score,
+            "apply_as_current": request.apply_as_current,
+        },
     )
 
     db.commit()

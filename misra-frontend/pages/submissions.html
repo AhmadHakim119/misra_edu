@@ -6,7 +6,7 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=3">
+  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=13">
 </head>
 <body class="workspace-body" data-page="submissions">
   <main class="workspace-content" id="workspace-content">
@@ -18,10 +18,11 @@
       <div class="submission-filters">
         <div class="field"><label for="submission-exam">Assessment</label><select class="input select" id="submission-exam"><option value="">All assessments</option></select></div>
         <div class="field"><label for="submission-readiness">Mapping status</label><select class="input select" id="submission-readiness"><option value="all">All results</option><option value="attention">Action required</option><option value="ready">Ready to grade</option></select></div>
+        <div class="field"><label for="submission-identity">Student identity</label><select class="input select" id="submission-identity"><option value="all">All identities</option><option value="attention">Missing name or ID</option><option value="complete">Name and ID recorded</option></select></div>
       </div>
       <div id="submissions-result" aria-live="polite"><div class="loading-list"><div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
     </section>
   </main>
-  <script src="../js/app.js"></script><script src="../js/api.js?v=3"></script><script src="../js/workspace.js?v=5"></script><script src="../js/submissions.js?v=3"></script>
+  <script src="../js/app.js"></script><script src="../js/api.js?v=15"></script><script src="../js/workspace.js?v=11"></script><script src="../js/submissions.js?v=5"></script>
 </body>
 </html>

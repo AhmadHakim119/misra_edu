@@ -1,16 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from fastapi import BackgroundTasks
-from database import SessionLocal
-from services.ocr_service import process_submission
 from database import get_db
-from models import Batch, Submission
+from models import Batch, Submission, User
+from services.auth_dependencies import require_instructor
+from services.audit_service import record_audit_event
+from services.job_queue_service import create_processing_job, job_to_dict
 
 router = APIRouter(prefix="/api", tags=["batches"])
 
 @router.get("/batches/{batch_id}")
-async def get_batch_status(batch_id: str, db: Session = Depends(get_db)):
-    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+async def get_batch_status(
+    batch_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    batch = db.query(Batch).filter(
+        Batch.id == batch_id,
+        Batch.institution_id == user.institution_id,
+    ).first()
     if not batch:
         raise HTTPException(status_code=404, detail=f"Batch {batch_id} not found")
 
@@ -26,32 +33,16 @@ async def get_batch_status(batch_id: str, db: Session = Depends(get_db)):
         "submissions": submissions
     }
 
-def _retry_failed_in_background(batch_id: str, submission_ids: list[str]):
-    db = SessionLocal()
-    try:
-        batch = db.query(Batch).filter(Batch.id == batch_id).first()
-        for submission_id in submission_ids:
-            try:
-                process_submission(submission_id, db)
-                batch.completed_count += 1
-                batch.failed_count -= 1
-            except Exception:
-                pass  # still failed; counts already reflect this from the original run
-            db.commit()
-
-        batch.status = "completed" if batch.failed_count == 0 else "completed_with_errors"
-        db.commit()
-    finally:
-        db.close()
-
-
 @router.post("/batches/{batch_id}/retry")
 async def retry_failed_submissions(
     batch_id: str,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
 ):
-    batch = db.query(Batch).filter(Batch.id == batch_id).first()
+    batch = db.query(Batch).filter(
+        Batch.id == batch_id,
+        Batch.institution_id == user.institution_id,
+    ).first()
     if not batch:
         raise HTTPException(status_code=404, detail=f"Batch {batch_id} not found")
 
@@ -72,6 +63,30 @@ async def retry_failed_submissions(
     batch.status = "processing"
     db.commit()
 
-    background_tasks.add_task(_retry_failed_in_background, batch_id, submission_ids)
+    job, created = create_processing_job(
+        db,
+        institution_id=batch.institution_id,
+        requested_by=user.id,
+        job_type="ocr_batch",
+        batch_id=batch.id,
+        progress_total=len(submission_ids),
+        payload={"submission_ids": submission_ids},
+    )
 
-    return {"message": "Retry started", "retry_count": len(submission_ids)}
+    if created:
+        record_audit_event(
+            db,
+            institution_id=batch.institution_id,
+            actor_id=user.id,
+            action="batch_retry_queued",
+            entity_type="batch",
+            entity_id=batch.id,
+            details={"job_id": job.id, "submission_count": len(submission_ids)},
+        )
+        db.commit()
+
+    return {
+        "message": "Retry queued",
+        "retry_count": len(submission_ids),
+        "job": job_to_dict(job),
+    }

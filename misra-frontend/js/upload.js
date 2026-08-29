@@ -23,12 +23,16 @@
     return `submission.html?id=${encodeURIComponent(submissionId)}`;
   }
 
-  function renderExtractionProgress(submissionId, status) {
-    const statusLabel = status === 'extracting' ? 'Extracting pages…' : 'Waiting to start OCR…';
+  function renderJobProgress(job, context) {
+    const current = Number(job.progress_current || 0);
+    const total = Number(job.progress_total || 0);
+    const percent = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
+    const statusLabel = job.status === 'retrying' ? 'Retry scheduled…' : job.status === 'processing' ? 'Extracting papers…' : 'Waiting for an OCR worker…';
     result.innerHTML = `<div class="workspace-card card-pad upload-status-card" role="status">
-      <div class="upload-status-line"><span class="upload-status-pulse" aria-hidden="true"></span><strong>${statusLabel}</strong></div>
-      <p class="section-copy">Submission ${MisraUI.escapeHTML(submissionId)}. Processing continues in the background, so you may leave this page.</p>
-      <a class="btn btn-secondary" href="${submissionLink(submissionId)}">Open extraction result</a>
+      <div class="upload-status-line"><span class="upload-status-pulse" aria-hidden="true"></span><strong>${statusLabel}</strong><span class="job-progress-count">${total ? `${current} / ${total}` : 'Queued'}</span></div>
+      <div class="job-progress-track" aria-label="Extraction progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>
+      <p class="section-copy">${MisraUI.escapeHTML(job.progress_message || 'Processing continues in the background. You may safely leave this page.')}</p>
+      ${context.submissionId ? `<a class="btn btn-secondary" href="${submissionLink(context.submissionId)}">Open extraction result</a>` : `<a class="btn btn-secondary" href="${context.destination}">View batch submissions</a>`}
     </div>`;
   }
 
@@ -44,31 +48,38 @@
     window.showToast(needsAttention ? 'Extraction needs mapping review.' : 'Paper extracted.', needsAttention ? 'warning' : 'success');
   }
 
-  function renderExtractionFailure(report) {
-    const message = report.submission.error_message || 'OCR could not process this paper.';
+  function renderExtractionFailure(job, context) {
+    const message = job.error_message || 'OCR could not process this upload.';
     result.innerHTML = `<div class="workspace-card card-pad upload-status-card is-error" role="alert">
       <strong>Extraction failed</strong>
       <p class="section-copy">${MisraUI.escapeHTML(message)}</p>
-      <a class="btn btn-secondary" href="${submissionLink(report.submission.id)}">Inspect submission</a>
+      <div class="job-actions"><button class="btn btn-primary" type="button" data-retry-job="${job.id}">Retry safely</button>${context.submissionId ? `<a class="btn btn-secondary" href="${submissionLink(context.submissionId)}">Inspect submission</a>` : `<a class="btn btn-secondary" href="${context.destination}">Inspect batch</a>`}</div>
     </div>`;
     window.showToast('Extraction failed. Inspect the submission for details.', 'error');
   }
 
-  async function pollExtraction(submissionId, pollId) {
+  async function pollJob(jobId, context, pollId) {
     for (let attempt = 0; attempt < maxPollAttempts && pollId === activePoll; attempt += 1) {
       try {
-        const report = await MisraAPI.extractionReview(submissionId);
-        const status = report.submission.status;
-        if (status === 'error') { renderExtractionFailure(report); return; }
-        if (status === 'extracted' || status === 'graded') { renderExtractionComplete(report); return; }
-        renderExtractionProgress(submissionId, status);
+        const job = await MisraAPI.job(jobId);
+        if (job.status === 'failed') { renderExtractionFailure(job, context); return; }
+        if (job.status === 'completed') {
+          if (context.submissionId) {
+            renderExtractionComplete(await MisraAPI.extractionReview(context.submissionId));
+          } else {
+            result.innerHTML = `<div class="workspace-card card-pad upload-status-card is-complete"><strong>Batch extraction complete</strong><p class="section-copy">${job.progress_total} submissions processed. Open the batch to review mappings and any paper-level errors.</p><a class="btn btn-secondary" href="${context.destination}">View submissions</a></div>`;
+            window.showToast('Batch extraction complete.', 'success');
+          }
+          return;
+        }
+        renderJobProgress(job, context);
       } catch (error) {
         if (attempt === maxPollAttempts - 1) showError(error.message);
       }
       await wait(pollIntervalMs);
     }
     if (pollId === activePoll) {
-      result.innerHTML = `<div class="workspace-card card-pad upload-status-card"><strong>Extraction is still running</strong><p class="section-copy">You can safely leave this page and return to the extraction result later.</p><a class="btn btn-secondary" href="${submissionLink(submissionId)}">Open extraction result</a></div>`;
+      result.innerHTML = `<div class="workspace-card card-pad upload-status-card"><strong>Extraction is still running</strong><p class="section-copy">You can safely leave this page and return later.</p>${context.submissionId ? `<a class="btn btn-secondary" href="${submissionLink(context.submissionId)}">Open extraction result</a>` : `<a class="btn btn-secondary" href="${context.destination}">View submissions</a>`}</div>`;
     }
   }
 
@@ -149,16 +160,35 @@
       const response = mode === 'batch' ? await MisraAPI.uploadBatch(body) : await MisraAPI.uploadExam(body);
       if (mode === 'batch') {
         const destination = `submissions.html?exam_id=${encodeURIComponent(examSelect.value)}`;
-        result.innerHTML = `<div class="workspace-card card-pad upload-status-card is-complete"><strong>Batch queued</strong><p class="section-copy">${response.total_submissions} submissions · Batch ${MisraUI.escapeHTML(response.batch_id)}</p><a class="btn btn-secondary" href="${destination}">View submissions</a></div>`;
+        const pollId = ++activePoll;
+        renderJobProgress(response.job, { destination });
         window.showToast('Batch queued for extraction.', 'success');
+        pollJob(response.job.id, { destination }, pollId).catch((error) => showError(error.message));
       } else {
         const pollId = ++activePoll;
-        renderExtractionProgress(response.id, response.status);
-        window.showToast('Upload received. OCR is running in the background.', 'success');
-        pollExtraction(response.id, pollId).catch((error) => showError(error.message));
+        const submissionId = response.submission.id;
+        renderJobProgress(response.job, { submissionId });
+        window.showToast('Upload received. OCR is queued.', 'success');
+        pollJob(response.job.id, { submissionId }, pollId).catch((error) => showError(error.message));
       }
     } catch (error) { showError(error.message); }
     finally { button.disabled = false; button.textContent = mode === 'batch' ? 'Upload batch' : 'Upload and start extraction'; }
+  });
+
+  result.addEventListener('click', async (event) => {
+    const retry = event.target.closest('[data-retry-job]');
+    if (!retry) return;
+    retry.disabled = true;
+    retry.textContent = 'Queueing retry…';
+    try {
+      const job = await MisraAPI.retryJob(retry.dataset.retryJob);
+      const pollId = ++activePoll;
+      const context = job.submission_id
+        ? { submissionId: job.submission_id }
+        : { destination: `submissions.html?exam_id=${encodeURIComponent(examSelect.value)}` };
+      renderJobProgress(job, context);
+      pollJob(job.id, context, pollId).catch((error) => showError(error.message));
+    } catch (error) { showError(error.message); }
   });
 
   loadExams();

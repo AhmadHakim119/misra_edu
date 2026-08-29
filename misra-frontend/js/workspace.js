@@ -11,6 +11,10 @@
     grades: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h4M16 13h.01M8 17h4M16 17h.01"/></svg>',
     review: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 11 2 2 4-4"/><path d="M20 12a8 8 0 1 1-3-6.2"/></svg>',
     evaluation: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+    account: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg>',
+    instructors: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>',
+    operations: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 4.5 6v5.2c0 4.5 3 8.6 7.5 9.8 4.5-1.2 7.5-5.3 7.5-9.8V6L12 3Z"/><path d="M8.5 9.5h7M8.5 13h7M8.5 16.5h4"/></svg>',
+    trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>',
   };
 
   const pages = [
@@ -22,6 +26,9 @@
     ['grades', 'Grades', 'grades.html'],
     ['review', 'Review queue', 'reviews.html'],
     ['evaluation', 'Evaluation', 'evaluation.html'],
+    ['account', 'Account', 'account.html'],
+    ['instructors', 'Instructor accounts', 'instructors.html', true],
+    ['operations', 'Admin operations', 'admin-operations.html', true],
   ];
 
   function escapeHTML(value) {
@@ -47,6 +54,60 @@
 
   function getParam(name) { return new URLSearchParams(window.location.search).get(name); }
 
+  function identityState(submission) {
+    const name = String(submission?.extracted_student_name || '').trim();
+    const number = String(submission?.extracted_student_number || '').trim();
+    const hasName = Boolean(name);
+    const hasNumber = Boolean(number);
+    const rosterMatched = submission?.identity_status === 'matched';
+    let label = rosterMatched ? 'Roster matched' : 'Check OCR identity';
+    let message = 'Confirm the OCR name and student number against the original paper before exporting grades.';
+    if (!hasName && !hasNumber) {
+      label = 'Identity missing';
+      message = 'Student name and student number are missing.';
+    } else if (!hasName) {
+      label = 'Name missing';
+      message = 'A student number is recorded, but the student name is missing.';
+    } else if (!hasNumber) {
+      label = 'Student ID missing';
+      message = 'The student name is recorded, but Blackboard username / student number is missing.';
+    } else if (rosterMatched) {
+      message = 'This paper is linked to a student record. Confirm it still matches the original paper.';
+    }
+    return {
+      name,
+      number,
+      hasName,
+      hasNumber,
+      complete: hasName && hasNumber,
+      rosterMatched,
+      needsAttention: !hasName || !hasNumber,
+      displayName: name || 'Student name missing',
+      displayNumber: number || 'Student number missing',
+      label,
+      message,
+    };
+  }
+
+  function reveal(targets, options = {}) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const nodes = typeof targets === 'string' ? document.querySelectorAll(targets) : targets;
+    [...nodes].slice(0, options.limit || 12).forEach((node, index) => {
+      node.animate(
+        [
+          { opacity: 0.94, transform: 'translateY(5px)', filter: 'blur(1.5px)' },
+          { opacity: 1, transform: 'translateY(0)', filter: 'blur(0)' },
+        ],
+        {
+          duration: 320,
+          delay: Math.min(index, 5) * 42,
+          easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+          fill: 'both',
+        },
+      );
+    });
+  }
+
   const activePage = document.body.dataset.page || 'dashboard';
   const activePageTitle = document.body.dataset.pageTitle || pages.find(([key]) => key === activePage)?.[1] || 'Instructor workspace';
   const content = document.getElementById('workspace-content');
@@ -63,9 +124,9 @@
       </a>
       <nav class="workspace-nav">
         <div class="workspace-nav-label">Workspace</div>
-        ${pages.map(([key, label, href]) => `<a class="workspace-nav-link" href="${href}" ${key === activePage ? 'aria-current="page"' : ''}>${icons[key]}<span>${label}</span></a>`).join('')}
+        ${pages.map(([key, label, href, adminOnly]) => `<a class="workspace-nav-link" href="${href}" ${key === activePage ? 'aria-current="page"' : ''} ${adminOnly ? 'data-admin-only hidden' : ''}>${icons[key]}<span>${label}</span></a>`).join('')}
       </nav>
-      <div class="workspace-sidebar-foot">Instructor tools<br><span>Connected to persisted MISRA data</span></div>
+      <div class="workspace-sidebar-foot" data-user-panel><strong>Instructor workspace</strong><br><span>Checking your session…</span></div>
     </aside>
     <div class="workspace-main">
       <header class="workspace-topbar">
@@ -96,13 +157,47 @@
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') setNav(false); });
 
   const apiStatus = shell.querySelector('[data-api-status]');
+  const userPanel = shell.querySelector('[data-user-panel]');
+  window.MisraAPI.currentUser().then((user) => {
+    if (user.must_change_password && activePage !== 'account') {
+      window.location.replace('account.html?required=1');
+      return;
+    }
+    if (user.role === 'admin') {
+      shell.querySelectorAll('[data-admin-only]').forEach((link) => { link.hidden = false; });
+    }
+    userPanel.innerHTML = `<strong>${escapeHTML(user.full_name || user.email)}</strong><br><span>${escapeHTML(user.email)}</span><button class="workspace-signout" type="button" data-signout>Sign out</button>`;
+    userPanel.querySelector('[data-signout]').addEventListener('click', async () => {
+      const button = userPanel.querySelector('[data-signout]');
+      button.disabled = true;
+      button.textContent = 'Signing out…';
+      try {
+        await window.MisraAPI.logout();
+        window.location.replace('login.html?v=2');
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = 'Sign out';
+        window.showToast(error.message || 'Could not sign out. Try again.', 'error');
+      }
+    });
+  }).catch((error) => {
+    if (error.status === 401) return;
+    userPanel.innerHTML = '<strong>Access unavailable</strong><br><span>Your account cannot open this instructor workspace.</span><button class="workspace-signout" type="button" data-return-login>Return to sign in</button>';
+    userPanel.querySelector('[data-return-login]').addEventListener('click', async () => {
+      try { await window.MisraAPI.logout(); } catch (_) {}
+      window.location.replace('login.html?v=2');
+    });
+  });
   window.MisraAPI.health().then((health) => {
-    apiStatus.dataset.state = 'online';
-    apiStatus.lastElementChild.textContent = health.model ? `Engine online · ${health.model}` : 'Engine online';
+    const queueOnline = health.queue !== 'unavailable';
+    apiStatus.dataset.state = queueOnline ? 'online' : 'degraded';
+    apiStatus.lastElementChild.textContent = queueOnline
+      ? (health.model ? `Engine online · ${health.model}` : 'Engine online')
+      : 'Engine online · worker queue offline';
   }).catch(() => {
     apiStatus.dataset.state = 'offline';
     apiStatus.lastElementChild.textContent = 'Engine offline';
   });
 
-  window.MisraUI = { icons, escapeHTML, formatDate, badge, emptyState, errorState, getParam };
+  window.MisraUI = { icons, escapeHTML, formatDate, badge, emptyState, errorState, getParam, identityState, reveal };
 })();

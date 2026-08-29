@@ -425,3 +425,121 @@ def resolve_unmatched_segment(
     submission.unmatched_segments = segments or None
     db.commit()
     return build_extraction_review(submission.id, db)
+
+
+def bulk_resolve_segments(
+    submission_id: str,
+    action: str,
+    question_id: str | None,
+    source_ids: list[str],
+    unmatched_indices: list[int],
+    db: Session,
+) -> dict[str, Any]:
+    """Resolve several mapped and unmatched OCR fragments in one transaction."""
+    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+    if not submission:
+        raise ValueError("Submission not found")
+
+    unique_source_ids = list(dict.fromkeys(source_ids))
+    unique_unmatched_indices = sorted(set(unmatched_indices))
+    if not unique_source_ids and not unique_unmatched_indices:
+        raise ValueError("Select at least one OCR fragment")
+    if any(index < 0 for index in unique_unmatched_indices):
+        raise ValueError("Unmatched segment not found")
+
+    segments = list(submission.unmatched_segments or [])
+    if any(index >= len(segments) for index in unique_unmatched_indices):
+        raise ValueError("Unmatched segment not found")
+
+    selected_sources: list[AnswerSource] = []
+    origins: dict[str, Answer] = {}
+    if unique_source_ids:
+        selected_sources = (
+            db.query(AnswerSource)
+            .filter(AnswerSource.id.in_(unique_source_ids))
+            .all()
+        )
+        if len(selected_sources) != len(unique_source_ids):
+            raise ValueError("One or more OCR fragments were not found")
+        for source in selected_sources:
+            origin = db.query(Answer).filter(Answer.id == source.answer_id).first()
+            if not origin or origin.submission_id != submission.id:
+                raise ValueError("An OCR fragment belongs to a different submission")
+            _assert_answer_is_ungraded(origin, db)
+            origins[origin.id] = origin
+
+    if action == "ignore":
+        if unique_source_ids:
+            raise ValueError("Mapped fragments must be moved, not marked as noise")
+        submission.unmatched_segments = [
+            segment
+            for index, segment in enumerate(segments)
+            if index not in set(unique_unmatched_indices)
+        ] or None
+        db.commit()
+        return build_extraction_review(submission.id, db)
+
+    if action != "assign" or not question_id:
+        raise ValueError("A target question is required")
+
+    target_question = db.query(Question).filter(Question.id == question_id).first()
+    if not target_question or target_question.exam_id != submission.exam_id:
+        raise ValueError("The target question belongs to a different assessment")
+
+    target = (
+        db.query(Answer)
+        .filter(
+            Answer.submission_id == submission.id,
+            Answer.question_id == target_question.id,
+        )
+        .first()
+    )
+    if target:
+        _assert_answer_is_ungraded(target, db)
+    else:
+        target = Answer(
+            institution_id=submission.institution_id,
+            submission_id=submission.id,
+            question_id=target_question.id,
+            needs_review=False,
+            review_status="none",
+        )
+        db.add(target)
+        db.flush()
+
+    for source in selected_sources:
+        source.answer_id = target.id
+        source.question_number = target_question.question_number
+
+    for unmatched_index in unique_unmatched_indices:
+        segment = segments[unmatched_index]
+        page_index = segment.get("page_index")
+        if not isinstance(page_index, int) or not 0 <= page_index < submission.page_count:
+            raise ValueError("A selected fragment has no valid source page")
+        db.add(
+            AnswerSource(
+                answer_id=target.id,
+                page_index=page_index,
+                segment_index=10000 + unmatched_index,
+                question_number=target_question.question_number,
+                extracted_text=str(segment.get("text") or "").strip(),
+                has_math=bool(segment.get("has_math")),
+                ocr_segment={**dict(segment), "resolved_from_unmatched": True},
+            )
+        )
+
+    selected_unmatched = set(unique_unmatched_indices)
+    submission.unmatched_segments = [
+        segment
+        for index, segment in enumerate(segments)
+        if index not in selected_unmatched
+    ] or None
+    db.flush()
+
+    _rebuild_answer_from_sources(target, db)
+    for origin in origins.values():
+        if origin.id != target.id:
+            _rebuild_answer_from_sources(origin, db)
+
+    db.commit()
+    return build_extraction_review(submission.id, db)

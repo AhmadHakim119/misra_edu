@@ -1,22 +1,5 @@
 /* ==========================================================================
-   MISRA EDU — Auth forms (client-side validation + pluggable API layer)
-
-   SECURITY NOTE FOR DEVELOPERS:
-   This file intentionally contains NO password hashing, NO token storage
-   logic, and NO real authentication. Wiring real auth is explicitly
-   deferred per the project brief. Before connecting this to a backend:
-
-     1. Implement the backend endpoints called below and return only an
-        httpOnly session cookie, never a browser-managed bearer token.
-     2. Never store raw passwords or JWTs in localStorage — use an
-        httpOnly, Secure, SameSite=Strict cookie set by the server.
-     3. Enforce institution-issued-account verification server-side.
-        Client-side email domain checks (below) are a UX nicety only,
-        never a security boundary — validate on the server.
-     4. Add CSRF protection once cookies are in play.
-     5. Add rate limiting / lockout on the login endpoint server-side.
-
-   See AUTH_INTEGRATION.md in the project root for the full checklist.
+   MISRA EDU — Instructor authentication forms.
    ========================================================================== */
 
 (function () {
@@ -24,8 +7,7 @@
 
   const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  /* ---- Real API boundary. The backend may defer auth, but this UI never
-     simulates a successful identity or stores a fake session. ---- */
+  /* The server owns the session cookie; this page never stores a password or token. */
   const sameOriginApi = window.location.pathname.startsWith('/app/') ? `${window.location.origin}/api` : 'http://127.0.0.1:8000/api';
   const API_BASE = (window.MISRA_API_BASE || sameOriginApi).replace(/\/$/, '');
 
@@ -38,14 +20,7 @@
         body: JSON.stringify(payload),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        return {
-          ok: false,
-          error: response.status === 404
-            ? 'Authentication is not enabled on this backend yet.'
-            : (data.detail || 'Authentication failed. Try again.'),
-        };
-      }
+      if (!response.ok) return { ok: false, error: data.detail || 'Authentication failed. Try again.' };
       return { ok: true, ...data };
     } catch (_error) {
       return { ok: false, error: 'Could not reach the MISRA backend.' };
@@ -53,17 +28,17 @@
   }
 
   const api = {
-    async login({ email, password }) {
+    async login({ email, password, remember }) {
       if (!email || !password) {
         return { ok: false, error: 'Enter your institutional email and password.' };
       }
-      return authRequest('/auth/login', { email, password });
+      return authRequest('/auth/login', { email, password, remember });
     },
-    async signup({ name, email, institutionCode, password }) {
-      if (!name || !email || !institutionCode || !password) {
-        return { ok: false, error: 'All fields are required.' };
-      }
-      return authRequest('/auth/signup', { name, email, institution_code: institutionCode, password });
+    forgotPassword(email) {
+      return authRequest('/auth/forgot-password', { email });
+    },
+    resetPassword(token, newPassword) {
+      return authRequest('/auth/reset-password', { token, new_password: newPassword });
     },
   };
 
@@ -113,7 +88,7 @@
       if (hasError) return;
 
       setLoading(submitBtn, true, idleLabel);
-      const result = await api.login({ email, password });
+      const result = await api.login({ email, password, remember: loginForm.remember.checked });
       setLoading(submitBtn, false, idleLabel);
 
       if (!result.ok) {
@@ -122,68 +97,82 @@
       }
       window.showToast('Signed in securely.', 'success');
       setTimeout(() => {
-        window.location.href = 'dashboard.html';
+        if (result.user?.must_change_password) {
+          window.location.href = 'account.html?required=1';
+          return;
+        }
+        const requested = new URLSearchParams(window.location.search).get('next');
+        window.location.href = requested && requested.startsWith('/app/pages/') ? requested : 'dashboard.html';
       }, 700);
     });
   }
 
-  /* ---- Signup form ---- */
-  const signupForm = document.querySelector('[data-signup-form]');
-  if (signupForm) {
-    const nameField = signupForm.querySelector('[data-field="name"]');
-    const emailField = signupForm.querySelector('[data-field="email"]');
-    const codeField = signupForm.querySelector('[data-field="institutionCode"]');
-    const passwordField = signupForm.querySelector('[data-field="password"]');
-    const termsField = signupForm.querySelector('[data-field="terms"]');
-    const submitBtn = signupForm.querySelector('[type="submit"]');
-    const idleLabel = submitBtn ? submitBtn.textContent : 'Create account';
-
-    signupForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      [nameField, emailField, codeField, passwordField, termsField].forEach(clearFieldError);
-
-      const name = signupForm.name.value.trim();
-      const email = signupForm.email.value.trim();
-      const institutionCode = signupForm.institutionCode.value.trim();
-      const password = signupForm.password.value;
-      const termsChecked = signupForm.terms.checked;
-
-      let hasError = false;
-
-      if (name.length < 2) {
-        setFieldError(nameField, 'Enter your full name.');
-        hasError = true;
-      }
+  /* ---- Forgot password form ---- */
+  const forgotForm = document.querySelector('[data-forgot-password-form]');
+  if (forgotForm) {
+    const emailField = forgotForm.querySelector('[data-field="email"]');
+    const submitBtn = forgotForm.querySelector('[type="submit"]');
+    const idleLabel = submitBtn.textContent;
+    forgotForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      clearFieldError(emailField);
+      const email = forgotForm.email.value.trim();
       if (!EMAIL_RE.test(email)) {
         setFieldError(emailField, 'Enter a valid email address.');
-        hasError = true;
-      }
-      if (!institutionCode) {
-        setFieldError(codeField, 'Enter the institution code from your school.');
-        hasError = true;
-      }
-      if (password.length < 8) {
-        setFieldError(passwordField, 'Use at least 8 characters.');
-        hasError = true;
-      }
-      if (!termsChecked) {
-        setFieldError(termsField, 'You must accept the terms to continue.');
-        hasError = true;
-      }
-      if (hasError) return;
-
-      setLoading(submitBtn, true, idleLabel);
-      const result = await api.signup({ name, email, institutionCode, password });
-      setLoading(submitBtn, false, idleLabel);
-
-      if (!result.ok) {
-        window.showToast(result.error || 'Could not create your account.', 'error');
         return;
       }
-      window.showToast('Account created. Redirecting…', 'success');
-      setTimeout(() => {
-        window.location.href = 'login.html';
-      }, 900);
+      setLoading(submitBtn, true, idleLabel);
+      const result = await api.forgotPassword(email);
+      setLoading(submitBtn, false, idleLabel);
+      if (!result.ok) {
+        window.showToast(result.error || 'Could not request a reset link. Try again.', 'error');
+        return;
+      }
+      forgotForm.hidden = true;
+      const confirmation = document.querySelector('[data-forgot-confirmation]');
+      if (confirmation) confirmation.hidden = false;
+    });
+  }
+
+  /* ---- Reset password form ---- */
+  const resetForm = document.querySelector('[data-reset-password-form]');
+  if (resetForm) {
+    const token = new URLSearchParams(window.location.search).get('token') || '';
+    const newField = resetForm.querySelector('[data-field="new-password"]');
+    const confirmField = resetForm.querySelector('[data-field="confirm-password"]');
+    const submitBtn = resetForm.querySelector('[type="submit"]');
+    const idleLabel = submitBtn.textContent;
+    if (!token) {
+      resetForm.hidden = true;
+      const invalid = document.querySelector('[data-reset-invalid]');
+      if (invalid) invalid.hidden = false;
+    }
+    resetForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      clearFieldError(newField);
+      clearFieldError(confirmField);
+      const newPassword = resetForm.new_password.value;
+      const confirmation = resetForm.confirm_password.value;
+      let invalid = false;
+      if (newPassword.length < 10) {
+        setFieldError(newField, 'Use at least 10 characters.');
+        invalid = true;
+      }
+      if (newPassword !== confirmation) {
+        setFieldError(confirmField, 'The passwords do not match.');
+        invalid = true;
+      }
+      if (invalid) return;
+      setLoading(submitBtn, true, idleLabel);
+      const result = await api.resetPassword(token, newPassword);
+      setLoading(submitBtn, false, idleLabel);
+      if (!result.ok) {
+        window.showToast(result.error || 'This reset link could not be used.', 'error');
+        return;
+      }
+      resetForm.hidden = true;
+      const success = document.querySelector('[data-reset-success]');
+      if (success) success.hidden = false;
     });
   }
 

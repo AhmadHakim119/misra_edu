@@ -2,6 +2,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from schemas.ocr_evidence import NormalizedBoundingBox
+
 
 class PageRecoveryPreviewRequest(BaseModel):
     question_numbers: list[str] = Field(min_length=1, max_length=30)
@@ -14,6 +16,7 @@ class RecoverySegmentInput(BaseModel):
     legibility: Literal["clear", "partial", "illegible"] = "clear"
     has_math: bool = False
     math_notation: str | None = None
+    bounding_box: NormalizedBoundingBox | None = None
 
 
 class PageRecoveryConfirmRequest(BaseModel):

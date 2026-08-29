@@ -9,14 +9,16 @@ DB_URL = os.getenv("DB_URL")
 if not DB_URL:
     raise RuntimeError("DB_URL environment variable is not set. Check your .env file.")
 
-engine = create_engine(
-    DB_URL,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
-    pool_timeout=30,
-    pool_recycle=1800,
-)
+engine_options = {"pool_pre_ping": True}
+if not DB_URL.startswith("sqlite"):
+    engine_options.update(
+        pool_size=10,
+        max_overflow=20,
+        pool_timeout=30,
+        pool_recycle=1800,
+    )
+
+engine = create_engine(DB_URL, **engine_options)
 
 SessionLocal = sessionmaker(
     autocommit=False,

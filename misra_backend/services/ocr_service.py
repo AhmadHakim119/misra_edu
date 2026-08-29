@@ -3,16 +3,26 @@ import numpy as np
 from PIL import Image
 import io
 import json
-from typing import Optional, Literal
+from typing import Callable, Optional, Literal
 from pydantic import BaseModel, ValidationError
-from pdf2image import convert_from_bytes
+from pdf2image import convert_from_bytes, convert_from_path
 from sqlalchemy.orm import Session
 import logging
 from services.gemini_client import generate
-from models import Submission, Question, Answer, Batch, AnswerSource
+from models import (
+    Answer,
+    AnswerSource,
+    Batch,
+    GradingRun,
+    Question,
+    ReviewLabel,
+    Submission,
+)
 import os
 import uuid
 import re
+from services.upload_security_service import StoredUpload
+from schemas.ocr_evidence import NormalizedBoundingBox
 
 # ---------- Response schema (validated against Gemini's output) ----------
 
@@ -23,6 +33,7 @@ class OCRSegment(BaseModel):
     legibility: Literal["clear", "partial", "illegible"]
     has_math: bool
     math_notation: Optional[str] = None
+    bounding_box: Optional[NormalizedBoundingBox] = None
 
 
 class OCRPageResult(BaseModel):
@@ -52,6 +63,10 @@ label, or repeated page footer as the student's identity.
 Rules:
 - Do NOT summarize, correct, paraphrase, or grade anything.
 - If a segment is illegible, still include it with legibility set to "illegible" and your best-effort text.
+- For every answer segment, return one tight bounding_box around the complete
+  visible answer region. Coordinates are normalized relative to the full page:
+  x is distance from the left edge, y is distance from the top edge, and width
+  and height describe the rectangle. Every value must be between 0 and 1.
 - If no student name or ID is visible anywhere on the page, set student_name and student_id to null and identity_legibility to "not_found".
 - If a name/ID area exists but cannot be read clearly, set identity_legibility to "illegible".
 
@@ -103,7 +118,13 @@ number merely because that later label also exists in the assessment.
       "language": "ar | en | mixed",
       "legibility": "clear | partial | illegible",
       "has_math": true or false,
-      "math_notation": "LaTeX string if has_math is true, otherwise null"
+      "math_notation": "LaTeX string if has_math is true, otherwise null",
+      "bounding_box": {
+        "x": 0.10,
+        "y": 0.25,
+        "width": 0.80,
+        "height": 0.18
+      }
     }
   ],
   "student_name": "string or null",
@@ -297,12 +318,60 @@ def _resolve_subpart_continuation(
 
     return question_number
 
-def process_submission(submission_id: str, db: Session) -> None:
+def _clear_incomplete_extraction(submission: Submission, db: Session) -> None:
+    """Remove partial OCR artifacts before retrying the same submission.
+
+    A failed OCR run may already have committed one or more pages. Retrying by
+    appending would duplicate both text and source rows. We may reset only
+    ungraded answers; once grading or instructor review exists, the operation is
+    deliberately refused because those records are historical evidence.
+    """
+    answers = db.query(Answer).filter(Answer.submission_id == submission.id).all()
+    if not answers:
+        return
+
+    answer_ids = [answer.id for answer in answers]
+    has_grading_history = (
+        db.query(GradingRun).filter(GradingRun.answer_id.in_(answer_ids)).first()
+        is not None
+    )
+    has_review_history = (
+        db.query(ReviewLabel).filter(ReviewLabel.answer_id.in_(answer_ids)).first()
+        is not None
+    )
+    has_recorded_scores = any(
+        answer.score is not None or answer.teacher_override_score is not None
+        for answer in answers
+    )
+    if has_grading_history or has_review_history or has_recorded_scores:
+        raise ValueError(
+            "This failed extraction already has grading or review history and "
+            "cannot be reset automatically."
+        )
+
+    db.query(AnswerSource).filter(AnswerSource.answer_id.in_(answer_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(Answer).filter(Answer.id.in_(answer_ids)).delete(
+        synchronize_session=False
+    )
+    submission.unmatched_segments = None
+    db.commit()
+
+
+def process_submission(
+    submission_id: str,
+    db: Session,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+) -> None:
     submission = db.query(Submission).filter(Submission.id == submission_id).first()
     if not submission:
         raise ValueError(f"Submission {submission_id} not found")
 
+    if submission.status in {"uploaded", "extracting", "error"}:
+        _clear_incomplete_extraction(submission, db)
     submission.status = "extracting"
+    submission.error_message = None
     db.commit()
 
     try:
@@ -316,6 +385,8 @@ def process_submission(submission_id: str, db: Session) -> None:
 
         submission.page_count = len(page_images)
         db.commit()
+        if progress_callback:
+            progress_callback(0, len(page_images), "Preparing page extraction")
 
         questions = db.query(Question).filter(Question.exam_id == submission.exam_id).all()
         question_lookup = {q.question_number: q.id for q in questions}
@@ -426,6 +497,12 @@ def process_submission(submission_id: str, db: Session) -> None:
                 db.add(source)
 
             db.commit()
+            if progress_callback:
+                progress_callback(
+                    page_index + 1,
+                    len(page_images),
+                    f"Extracted page {page_index + 1} of {len(page_images)}",
+                )
 
         if unmatched_segments:
             submission.unmatched_segments = unmatched_segments
@@ -443,7 +520,12 @@ def process_submission(submission_id: str, db: Session) -> None:
 
 # ---------- Batch fan-out ----------
 
-def process_batch(batch_id: str, db: Session) -> None:
+def process_batch(
+    batch_id: str,
+    db: Session,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+    submission_ids: list[str] | None = None,
+) -> None:
     batch = db.query(Batch).filter(Batch.id == batch_id).first()
     if not batch:
         return
@@ -451,84 +533,130 @@ def process_batch(batch_id: str, db: Session) -> None:
     batch.status = "processing"
     db.commit()
 
-    submissions = db.query(Submission).filter(Submission.batch_id == batch_id).all()
+    query = db.query(Submission).filter(Submission.batch_id == batch_id)
+    if submission_ids is not None:
+        query = query.filter(Submission.id.in_(submission_ids))
+    submissions = query.order_by(Submission.uploaded_at.asc()).all()
+    total = len(submissions)
+    if progress_callback:
+        progress_callback(0, total, "Preparing batch extraction")
 
-    for submission in submissions:
+    for index, submission in enumerate(submissions):
+        if submission.status in {"extracted", "graded", "needs_review", "reviewed"}:
+            if progress_callback:
+                progress_callback(
+                    index + 1,
+                    total,
+                    f"Submission {index + 1} of {total} was already extracted",
+                )
+            continue
         try:
             process_submission(submission.id, db)
-            batch.completed_count += 1
         except Exception:
-            batch.failed_count += 1
+            pass
+        if progress_callback:
+            progress_callback(
+                index + 1,
+                total,
+                f"Processed submission {index + 1} of {total}",
+            )
         db.commit()
 
+    all_submissions = db.query(Submission).filter(Submission.batch_id == batch_id).all()
+    batch.completed_count = sum(
+        submission.status in {"extracted", "graded", "needs_review", "reviewed"}
+        for submission in all_submissions
+    )
+    batch.failed_count = sum(submission.status == "error" for submission in all_submissions)
     batch.status = "completed" if batch.failed_count == 0 else "completed_with_errors"
     db.commit()
 
-def create_submissions_from_upload(
+def create_submissions_from_stored_upload(
     exam_id: str,
     institution_id: str,
     batch_id: str,
-    file_bytes: bytes,
-    filename: str,
-    upload_dir: str,
+    stored_upload: StoredUpload,
     pages_per_student: int | None,
     db: Session
-) -> list[Submission]:
+) -> tuple[list[Submission], list[str], bool]:
     """
-    Given one uploaded file, returns a list of newly created Submission rows.
-    - If it's a PDF and pages_per_student is given: splits into multiple submissions.
-    - Otherwise: creates exactly one submission for the whole file.
+    Build submission rows from an already validated file.
+
+    Returns ``(submissions, generated_paths, source_is_retained)``. The caller
+    owns the transaction and removes every returned/generated path if it fails.
+    PDF batches are converted one student-sized page range at a time so the
+    full uploaded file is never loaded into Python memory.
     """
-    is_pdf = filename.lower().endswith(".pdf")
-    submissions = []
-
-    if is_pdf and pages_per_student:
-        page_groups = _chunk_pdf_by_student(file_bytes, pages_per_student)
-
-        for group_index, page_group in enumerate(page_groups):
-            # Re-combine this student's pages into a single PDF file on disk,
-            # so original_file_path always points at one real file per submission.
-            images = [Image.open(io.BytesIO(p)).convert("RGB") for p in page_group]
-            buffer = io.BytesIO()
-            images[0].save(buffer, format="PDF", save_all=True, append_images=images[1:])
-            group_bytes = buffer.getvalue()
-
-            unique_name = f"{uuid.uuid4()}.pdf"
-            save_path = os.path.join(upload_dir, unique_name)
-            with open(save_path, "wb") as f:
-                f.write(group_bytes)
-
-            submission = Submission(
-                institution_id=institution_id,
-                exam_id=exam_id,
-                batch_id=batch_id,
-                original_file_path=save_path,
-                page_count=len(page_group),
-                status="uploaded"
-            )
-            db.add(submission)
-            submissions.append(submission)
-
-    else:
-        _, ext = os.path.splitext(filename)
-        unique_name = f"{uuid.uuid4()}{ext}"
-        save_path = os.path.join(upload_dir, unique_name)
-        with open(save_path, "wb") as f:
-            f.write(file_bytes)
-
+    if stored_upload.extension != ".pdf" or not pages_per_student:
         submission = Submission(
             institution_id=institution_id,
             exam_id=exam_id,
             batch_id=batch_id,
-            original_file_path=save_path,
-            page_count=1,
-            status="uploaded"
+            original_file_path=str(stored_upload.path),
+            page_count=stored_upload.page_count,
+            status="uploaded",
         )
         db.add(submission)
-        submissions.append(submission)
+        return [submission], [str(stored_upload.path)], True
 
-    db.commit()
-    for s in submissions:
-        db.refresh(s)
+    if pages_per_student <= 0:
+        raise ValueError("pages_per_student must be a positive integer")
 
-    return submissions
+    submissions: list[Submission] = []
+    generated_paths: list[str] = []
+    total_pages = stored_upload.page_count
+    remainder = total_pages % pages_per_student
+    if remainder:
+        logger.warning(
+            "PDF has %s pages, not evenly divisible by pages_per_student=%s; "
+            "the final submission will contain %s page(s)",
+            total_pages,
+            pages_per_student,
+            remainder,
+        )
+
+    try:
+        for first_page in range(1, total_pages + 1, pages_per_student):
+            last_page = min(first_page + pages_per_student - 1, total_pages)
+            pages = convert_from_path(
+                str(stored_upload.path),
+                first_page=first_page,
+                last_page=last_page,
+            )
+            if not pages:
+                raise ValueError("PDF page conversion returned no pages")
+
+            rgb_pages = [page.convert("RGB") for page in pages]
+            save_path = stored_upload.path.parent / f"{uuid.uuid4()}.pdf"
+            try:
+                rgb_pages[0].save(
+                    save_path,
+                    format="PDF",
+                    save_all=True,
+                    append_images=rgb_pages[1:],
+                )
+            finally:
+                for image in rgb_pages:
+                    image.close()
+                for image in pages:
+                    image.close()
+
+            generated_paths.append(str(save_path))
+            submission = Submission(
+                institution_id=institution_id,
+                exam_id=exam_id,
+                batch_id=batch_id,
+                original_file_path=str(save_path),
+                page_count=last_page - first_page + 1,
+                status="uploaded",
+            )
+            db.add(submission)
+            submissions.append(submission)
+        return submissions, generated_paths, False
+    except Exception:
+        for path in generated_paths:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        raise

@@ -2,17 +2,28 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models.submission import Submission
-from models.student import Student
+from models import Exam, Submission, Student, User
 from schemas.identity import IdentityResolutionRequest
+from services.auth_dependencies import require_instructor
 
 router = APIRouter(prefix="/api", tags=["identity"])
 
 @router.get("/exams/{exam_id}/unresolved-identities")
-def list_unresolved_identities(exam_id: str, db: Session = Depends(get_db)):
+def list_unresolved_identities(
+    exam_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    exam = db.query(Exam).filter(
+        Exam.id == exam_id,
+        Exam.institution_id == user.institution_id,
+    ).first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
     submissions = (
         db.query(Submission)
         .filter(Submission.exam_id == exam_id)
+        .filter(Submission.institution_id == user.institution_id)
         .filter(Submission.identity_status != "matched")
         .filter(Submission.status != "error")
         .all()
@@ -25,10 +36,14 @@ def resolve_identity(
     submission_id: str,
     request: IdentityResolutionRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
 ):
     submission = (
         db.query(Submission)
-        .filter(Submission.id == submission_id)
+        .filter(
+            Submission.id == submission_id,
+            Submission.institution_id == user.institution_id,
+        )
         .first()
     )
 
@@ -45,7 +60,10 @@ def resolve_identity(
 
         student = (
             db.query(Student)
-            .filter(Student.id == request.student_id)
+            .filter(
+                Student.id == request.student_id,
+                Student.institution_id == user.institution_id,
+            )
             .first()
         )
 

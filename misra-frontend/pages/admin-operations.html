@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin operations · MISRA EDU</title>
+  <link rel="icon" type="image/png" href="../assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=15">
+</head>
+<body class="workspace-body" data-page="operations" data-page-title="Admin operations">
+  <main class="workspace-content" id="workspace-content">
+    <header class="page-heading">
+      <div><h1>Admin operations</h1><p>Review institution activity, security events, background work, and service availability without exposing paper content or credentials.</p></div>
+      <div class="page-actions"><button class="btn btn-secondary" type="button" id="operations-refresh">Refresh</button><a class="btn btn-primary" id="audit-export" href="#">Export visible log</a></div>
+    </header>
+
+    <nav class="operations-tabs segmented" aria-label="Operations sections">
+      <button type="button" data-operations-tab="activity" aria-pressed="true">Activity</button>
+      <button type="button" data-operations-tab="security" aria-pressed="false">Security</button>
+      <button type="button" data-operations-tab="background_jobs" aria-pressed="false">Background jobs</button>
+      <button type="button" data-operations-tab="system" aria-pressed="false">System health</button>
+    </nav>
+
+    <section class="operations-panel" data-operations-panel="audit" aria-live="polite">
+      <form class="workspace-card operations-filters" id="audit-filters">
+        <div class="field"><label for="audit-search">Search activity</label><input class="input" id="audit-search" name="search" placeholder="Action, actor, or target ID"></div>
+        <div class="field"><label for="audit-outcome">Outcome</label><select class="input" id="audit-outcome" name="outcome"><option value="">All outcomes</option><option value="success">Success</option><option value="failure">Failure</option></select></div>
+        <div class="field"><label for="audit-from">From</label><input class="input" type="date" id="audit-from" name="date_from"></div>
+        <div class="field"><label for="audit-to">To</label><input class="input" type="date" id="audit-to" name="date_to"></div>
+        <button class="btn btn-secondary" type="submit">Apply filters</button>
+      </form>
+      <section class="workspace-card operations-sheet" aria-labelledby="audit-title">
+        <div class="card-pad section-head"><div><h2 class="section-title" id="audit-title">Institution activity</h2><p class="section-copy" id="audit-copy">Loading audit events…</p></div></div>
+        <div id="audit-list"><div class="loading-list card-pad"><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
+      </section>
+    </section>
+
+    <section class="operations-panel" data-operations-panel="jobs" hidden aria-live="polite">
+      <form class="workspace-card operations-filters operations-job-filters" id="job-filters">
+        <div class="field"><label for="job-status">Status</label><select class="input" id="job-status" name="status"><option value="">All statuses</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="retrying">Retrying</option><option value="completed">Completed</option><option value="failed">Failed</option></select></div>
+        <div class="field"><label for="job-type">Work type</label><select class="input" id="job-type" name="job_type"><option value="">All work</option><option value="ocr_submission">Paper extraction</option><option value="ocr_batch">Batch extraction</option><option value="grade_submission">Submission grading</option></select></div>
+        <button class="btn btn-secondary" type="submit">Apply filters</button>
+        <button class="btn btn-primary" type="button" id="recover-jobs">Recover abandoned work</button>
+      </form>
+      <section class="workspace-card operations-sheet" aria-labelledby="jobs-title">
+        <div class="card-pad section-head"><div><h2 class="section-title" id="jobs-title">Background jobs</h2><p class="section-copy" id="jobs-copy">Loading processing history…</p></div></div>
+        <div id="jobs-list"><div class="loading-list card-pad"><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
+      </section>
+    </section>
+
+    <section class="operations-panel" data-operations-panel="system" hidden aria-live="polite">
+      <div class="operations-health-summary" id="health-summary"><div class="workspace-card card-pad"><div class="skel loading-row"></div></div></div>
+      <section class="workspace-card operations-guidance">
+        <div class="card-pad"><h2 class="section-title">How health checks work</h2><p class="section-copy">MISRA checks the API, database, Redis queue, RQ workers, and upload storage. An offline worker means queued work is safe in Redis but will not progress until a worker is running.</p><p class="operations-retention" id="retention-copy"></p></div>
+      </section>
+    </section>
+  </main>
+  <script src="../js/app.js"></script><script src="../js/api.js?v=15"></script><script src="../js/workspace.js?v=11"></script><script src="../js/admin-operations.js?v=1"></script>
+</body>
+</html>

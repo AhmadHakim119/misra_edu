@@ -19,6 +19,10 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
+.agents/
+.claude/
+.codex/
+.impeccable/
 
 # Uploaded assessment papers contain student PII. Never commit them.
 misra_backend/storage/uploads/*
@@ -35,7 +39,6 @@ misra_ui/
 misra_backend/seed_*.py
 misra-frontend/INSTRUCTIONS.md
 misra-frontend/pages/dashboard-placeholder.html
-
 # Logs and local databases
 *.log
 *.sqlite

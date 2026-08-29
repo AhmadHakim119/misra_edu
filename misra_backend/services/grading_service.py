@@ -321,6 +321,7 @@ def process_grading(
     db: Session,
     mode: Literal["text_only", "image_text"] = "text_only",
     update_answer: bool = True,
+    processing_job_id: str | None = None,
 ) -> Answer:
     (
         result,
@@ -362,6 +363,7 @@ def process_grading(
     grading_run = GradingRun(
     answer_id=answer.id,
     rubric_version_id=rubric_version_id,
+    processing_job_id=processing_job_id,
     mode=mode,
     model_name=DEFAULT_MODEL,
     prompt_version=GRADING_PROMPT_VERSION,
@@ -513,8 +515,17 @@ def _mark_routing(
     return answer
 
 
-def process_grading_with_policy(answer_id: str, db: Session) -> Answer:
+def process_grading_with_policy(
+    answer_id: str,
+    db: Session,
+    processing_job_id: str | None = None,
+) -> Answer:
     """Apply the per-question policy while retaining the primary grade on Answer."""
+    job_kwargs = (
+        {"processing_job_id": processing_job_id}
+        if processing_job_id is not None
+        else {}
+    )
     answer = db.query(Answer).filter(Answer.id == answer_id).first()
     if not answer:
         raise ValueError(f"Answer {answer_id} not found")
@@ -530,7 +541,12 @@ def process_grading_with_policy(answer_id: str, db: Session) -> Answer:
     if not policy or policy.mode == "adaptive":
         visual_required, _ = _visual_evidence_decision(answer, db, policy)
         selected_mode = "image_text" if visual_required else "text_only"
-        primary = process_grading(answer_id, db, mode=selected_mode)
+        primary = process_grading(
+            answer_id,
+            db,
+            mode=selected_mode,
+            **job_kwargs,
+        )
         return _mark_routing(
             primary,
             policy.mode if policy else "adaptive",
@@ -540,11 +556,21 @@ def process_grading_with_policy(answer_id: str, db: Session) -> Answer:
         )
 
     if policy.mode == "text_only":
-        primary = process_grading(answer_id, db, mode="text_only")
+        primary = process_grading(
+            answer_id,
+            db,
+            mode="text_only",
+            **job_kwargs,
+        )
         return _mark_routing(primary, policy.mode, "text_only", False, db)
 
     if policy.mode in {"image_text", "image_text_required"}:
-        primary = process_grading(answer_id, db, mode="image_text")
+        primary = process_grading(
+            answer_id,
+            db,
+            mode="image_text",
+            **job_kwargs,
+        )
         return _mark_routing(primary, policy.mode, "image_text", False, db)
 
     pilot_active = (
@@ -560,10 +586,21 @@ def process_grading_with_policy(answer_id: str, db: Session) -> Answer:
         )
     )
 
-    primary = process_grading(answer_id, db, mode="text_only")
+    primary = process_grading(
+        answer_id,
+        db,
+        mode="text_only",
+        **job_kwargs,
+    )
     if audit_selected:
         # Preserve text-only as the operational grade. The image grade is evidence
         # for comparison and can only create a review task, never silently replace it.
-        process_grading(answer_id, db, mode="image_text", update_answer=False)
+        process_grading(
+            answer_id,
+            db,
+            mode="image_text",
+            update_answer=False,
+            **job_kwargs,
+        )
 
     return _mark_routing(primary, policy.mode, "text_only", audit_selected, db)

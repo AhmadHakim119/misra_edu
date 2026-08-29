@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Exam, Question, RubricVersion
+from models import Exam, Question, RubricVersion, User
 from schemas.rubric_input import (
     ExistingQuestionRubricSuggestionRequest,
     RubricVersionApprovalRequest,
@@ -10,6 +10,8 @@ from schemas.rubric_input import (
     RubricVersionUpdateRequest,
 )
 from services.rubric_service import suggest_rubric
+from services.auth_dependencies import require_instructor
+from services.audit_service import record_audit_event
 from services.rubric_version_service import (
     approve_rubric_version,
     create_rubric_version,
@@ -172,19 +174,43 @@ def approve_draft_rubric_version(
     version_id: str,
     payload: RubricVersionApprovalRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
 ):
-    version = db.query(RubricVersion).filter(RubricVersion.id == version_id).first()
+    version = (
+        db.query(RubricVersion)
+        .join(Question, Question.id == RubricVersion.question_id)
+        .filter(
+            RubricVersion.id == version_id,
+            Question.institution_id == user.institution_id,
+        )
+        .first()
+    )
     if not version:
         raise HTTPException(status_code=404, detail="Rubric version not found")
 
     try:
         approved, regrade_required = approve_rubric_version(
             version=version,
-            approved_by=payload.approved_by,
+            approved_by=user.id,
             db=db,
         )
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+
+    record_audit_event(
+        db,
+        institution_id=user.institution_id,
+        actor_id=user.id,
+        action="rubric_approved",
+        entity_type="rubric_version",
+        entity_id=approved.id,
+        details={
+            "question_id": approved.question_id,
+            "version_number": approved.version_number,
+            "regrade_required": regrade_required,
+        },
+    )
+    db.commit()
 
     return {
         "rubric_version": approved,

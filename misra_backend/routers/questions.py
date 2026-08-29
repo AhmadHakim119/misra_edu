@@ -2,7 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Exam, Question
+from models import Exam, Question, User
+from services.auth_dependencies import require_instructor
 from schemas.rubric_input import QuestionCreateRequest
 from services.rubric_service import build_rubric
 from services.rubric_version_service import attach_initial_approved_rubric
@@ -11,8 +12,15 @@ router = APIRouter(prefix="/api", tags=["questions"])
 
 
 @router.get("/exams/{exam_id}/questions")
-def list_exam_questions(exam_id: str, db: Session = Depends(get_db)):
-    exam = db.query(Exam).filter(Exam.id == exam_id).first()
+def list_exam_questions(
+    exam_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    exam = db.query(Exam).filter(
+        Exam.id == exam_id,
+        Exam.institution_id == user.institution_id,
+    ).first()
     if not exam:
         raise HTTPException(status_code=404, detail=f"Exam {exam_id} not found")
 
@@ -24,8 +32,16 @@ def list_exam_questions(exam_id: str, db: Session = Depends(get_db)):
     )
 
 @router.post("/exams/{exam_id}/questions")
-async def create_question(exam_id: str, payload: QuestionCreateRequest, db: Session = Depends(get_db)):
-    exam = db.query(Exam).filter(Exam.id == exam_id).first()
+async def create_question(
+    exam_id: str,
+    payload: QuestionCreateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    exam = db.query(Exam).filter(
+        Exam.id == exam_id,
+        Exam.institution_id == user.institution_id,
+    ).first()
     if not exam:
         raise HTTPException(status_code=404, detail=f"Exam {exam_id} not found")
 

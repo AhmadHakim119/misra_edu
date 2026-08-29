@@ -6,7 +6,7 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=9">
+  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=14">
 </head>
 <body class="workspace-body" data-page="submissions">
   <main class="workspace-content" id="workspace-content">
@@ -18,15 +18,16 @@
       </div>
     </header>
     <div id="submission-error" aria-live="assertive"></div>
+    <section id="identity-guidance" class="identity-guidance" aria-live="polite"></section>
     <details class="workspace-card metadata-editor" id="metadata-editor">
       <summary>Paper identity and instructor</summary>
       <form id="metadata-form">
         <div class="metadata-fields">
-          <div class="field"><label for="student-name">Student name</label><input class="input" id="student-name" maxlength="255" autocomplete="off"></div>
-          <div class="field"><label for="student-number">Student number</label><input class="input" id="student-number" maxlength="100" autocomplete="off"></div>
+          <div class="field"><label for="student-name">Student name</label><input class="input" id="student-name" maxlength="255" autocomplete="off" placeholder="As written on the paper"><span class="field-hint">Required to identify the student clearly in MISRA.</span></div>
+          <div class="field"><label for="student-number">Student number</label><input class="input" id="student-number" maxlength="100" autocomplete="off" placeholder="Exact LMS username or student ID"><span class="field-hint">Blackboard matches this value to its course roster.</span></div>
           <div class="field"><label for="instructor-name">Instructor name</label><input class="input" id="instructor-name" maxlength="255" autocomplete="off"><span class="field-hint">Updates the instructor displayed for this course.</span></div>
         </div>
-        <button class="btn btn-secondary" type="submit">Save paper details</button>
+        <div class="metadata-save-row"><button class="btn btn-secondary" type="submit">Save paper details</button><p>Saving both fields links this paper to a reusable student record.</p></div>
       </form>
     </details>
     <section id="readiness-panel" aria-live="polite"><div class="skel" style="height:118px"></div></section>
@@ -43,11 +44,11 @@
           <div><h2 class="section-title">Question mapping</h2><p class="section-copy" id="mapping-copy">Checking expected answers and source segments…</p></div>
           <div class="segmented" aria-label="Filter questions"><button type="button" aria-pressed="true" data-filter="all">All</button><button type="button" aria-pressed="false" data-filter="issues">Issues</button><button type="button" aria-pressed="false" data-filter="missing">Missing</button></div>
         </div>
-        <div class="mapping-guide"><strong>How to correct a mapping</strong><p>Each segment is one OCR fragment. Choose another question, then press <b>Move segment</b>. Fragments previously assigned from the unmatched list can also be removed as noise. Every completed action is saved immediately.</p></div>
+        <div class="mapping-guide"><strong>Question summary</strong><p>Use <b>Organize OCR by page</b> above to correct assignments in batches. These rows show the combined answer that will be sent for grading.</p></div>
         <div id="question-mappings" aria-live="polite"><div class="loading-list card-pad"><div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
       </section>
     </div>
   </main>
-  <script src="../js/app.js"></script><script src="../js/api.js?v=9"></script><script src="../js/workspace.js?v=5"></script><script src="../js/submission.js?v=9"></script>
+  <script src="../js/app.js"></script><script src="../js/api.js?v=16"></script><script src="../js/workspace.js?v=11"></script><script src="../js/submission.js?v=13"></script>
 </body>
 </html>

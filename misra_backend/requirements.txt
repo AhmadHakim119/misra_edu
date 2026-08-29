@@ -11,3 +11,8 @@ pdf2image==1.17.0
 pydantic==2.13.3
 SQLAlchemy==2.0.51
 PyMySQL==1.2.0
+email-validator==2.3.0
+openpyxl==3.1.5
+pypdf==6.16.1
+redis==8.1.0
+rq==2.11.0

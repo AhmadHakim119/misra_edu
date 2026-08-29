@@ -15,6 +15,7 @@ The active application is:
 
 - Python 3.11 or newer
 - MariaDB 10.6+ or MySQL 8+
+- Redis 5+ (or a Redis-compatible Windows service such as Memurai)
 - Poppler available on `PATH` (`pdftoppm -v` must work)
 - A Gemini API key
 
@@ -34,7 +35,10 @@ Copy-Item .\.env.example .\misra_backend\.env
 ```
 
 Edit `misra_backend/.env` and supply the real database URL, Gemini key, and a
-random recovery signing key. Never put secrets in `.env.example`.
+random recovery and authentication signing key. Never put secrets in
+`.env.example`. The example also documents configurable upload boundaries:
+25 MB per file, 100 MB per batch request, 25 files per batch, 50 pages per PDF,
+and 40 million pixels per image.
 
 Create an empty database and a least-privilege local user. Example MariaDB SQL:
 
@@ -49,42 +53,103 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
 FLUSH PRIVILEGES;
 ```
 
-## Create the database schema
-
-For a new database, import the complete schema from the repository root:
-
-```powershell
-Get-Content .\database\schema.sql | mysql -u root -p misra_edu
-```
-
-Alternatively, create the current schema from the SQLAlchemy models:
+For a **new empty database**, create and verify the current model schema:
 
 ```powershell
 Set-Location .\misra_backend
 python .\scripts\bootstrap_database.py --create
 ```
 
-Use only one of these methods for a new database. The SQL file is recommended
-when reproducing the exact submitted schema.
-
-## Run the application
-
-Run from `misra_backend/` so uploaded-file paths resolve consistently:
+For an existing database created before account administration was added, back
+it up and run the explicit additive upgrade once:
 
 ```powershell
 Set-Location .\misra_backend
+python .\scripts\upgrade_account_management.py
+python .\scripts\upgrade_processing_jobs.py
+```
+
+For a new database, import the complete schema:
+
+```powershell
+mysql -u root -p -e "CREATE DATABASE misra_edu CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+Get-Content .\database\schema.sql | mysql -u root -p misra_edu
+```
+
+Fresh installations use the complete schema or current SQLAlchemy models.
+
+## Run the application
+
+OCR and whole-submission grading use Redis Queue (RQ). MariaDB is the durable
+source of job status and Redis carries only processing-job IDs. On Windows,
+Redis documents Memurai or WSL as supported local options. Configure the local
+service on port `6379`, then verify it from `misra_backend/`:
+
+```powershell
+python -c "from services.job_queue_service import redis_connection; print(redis_connection().ping())"
+```
+
+The expected output is `True`. Run the application from `misra_backend/` in two
+separate PowerShell terminals so uploaded-file paths resolve consistently.
+
+Terminal 1 — API and frontend:
+
+```powershell
 uvicorn main:app --reload
 ```
+
+Terminal 2 — OCR and grading worker:
+
+```powershell
+python .\worker.py
+```
+
+The local Windows worker uses RQ's documented `SimpleWorker` pattern with a
+timer-based timeout; Linux deployment uses the standard process-isolated
+worker. Keep both terminals open. Upload endpoints return immediately with a
+submission and job ID; the frontend reads persisted `queued`, `processing`,
+`retrying`, `completed`, and `failed` states and offers a safe retry when the
+attempt limit is reached. At worker startup, MISRA reconciles stale database
+jobs against Redis. Missing jobs are requeued only when their retry budget
+allows it; live RQ jobs are left untouched. Run the reconciliation without
+starting a worker with `python .\worker.py --recover-only`.
 
 Open:
 
 - Instructor workspace: <http://127.0.0.1:8000/app/pages/dashboard.html>
 - API documentation: <http://127.0.0.1:8000/docs>
 - Health check: <http://127.0.0.1:8000/api/health>
+- Admin operations: <http://127.0.0.1:8000/app/pages/admin-operations.html>
 
 The frontend has no build step. It is served by FastAPI from
-`misra-frontend/`. Authentication is not implemented yet, so the application
-must remain on a trusted local machine until API authorization is added.
+`misra-frontend/`. Instructor sessions use signed, HTTP-only cookies with CSRF
+protection. The current prototype shares an institution's assessment workspace
+between its authenticated instructors; course/section-level roles are a future
+multi-instructor administration feature. Set `COOKIE_SECURE=true` when
+deploying behind HTTPS.
+
+Institution administrators can inspect institution-scoped activity, security
+events, background jobs, and service health from Admin operations. Audit
+exports deliberately exclude passwords, reset tokens, cookies, API keys, and
+paper/OCR content. Configure `AUDIT_RETENTION_DAYS` (180 by default) and
+`JOB_ORPHAN_AFTER_SECONDS` (1800 by default) in `misra_backend/.env` when a
+deployment needs different policies.
+
+Instructor accounts are provisioned by an institution administrator rather
+than through public signup. The first local administrator can be provisioned
+or updated with:
+
+```powershell
+python .\scripts\create_instructor.py `
+  --institution-id "YOUR_INSTITUTION_ID" `
+  --email "admin@example.edu" `
+  --name "Institution Admin" `
+  --role admin
+```
+
+Password recovery defaults to `PASSWORD_RESET_DELIVERY=console` for local
+development; the one-use reset link appears in the Uvicorn terminal. Configure
+the documented SMTP variables and set the mode to `smtp` before deployment.
 
 ## Run tests
 
@@ -133,6 +198,11 @@ require a seed script.
 ## Known deployment boundary
 
 This repository currently represents a local thesis prototype, not an
-internet-safe production deployment. Authentication, authorization, upload
-limits, restrictive CORS, durable background jobs, and managed encrypted file
-storage must be completed before public deployment.
+internet-safe production deployment. Signed instructor sessions,
+institution-scoped extraction authorization, and validated upload limits are
+implemented. Password change/recovery, global session invalidation,
+administrator-provisioned instructor accounts, and database-backed recovery
+throttling are also implemented. Durable Redis-backed OCR and grading jobs are
+implemented for the local prototype. Login throttling, restrictive production
+CORS, managed encrypted file storage, retention automation, and deployment
+monitoring remain before public use.

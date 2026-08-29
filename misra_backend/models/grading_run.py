@@ -38,6 +38,12 @@ class GradingRun(Base):
         nullable=True,
         index=True,
     )
+    processing_job_id: Mapped[str | None] = mapped_column(
+        CHAR(36),
+        ForeignKey("processing_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     mode: Mapped[str] = mapped_column(String(20), nullable=False)
     model_name: Mapped[str] = mapped_column(String(100), nullable=False)

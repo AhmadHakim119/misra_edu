@@ -7,6 +7,8 @@
   const readinessPanel = document.getElementById('readiness-panel');
   const unmatchedPanel = document.getElementById('unmatched-panel');
   const metadataForm = document.getElementById('metadata-form');
+  const metadataEditor = document.getElementById('metadata-editor');
+  const identityGuidance = document.getElementById('identity-guidance');
   const studentName = document.getElementById('student-name');
   const studentNumber = document.getElementById('student-number');
   const instructorName = document.getElementById('instructor-name');
@@ -26,6 +28,48 @@
   let pageIndex = Number.isInteger(requestedPage) && requestedPage >= 0 ? requestedPage : 0;
   let filter = 'all';
   let recoveryPreview = null;
+  let activeOcrPoll = 0;
+
+  function wait(milliseconds) {
+    return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+  }
+
+  function renderOcrJob(job) {
+    if (job.status === 'failed') {
+      errorRegion.innerHTML = `<div class="workspace-card card-pad upload-status-card is-error" role="alert">
+        <strong>Extraction failed</strong>
+        <p class="section-copy">${MisraUI.escapeHTML(job.error_message || 'OCR could not process this paper.')}</p>
+        <div class="job-actions"><button class="btn btn-primary" type="button" data-retry-ocr="${job.id}">Retry safely</button><a class="btn btn-secondary" href="upload.html">Upload another paper</a></div>
+      </div>`;
+      return;
+    }
+
+    const current = Number(job.progress_current || 0);
+    const total = Number(job.progress_total || 0);
+    const percent = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
+    const label = job.status === 'retrying' ? 'Extraction retry scheduled…' : job.status === 'processing' ? 'Extracting this paper…' : 'Waiting for an OCR worker…';
+    errorRegion.innerHTML = `<div class="workspace-card card-pad upload-status-card" role="status">
+      <div class="upload-status-line"><span class="upload-status-pulse" aria-hidden="true"></span><strong>${label}</strong><span class="job-progress-count">${total ? `${current} / ${total}` : 'Queued'}</span></div>
+      <div class="job-progress-track" aria-label="Extraction progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>
+      <p class="section-copy">${MisraUI.escapeHTML(job.progress_message || 'The worker is processing this paper in the background.')}</p>
+    </div>`;
+  }
+
+  async function watchOcrJob(jobId) {
+    const pollId = ++activeOcrPoll;
+    for (let attempt = 0; attempt < 240 && pollId === activeOcrPoll; attempt += 1) {
+      const job = await MisraAPI.job(jobId);
+      if (job.status === 'completed') {
+        activeOcrPoll += 1;
+        window.showToast('Extraction complete. Review the mapped answers.', 'success');
+        await load();
+        return;
+      }
+      renderOcrJob(job);
+      if (job.status === 'failed') return;
+      await wait(2500);
+    }
+  }
 
   function clearRecoveryPreview() {
     recoveryPreview = null;
@@ -66,41 +110,80 @@
   }
 
   function renderIdentity() {
-    const student = report.submission.extracted_student_name || report.submission.extracted_student_number || 'Unidentified student';
-    title.textContent = student;
-    meta.textContent = `${report.submission.page_count} pages · ${report.submission.identity_status.replaceAll('_', ' ')} · uploaded ${MisraUI.formatDate(report.submission.uploaded_at)}`;
+    const identity = MisraUI.identityState(report.submission);
+    title.textContent = identity.displayName;
+    meta.textContent = `${identity.displayNumber} · ${report.submission.page_count} pages · uploaded ${MisraUI.formatDate(report.submission.uploaded_at)}`;
     studentName.value = report.submission.extracted_student_name || '';
     studentNumber.value = report.submission.extracted_student_number || '';
     instructorName.value = report.submission.instructor_name || '';
+    identityGuidance.innerHTML = `<div class="identity-guidance-state ${identity.needsAttention ? 'needs-action' : 'is-ready'}">
+      <span class="readiness-mark">${identity.needsAttention ? '!' : '✓'}</span>
+      <div><strong>${MisraUI.escapeHTML(identity.label)}</strong><p>${MisraUI.escapeHTML(identity.message)}</p></div>
+      <button class="btn btn-secondary" type="button" data-open-identity>${identity.needsAttention ? 'Complete identity' : 'Review details'}</button>
+    </div>`;
+    if (identity.needsAttention) metadataEditor.open = true;
   }
 
-  function renderUnmatched() {
-    const segments = report.unmatched_segments || [];
-    if (!segments.length) {
+  function renderSegmentOrganizer() {
+    const groups = Array.from({ length: report.submission.page_count }, (_, index) => ({ pageIndex: index, items: [] }));
+    report.questions.forEach((row) => row.sources.forEach((source) => {
+      groups[source.page_index]?.items.push({
+        kind: 'source',
+        id: source.id,
+        segmentIndex: source.segment_index,
+        text: source.extracted_text,
+        questionNumber: row.question.question_number,
+        detectedLabel: source.ocr_segment?.question_number || null,
+      });
+    }));
+    (report.unmatched_segments || []).forEach((segment, index) => {
+      if (!Number.isInteger(segment.page_index) || !groups[segment.page_index]) return;
+      groups[segment.page_index].items.push({
+        kind: 'unmatched',
+        index,
+        segmentIndex: Number(segment.segment_index ?? 10000 + index),
+        text: segment.text || '',
+        questionNumber: null,
+        detectedLabel: segment.question_number || null,
+      });
+    });
+
+    const visibleGroups = groups.filter((group) => group.items.length);
+    if (!visibleGroups.length) {
       unmatchedPanel.innerHTML = '';
       return;
     }
+    visibleGroups.forEach((group) => group.items.sort((left, right) => left.segmentIndex - right.segmentIndex));
     const questionOptions = report.questions.map((row) => `<option value="${row.question.id}">Question ${MisraUI.escapeHTML(row.question.question_number)} — ${MisraUI.escapeHTML(row.question.question_text || 'Untitled question')}</option>`).join('');
-    unmatchedPanel.innerHTML = `<details class="workspace-card unmatched-review" open>
-      <summary><span>Unassigned OCR fragments</span>${MisraUI.badge(`${segments.length} remaining`, 'warning')}</summary>
-      <p class="section-copy">Nothing is selected automatically. For each fragment, deliberately choose its question and paper page—or mark it as noise.</p>
-      <div class="unmatched-list">${segments.map((segment, index) => `<div class="unmatched-item" data-unmatched-index="${index}">
-        <div class="unmatched-copy"><span>${segment.question_number ? `OCR detected label ${MisraUI.escapeHTML(segment.question_number)}` : 'OCR could not identify a question'}</span><p>${MisraUI.escapeHTML(segment.text || '')}</p></div>
-        <div class="unmatched-actions">
-          <label>Belongs to<select class="input select" data-unmatched-question aria-label="Target question for unmatched fragment ${index + 1}"><option value="">Choose question…</option>${questionOptions}</select></label>
-          <label>Seen on<select class="input select" data-unmatched-page aria-label="Source page for unmatched fragment ${index + 1}"><option value="">Choose page…</option>${Array.from({ length: report.submission.page_count }, (_, page) => `<option value="${page}" ${Number.isInteger(segment.page_index) && page === segment.page_index ? 'selected' : ''}>Page ${page + 1}</option>`).join('')}</select></label>
-          <button class="btn btn-secondary" type="button" data-assign-unmatched disabled>Assign fragment</button><button class="btn btn-ghost" type="button" data-ignore-unmatched>Mark as noise</button>
-        </div>
-      </div>`).join('')}</div>
-    </details>`;
+
+    unmatchedPanel.innerHTML = `<section class="workspace-card segment-organizer" aria-labelledby="segment-organizer-title">
+      <div class="segment-organizer-head"><div><h2 class="section-title" id="segment-organizer-title">Organize OCR by page</h2><p class="section-copy">Select several fragments, then move them together. Use “Mark as noise” only for headers, footers, and OCR mistakes.</p></div>${report.readiness.unmatched_segment_count ? MisraUI.badge(`${report.readiness.unmatched_segment_count} unassigned`, 'warning') : MisraUI.badge('All assigned', 'success')}</div>
+      <div class="segment-bulk-toolbar">
+        <strong><span data-selection-count>0</span> selected</strong>
+        <select class="input select" data-bulk-target aria-label="Question for selected OCR fragments"><option value="">Move selected to…</option>${questionOptions}</select>
+        <button class="btn btn-primary" type="button" data-bulk-assign disabled>Move selected</button>
+        <button class="btn btn-ghost source-noise" type="button" data-bulk-ignore disabled>Mark as noise</button>
+      </div>
+      <div class="segment-page-groups">${visibleGroups.map((group) => {
+        const unmatchedCount = group.items.filter((item) => item.kind === 'unmatched').length;
+        const shouldOpen = unmatchedCount > 0 || group.pageIndex === pageIndex;
+        return `<details class="segment-page-group" data-segment-page-group="${group.pageIndex}" ${shouldOpen ? 'open' : ''}>
+          <summary><span><strong>Page ${group.pageIndex + 1}</strong><small>${group.items.length} fragment${group.items.length === 1 ? '' : 's'}${unmatchedCount ? ` · ${unmatchedCount} unassigned` : ''}</small></span><span class="disclosure" aria-hidden="true">⌄</span></summary>
+          <div class="segment-page-actions"><button class="btn btn-ghost" type="button" data-view-segment-page="${group.pageIndex}">View paper page</button><button class="btn btn-secondary" type="button" data-select-page="${group.pageIndex}">Select page</button></div>
+          <div class="segment-choice-list">${group.items.map((item) => `<label class="segment-choice ${item.kind === 'unmatched' ? 'is-unmatched' : ''}">
+            <input type="checkbox" ${item.kind === 'source' ? `data-source-id="${item.id}"` : `data-unmatched-index="${item.index}"`}>
+            <span class="segment-choice-copy"><strong>${item.kind === 'source' ? `Question ${MisraUI.escapeHTML(item.questionNumber)}` : 'Unassigned'}${item.detectedLabel ? `<small>OCR label ${MisraUI.escapeHTML(item.detectedLabel)}</small>` : ''}</strong><span>${MisraUI.escapeHTML(item.text)}</span></span>
+            ${MisraUI.badge(item.kind === 'source' ? `Q${item.questionNumber}` : 'Unassigned', item.kind === 'source' ? 'draft' : 'warning')}
+          </label>`).join('')}</div>
+        </details>`;
+      }).join('')}</div>
+    </section>`;
   }
 
   function sourceMarkup(source, row) {
-    const options = report.questions.filter((candidate) => candidate.question.id !== row.question.id).map((candidate) => `<option value="${candidate.question.id}">Question ${MisraUI.escapeHTML(candidate.question.question_number)} — ${MisraUI.escapeHTML(candidate.question.question_text || 'Untitled question')}</option>`).join('');
     return `<div class="source-segment" data-source="${source.id}">
       <button class="source-page-link" type="button" data-source-page="${source.page_index}">Page ${source.page_number} · ${source.resolved_from_unmatched ? 'manually assigned' : `OCR segment ${source.segment_index + 1}`}</button>
       <p>${MisraUI.escapeHTML(source.extracted_text)}</p>
-      <div class="source-move"><span>Currently in Question ${MisraUI.escapeHTML(row.question.question_number)}</span><select class="input select" data-source-target aria-label="Move this OCR segment to another question"><option value="">Move to another question…</option>${options}</select><button class="btn btn-secondary" type="button" data-move-source="${source.id}" disabled>Move segment</button>${source.resolved_from_unmatched ? '<button class="btn btn-ghost source-noise" type="button" data-remove-source>Remove as noise</button>' : ''}</div>
     </div>`;
   }
 
@@ -136,12 +219,23 @@
       return;
     }
     try {
-      report = await MisraAPI.extractionReview(submissionId);
+      const [nextReport, jobs] = await Promise.all([
+        MisraAPI.extractionReview(submissionId),
+        MisraAPI.submissionJobs(submissionId, 'ocr_submission'),
+      ]);
+      report = nextReport;
       renderIdentity();
       renderReadiness();
-      renderUnmatched();
+      renderSegmentOrganizer();
       renderMappings();
       setPage(Math.min(pageIndex, report.submission.page_count - 1));
+      const latestJob = jobs[0];
+      if (latestJob && ['queued', 'processing', 'retrying', 'failed'].includes(latestJob.status)) {
+        renderOcrJob(latestJob);
+        if (latestJob.status !== 'failed') watchOcrJob(latestJob.id);
+      } else {
+        errorRegion.innerHTML = '';
+      }
     } catch (error) {
       errorRegion.innerHTML = MisraUI.errorState(error.message);
       readinessPanel.innerHTML = '';
@@ -151,6 +245,21 @@
 
   previousPage.addEventListener('click', () => setPage(pageIndex - 1));
   nextPage.addEventListener('click', () => setPage(pageIndex + 1));
+  errorRegion.addEventListener('click', async (event) => {
+    const retry = event.target.closest('[data-retry-ocr]');
+    if (!retry) return;
+    retry.disabled = true;
+    retry.textContent = 'Scheduling retry…';
+    try {
+      const job = await MisraAPI.retryJob(retry.dataset.retryOcr);
+      renderOcrJob(job);
+      watchOcrJob(job.id);
+    } catch (error) {
+      window.showToast(error.message, 'error');
+      retry.disabled = false;
+      retry.textContent = 'Retry safely';
+    }
+  });
   metadataForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     const button = metadataForm.querySelector('[type="submit"]');
@@ -162,40 +271,87 @@
         instructor_name: instructorName.value.trim() || null,
       });
       renderIdentity();
-      window.showToast('Paper identity and instructor updated.', 'success');
+      const identity = MisraUI.identityState(report.submission);
+      window.showToast(identity.complete ? 'Student identity saved and linked to the roster.' : 'Details saved. Student identity is still incomplete.', identity.complete ? 'success' : 'warning');
     } catch (error) {
       window.showToast(error.message, 'error');
     } finally {
       button.disabled = false; button.textContent = 'Save paper details';
     }
   });
+  identityGuidance.addEventListener('click', (event) => {
+    if (!event.target.closest('[data-open-identity]')) return;
+    metadataEditor.open = true;
+    const identity = MisraUI.identityState(report.submission);
+    window.setTimeout(() => (identity.hasName ? studentNumber : studentName).focus(), 0);
+  });
+  function selectedSegments() {
+    return [...unmatchedPanel.querySelectorAll('.segment-choice input:checked')];
+  }
+
+  function updateSegmentActions() {
+    const selected = selectedSegments();
+    const target = unmatchedPanel.querySelector('[data-bulk-target]');
+    const assign = unmatchedPanel.querySelector('[data-bulk-assign]');
+    const ignore = unmatchedPanel.querySelector('[data-bulk-ignore]');
+    const count = unmatchedPanel.querySelector('[data-selection-count]');
+    if (!target || !assign || !ignore || !count) return;
+    count.textContent = String(selected.length);
+    assign.disabled = !selected.length || !target.value;
+    ignore.disabled = !selected.length || selected.some((input) => !input.hasAttribute('data-unmatched-index'));
+  }
+
+  unmatchedPanel.addEventListener('change', (event) => {
+    if (event.target.matches('.segment-choice input, [data-bulk-target]')) updateSegmentActions();
+  });
   unmatchedPanel.addEventListener('click', async (event) => {
-    const row = event.target.closest('[data-unmatched-index]');
-    if (!row) return;
-    const assignButton = event.target.closest('[data-assign-unmatched]');
-    const ignoreButton = event.target.closest('[data-ignore-unmatched]');
-    if (!assignButton && !ignoreButton) return;
-    row.querySelectorAll('button, select').forEach((control) => { control.disabled = true; });
+    const viewPage = event.target.closest('[data-view-segment-page]');
+    if (viewPage) {
+      setPage(Number(viewPage.dataset.viewSegmentPage));
+      document.getElementById('source-viewer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+
+    const selectPage = event.target.closest('[data-select-page]');
+    if (selectPage) {
+      const group = selectPage.closest('[data-segment-page-group]');
+      const checkboxes = [...group.querySelectorAll('.segment-choice input')];
+      const shouldSelect = checkboxes.some((checkbox) => !checkbox.checked);
+      checkboxes.forEach((checkbox) => { checkbox.checked = shouldSelect; });
+      selectPage.textContent = shouldSelect ? 'Clear page' : 'Select page';
+      updateSegmentActions();
+      return;
+    }
+
+    const assign = event.target.closest('[data-bulk-assign]');
+    const ignore = event.target.closest('[data-bulk-ignore]');
+    if (!assign && !ignore) return;
+    const selected = selectedSegments();
+    if (!selected.length) return;
+    const target = unmatchedPanel.querySelector('[data-bulk-target]');
+    const payload = {
+      action: ignore ? 'ignore' : 'assign',
+      question_id: ignore ? null : target.value,
+      source_ids: selected.map((input) => input.dataset.sourceId).filter(Boolean),
+      unmatched_indices: selected.map((input) => input.dataset.unmatchedIndex).filter((value) => value !== undefined).map(Number),
+    };
+    if (!ignore && !payload.question_id) {
+      window.showToast('Choose the destination question first.', 'error');
+      return;
+    }
+    assign && (assign.disabled = true);
+    ignore && (ignore.disabled = true);
     try {
-      const payload = ignoreButton ? { action: 'ignore' } : {
-        action: 'assign',
-        question_id: row.querySelector('[data-unmatched-question]').value,
-        page_index: Number(row.querySelector('[data-unmatched-page]').value),
-      };
-      await MisraAPI.resolveUnmatchedSegment(submissionId, Number(row.dataset.unmatchedIndex), payload);
-      await load();
-      window.showToast(ignoreButton ? 'Fragment marked as noise. Saved.' : 'Fragment assigned and saved.', 'success');
+      report = await MisraAPI.bulkResolveSegments(submissionId, payload);
+      renderReadiness();
+      renderSegmentOrganizer();
+      renderMappings();
+      setPage(pageIndex);
+      window.showToast(ignore ? 'Selected OCR noise removed.' : `${selected.length} fragment${selected.length === 1 ? '' : 's'} moved and saved.`, 'success');
     } catch (error) {
       window.showToast(error.message, 'error');
-      row.querySelectorAll('button, select').forEach((control) => { control.disabled = false; });
+      updateSegmentActions();
     }
-  });
-  unmatchedPanel.addEventListener('change', (event) => {
-    const row = event.target.closest('[data-unmatched-index]');
-    if (!row) return;
-    const question = row.querySelector('[data-unmatched-question]').value;
-    const page = row.querySelector('[data-unmatched-page]').value;
-    row.querySelector('[data-assign-unmatched]').disabled = !question || page === '';
   });
   reextractPage.addEventListener('click', async () => {
     const targets = report?.readiness.missing_question_numbers || [];
@@ -229,6 +385,7 @@
       report = await MisraAPI.confirmPageRecovery(submissionId, recoveryPreview.page_index, recoveryPreview);
       clearRecoveryPreview();
       renderReadiness();
+      renderSegmentOrganizer();
       renderMappings();
       setPage(pageIndex);
       window.showToast('Recovered answers merged into this submission.', 'success');
@@ -248,40 +405,7 @@
     if (pageTarget) {
       setPage(Number.parseInt(pageTarget.dataset.sourcePage, 10));
       document.getElementById('source-viewer').scrollIntoView({ behavior: 'smooth', block: 'start' });
-      if (pageTarget.matches('.source-page-link')) return;
     }
-    const sourceRow = event.target.closest('[data-source]');
-    const removeButton = event.target.closest('[data-remove-source]');
-    if (removeButton && sourceRow) {
-      const excerpt = sourceRow.querySelector('p')?.textContent.trim().slice(0, 90) || 'this fragment';
-      if (!window.confirm(`Remove “${excerpt}${excerpt.length === 90 ? '…' : ''}” as OCR noise? This will be saved immediately.`)) return;
-      removeButton.disabled = true; removeButton.textContent = 'Removing…';
-      try {
-        await MisraAPI.removeAnswerSource(sourceRow.dataset.source);
-        await load();
-        window.showToast('OCR noise removed and saved.', 'success');
-      } catch (error) {
-        window.showToast(error.message, 'error');
-        removeButton.disabled = false; removeButton.textContent = 'Remove as noise';
-      }
-      return;
-    }
-    const moveButton = event.target.closest('[data-move-source]');
-    if (!moveButton || !sourceRow) return;
-    const select = sourceRow.querySelector('[data-source-target]');
-    if (!select.value) { window.showToast('Choose the destination question first.', 'error'); return; }
-    const targetLabel = select.options[select.selectedIndex].text;
-    moveButton.disabled = true; moveButton.textContent = 'Moving…';
-    try {
-      await MisraAPI.moveAnswerSource(sourceRow.dataset.source, select.value);
-      await load();
-      window.showToast(`Moved to ${targetLabel}. Saved.`, 'success');
-    } catch (error) { window.showToast(error.message, 'error'); moveButton.disabled = false; moveButton.textContent = 'Move segment'; }
-  });
-  mappingList.addEventListener('change', (event) => {
-    const select = event.target.closest('[data-source-target]');
-    if (!select) return;
-    select.closest('[data-source]').querySelector('[data-move-source]').disabled = !select.value;
   });
   gradeAll.addEventListener('click', async () => {
     if (!report?.readiness.bulk_grading_allowed) return;
@@ -289,8 +413,8 @@
     if (!confirmed) return;
     gradeAll.disabled = true; gradeAll.textContent = 'Grading all answers…';
     try {
-      await MisraAPI.gradeSubmission(submissionId, gradeMode.value);
-      window.location.href = `grade-results.html?id=${encodeURIComponent(submissionId)}`;
+      const response = await MisraAPI.gradeSubmission(submissionId, gradeMode.value);
+      window.location.href = `grade-results.html?id=${encodeURIComponent(submissionId)}&job_id=${encodeURIComponent(response.job.id)}`;
     }
     catch (error) { window.showToast(error.message, 'error'); }
     finally { gradeAll.textContent = 'Grade all answers'; gradeAll.disabled = !report?.readiness.bulk_grading_allowed; }

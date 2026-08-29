@@ -4,7 +4,6 @@
   const form = document.getElementById('assessment-form');
   const courseForm = document.getElementById('course-form');
   const courseSelect = document.getElementById('assessment-course');
-  const ownerSelect = document.getElementById('course-owner');
   let courses = [];
 
   function courseLabel(course) {
@@ -16,7 +15,6 @@
     const options = courses.map((course) => `<option value="${course.id}">${MisraUI.escapeHTML(courseLabel(course))}</option>`).join('');
     const empty = '<option value="">No courses found</option>';
     courseSelect.innerHTML = options || empty;
-    ownerSelect.innerHTML = options || '<option value="">Create the first course through authenticated setup</option>';
     if (selectedCourseId && courses.some((course) => course.id === selectedCourseId)) courseSelect.value = selectedCourseId;
   }
 
@@ -26,7 +24,6 @@
       renderCourses(selectedCourseId);
     } catch (error) {
       courseSelect.innerHTML = '<option value="">Courses unavailable</option>';
-      ownerSelect.innerHTML = '<option value="">Ownership profiles unavailable</option>';
       window.showToast('Courses could not be loaded. Try refreshing the page.', 'error');
     }
   }

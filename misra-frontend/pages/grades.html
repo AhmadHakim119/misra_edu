@@ -6,22 +6,34 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=11">
+  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=13">
 </head>
 <body class="workspace-body" data-page="grades">
   <main class="workspace-content" id="workspace-content">
     <header class="page-heading">
       <div><h1>Grades</h1><p>Open recorded scores, criterion feedback, source pages, and answers waiting for instructor review.</p></div>
+      <div class="page-actions grade-export-actions">
+        <label class="sr-only" for="export-profile">CSV profile</label>
+        <select class="input select grade-export-profile" id="export-profile">
+          <option value="blackboard">Blackboard CSV</option>
+          <option value="generic">Generic CSV</option>
+        </select>
+        <a class="btn btn-secondary" id="export-csv" aria-disabled="true">LMS CSV</a>
+        <a class="btn btn-secondary" id="export-xlsx" aria-disabled="true">Excel report</a>
+      </div>
     </header>
     <section class="workspace-card card-pad gradebook-controls" aria-label="Grade filters">
+      <div class="field"><label for="grades-course">Course</label><select class="input select" id="grades-course"><option value="">All courses</option></select></div>
       <div class="field"><label for="grades-exam">Assessment</label><select class="input select" id="grades-exam"><option value="">All assessments</option></select></div>
       <div class="field"><label for="grades-status">Review status</label><select class="input select" id="grades-status"><option value="all">All recorded grades</option><option value="attention">Needs review</option><option value="clear">Not flagged</option></select></div>
     </section>
+    <p class="grade-export-note" id="grade-export-note">Select one assessment to export. LMS CSV includes only complete, unflagged grades; the Excel report includes review and question-level detail.</p>
+    <section id="grade-export-preflight" class="export-preflight" aria-live="polite"></section>
     <section class="workspace-card gradebook-sheet" aria-labelledby="grades-list-title">
       <div class="grade-results-head"><div><h2 class="section-title" id="grades-list-title">Recorded results</h2><p class="section-copy" id="grades-list-copy">Loading persisted grades…</p></div></div>
       <div id="grades-result" aria-live="polite"><div class="loading-list card-pad"><div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
     </section>
   </main>
-  <script src="../js/app.js"></script><script src="../js/api.js?v=10"></script><script src="../js/workspace.js?v=5"></script><script src="../js/grades.js?v=1"></script>
+  <script src="../js/app.js"></script><script src="../js/api.js?v=13"></script><script src="../js/workspace.js?v=11"></script><script src="../js/grades.js?v=6"></script>
 </body>
 </html>

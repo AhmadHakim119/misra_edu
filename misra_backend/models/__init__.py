@@ -15,3 +15,5 @@ from .review_label import ReviewLabel
 from .grading_run import GradingRun
 from .question_grading_policy import QuestionGradingPolicy
 from .rubric_version import RubricVersion
+from .password_reset_token import PasswordResetToken
+from .processing_job import ProcessingJob

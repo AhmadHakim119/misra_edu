@@ -45,7 +45,6 @@ class CourseCreationTests(unittest.TestCase):
 
     def payload(self):
         return CourseCreateRequest(
-            owner_course_id=self.owner.id,
             course_code="CS2071",
             title="Database Systems",
             term="Spring 2022",
@@ -53,7 +52,7 @@ class CourseCreationTests(unittest.TestCase):
         )
 
     def test_course_inherits_persisted_ownership(self):
-        course = create_course(self.payload(), self.db)
+        course = create_course(self.payload(), self.db, self.teacher)
 
         self.assertEqual(course.institution_id, self.institution.id)
         self.assertEqual(course.teacher_id, self.teacher.id)
@@ -62,10 +61,10 @@ class CourseCreationTests(unittest.TestCase):
         self.assertEqual(course.instructor_name, "Zain Balfagih")
 
     def test_duplicate_course_is_rejected(self):
-        create_course(self.payload(), self.db)
+        create_course(self.payload(), self.db, self.teacher)
 
         with self.assertRaises(HTTPException) as raised:
-            create_course(self.payload(), self.db)
+            create_course(self.payload(), self.db, self.teacher)
 
         self.assertEqual(raised.exception.status_code, 409)
 

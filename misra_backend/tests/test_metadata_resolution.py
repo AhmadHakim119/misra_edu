@@ -9,7 +9,7 @@ os.environ.setdefault("GEMINI_API_KEY", "test-key-not-used")
 
 from database import Base  # noqa: E402
 import models  # noqa: E402,F401
-from models import Answer, AnswerSource, Course, Exam, Institution, Question, Submission, User  # noqa: E402
+from models import Answer, AnswerSource, Course, Exam, Institution, Question, Student, Submission, User  # noqa: E402
 from routers.results import update_submission_metadata  # noqa: E402
 from schemas.submission_metadata_input import SubmissionMetadataUpdate  # noqa: E402
 from services.extraction_review_service import (  # noqa: E402
@@ -76,6 +76,7 @@ class MetadataResolutionTests(unittest.TestCase):
         )
         self.db.add_all([institution, teacher, course, exam, question, submission])
         self.db.commit()
+        self.teacher = teacher
 
     def tearDown(self):
         self.db.close()
@@ -89,10 +90,33 @@ class MetadataResolutionTests(unittest.TestCase):
                 instructor_name="Zain Balfagih",
             ),
             self.db,
+            self.teacher,
         )
 
         self.assertEqual(report["submission"]["extracted_student_name"], "Leen Sharab")
+        self.assertEqual(report["submission"]["extracted_student_number"], "S21107195")
+        self.assertEqual(report["submission"]["identity_status"], "matched")
         self.assertEqual(report["submission"]["instructor_name"], "Zain Balfagih")
+        student = self.db.query(Student).one()
+        self.assertEqual(student.full_name, "Leen Sharab")
+        self.assertEqual(student.student_number, "S21107195")
+
+    def test_partial_identity_stays_unmatched_and_does_not_create_student(self):
+        report = update_submission_metadata(
+            "submission-1",
+            SubmissionMetadataUpdate(
+                student_name=None,
+                student_number="S23108524",
+                instructor_name="Zain Balfagih",
+            ),
+            self.db,
+            self.teacher,
+        )
+
+        self.assertIsNone(report["submission"]["extracted_student_name"])
+        self.assertEqual(report["submission"]["extracted_student_number"], "S23108524")
+        self.assertEqual(report["submission"]["identity_status"], "unmatched_extracted")
+        self.assertEqual(self.db.query(Student).count(), 0)
 
     def test_unmatched_segment_can_be_assigned_with_source_page(self):
         report = resolve_unmatched_segment(

@@ -229,11 +229,54 @@ CREATE TABLE `grading_runs` (
   `latency_ms` int(11) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
   `rubric_version_id` char(36) DEFAULT NULL,
+  `processing_job_id` char(36) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `ix_grading_runs_answer_created` (`answer_id`,`created_at`),
   KEY `ix_grading_runs_rubric_version_id` (`rubric_version_id`),
+  KEY `ix_grading_runs_processing_job_id` (`processing_job_id`),
   CONSTRAINT `fk_grading_runs_answer` FOREIGN KEY (`answer_id`) REFERENCES `answers` (`id`),
-  CONSTRAINT `fk_grading_runs_rubric_version` FOREIGN KEY (`rubric_version_id`) REFERENCES `rubric_versions` (`id`)
+  CONSTRAINT `fk_grading_runs_rubric_version` FOREIGN KEY (`rubric_version_id`) REFERENCES `rubric_versions` (`id`),
+  CONSTRAINT `fk_grading_runs_processing_job` FOREIGN KEY (`processing_job_id`) REFERENCES `processing_jobs` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `processing_jobs`
+--
+
+DROP TABLE IF EXISTS `processing_jobs`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `processing_jobs` (
+  `id` char(36) NOT NULL,
+  `institution_id` char(36) NOT NULL,
+  `requested_by` char(36) DEFAULT NULL,
+  `submission_id` char(36) DEFAULT NULL,
+  `batch_id` char(36) DEFAULT NULL,
+  `job_type` enum('ocr_submission','ocr_batch','grade_submission') NOT NULL,
+  `status` enum('queued','processing','completed','failed','retrying') NOT NULL DEFAULT 'queued',
+  `rq_job_id` varchar(255) DEFAULT NULL,
+  `progress_current` int(11) NOT NULL DEFAULT 0,
+  `progress_total` int(11) NOT NULL DEFAULT 0,
+  `progress_message` varchar(255) DEFAULT NULL,
+  `attempt_count` int(11) NOT NULL DEFAULT 0,
+  `max_attempts` int(11) NOT NULL DEFAULT 3,
+  `error_message` text DEFAULT NULL,
+  `payload` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`payload`)),
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  `started_at` datetime DEFAULT NULL,
+  `completed_at` datetime DEFAULT NULL,
+  `updated_at` datetime NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
+  PRIMARY KEY (`id`),
+  KEY `ix_processing_jobs_institution_status` (`institution_id`,`status`),
+  KEY `ix_processing_jobs_submission_created` (`submission_id`,`created_at`),
+  KEY `ix_processing_jobs_batch_created` (`batch_id`,`created_at`),
+  KEY `ix_processing_jobs_rq_job_id` (`rq_job_id`),
+  KEY `ix_processing_jobs_requested_by` (`requested_by`),
+  CONSTRAINT `fk_processing_jobs_institution` FOREIGN KEY (`institution_id`) REFERENCES `institutions` (`id`),
+  CONSTRAINT `fk_processing_jobs_requested_by` FOREIGN KEY (`requested_by`) REFERENCES `users` (`id`),
+  CONSTRAINT `fk_processing_jobs_submission` FOREIGN KEY (`submission_id`) REFERENCES `submissions` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_processing_jobs_batch` FOREIGN KEY (`batch_id`) REFERENCES `batches` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -464,11 +507,40 @@ CREATE TABLE `users` (
   `hashed_password` varchar(255) NOT NULL,
   `full_name` varchar(255) DEFAULT NULL,
   `role` enum('teacher','admin') NOT NULL DEFAULT 'teacher',
+  `is_active` tinyint(1) NOT NULL DEFAULT 1,
+  `must_change_password` tinyint(1) NOT NULL DEFAULT 0,
+  `session_version` int(11) NOT NULL DEFAULT 1,
+  `password_changed_at` datetime DEFAULT NULL,
   `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
   PRIMARY KEY (`id`),
   UNIQUE KEY `uq_user_email_per_institution` (`institution_id`,`email`),
   KEY `idx_users_institution` (`institution_id`),
   CONSTRAINT `users_ibfk_1` FOREIGN KEY (`institution_id`) REFERENCES `institutions` (`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Table structure for table `password_reset_tokens`
+--
+
+DROP TABLE IF EXISTS `password_reset_tokens`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `password_reset_tokens` (
+  `id` char(36) NOT NULL,
+  `user_id` char(36) DEFAULT NULL,
+  `email_hash` char(64) NOT NULL,
+  `request_ip_hash` char(64) DEFAULT NULL,
+  `token_hash` char(64) NOT NULL,
+  `expires_at` datetime NOT NULL,
+  `used_at` datetime DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_password_reset_token_hash` (`token_hash`),
+  KEY `ix_password_reset_email_created` (`email_hash`,`created_at`),
+  KEY `ix_password_reset_ip_created` (`request_ip_hash`,`created_at`),
+  KEY `ix_password_reset_user` (`user_id`),
+  CONSTRAINT `fk_password_reset_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;

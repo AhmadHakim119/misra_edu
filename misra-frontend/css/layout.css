@@ -213,6 +213,11 @@
   overflow: hidden;
 }
 
+.auth-side > :not(.auth-side-orbits) {
+  position: relative;
+  z-index: 1;
+}
+
 @media (min-width: 960px) {
   .auth-side { display: flex; flex-direction: column; justify-content: space-between; padding: 48px; }
 }
@@ -273,6 +278,35 @@
 }
 .auth-footer-link a { color: var(--celadon-700); font-weight: 600; }
 .auth-footer-link a:hover { text-decoration: underline; }
+
+.auth-inline-link {
+  color: var(--celadon-700);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-underline-offset: 3px;
+}
+.auth-inline-link:hover { text-decoration: underline; }
+
+.auth-result {
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+.auth-result[hidden] { display: none; }
+.auth-result-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 18px;
+  border-radius: 50%;
+  background: var(--celadon-100);
+  color: var(--celadon-800);
+}
+.auth-result h2 { font-size: 1.15rem; }
+.auth-result p { margin: 7px 0 20px; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
 
 .checkbox-row {
   display: flex;

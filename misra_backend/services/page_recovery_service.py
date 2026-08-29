@@ -56,11 +56,20 @@ Return only valid JSON:
       "language": "ar | en | mixed",
       "legibility": "clear | partial | illegible",
       "has_math": true,
-      "math_notation": "LaTeX or null"
+      "math_notation": "LaTeX or null",
+      "bounding_box": {
+        "x": 0.10,
+        "y": 0.25,
+        "width": 0.80,
+        "height": 0.18
+      }
     }
   ],
   "notes": "brief uncertainty note or null"
 }
+
+Bounding-box coordinates must be normalized to the full page. Return one tight
+rectangle around the complete visible answer region for every segment.
 """
 
 

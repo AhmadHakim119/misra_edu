@@ -79,6 +79,7 @@
     const el = document.createElement('div');
     const tones = {
       success: { bg: '#2E4436', accent: '#B1D2BB' },
+      warning: { bg: '#5D4928', accent: '#E3D5B9' },
       error: { bg: '#4A2E2A', accent: '#E0A99C' },
       info: { bg: '#302D35', accent: '#B1D2BB' },
     };

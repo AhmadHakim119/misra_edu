@@ -2,6 +2,7 @@ import os
 import unittest
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -10,7 +11,15 @@ os.environ.setdefault("GEMINI_API_KEY", "test-key-not-used")
 
 from database import Base  # noqa: E402
 import models  # noqa: E402,F401
-from models import Answer, Exam, GradingRun, Question, ReviewLabel  # noqa: E402
+from models import (  # noqa: E402
+    Answer,
+    Exam,
+    GradingRun,
+    Question,
+    ReviewLabel,
+    Submission,
+    User,
+)
 from routers.rubric_versions import (  # noqa: E402
     suggest_existing_question_rubric_version,
 )
@@ -237,6 +246,23 @@ class RubricV2Tests(unittest.TestCase):
         )
 
     def test_one_answer_can_retain_labels_for_separate_runs(self):
+        submission = Submission(
+            id="submission-1",
+            institution_id="institution-1",
+            exam_id="exam-1",
+            original_file_path="test.pdf",
+            page_count=1,
+            status="graded",
+            identity_status="unmatched_blank",
+        )
+        user = User(
+            id="teacher-1",
+            institution_id="institution-1",
+            email="teacher@example.edu",
+            hashed_password="unused",
+            full_name="Test Teacher",
+            role="teacher",
+        )
         answer = Answer(
             id="answer-1",
             institution_id="institution-1",
@@ -274,7 +300,7 @@ class RubricV2Tests(unittest.TestCase):
             human_score=3,
             was_review_warranted=True,
         )
-        self.db.add_all([answer, run, legacy_label])
+        self.db.add_all([submission, user, answer, run, legacy_label])
         self.db.commit()
 
         resolve_review(
@@ -286,6 +312,7 @@ class RubricV2Tests(unittest.TestCase):
                 reviewer_notes="V2 result agrees with the instructor.",
             ),
             self.db,
+            user,
         )
 
         labels = (
@@ -298,6 +325,48 @@ class RubricV2Tests(unittest.TestCase):
             next(label for label in labels if label.grading_run_id == run.id).human_score,
             3,
         )
+        self.assertEqual(
+            next(label for label in labels if label.grading_run_id == run.id).labeled_by,
+            user.id,
+        )
+
+        resolve_review(
+            answer.id,
+            ReviewResolutionRequest(
+                action="override",
+                grading_run_id=run.id,
+                human_score=2.5,
+                was_review_warranted=True,
+                reviewer_notes="Instructor adjusted the recorded grade.",
+                label_source="grade_page",
+            ),
+            self.db,
+            user,
+        )
+        self.db.refresh(answer)
+        self.assertEqual(float(answer.teacher_override_score), 2.5)
+        self.assertEqual(answer.review_status, "overridden")
+
+        other_user = User(
+            id="teacher-2",
+            institution_id="institution-2",
+            email="other@example.edu",
+            hashed_password="unused",
+            full_name="Other Teacher",
+            role="teacher",
+        )
+        with self.assertRaises(HTTPException) as context:
+            resolve_review(
+                answer.id,
+                ReviewResolutionRequest(
+                    action="approve",
+                    grading_run_id=run.id,
+                    was_review_warranted=False,
+                ),
+                self.db,
+                other_user,
+            )
+        self.assertEqual(context.exception.status_code, 404)
 
 
 if __name__ == "__main__":

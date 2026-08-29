@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Account · MISRA EDU</title>
+  <link rel="icon" type="image/png" href="../assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css?v=14">
+</head>
+<body class="workspace-body" data-page="account" data-page-title="Account">
+  <main class="workspace-content" id="workspace-content">
+    <header class="page-heading"><div><h1>Your account</h1><p>Review your instructor identity and keep access to student records secure.</p></div></header>
+    <section class="account-required" id="password-required" hidden role="status">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v5M12 17h.01"/></svg>
+      <div><strong>Change your temporary password</strong><p>Your administrator created or reset this account. Choose a private password before opening the instructor workspace.</p></div>
+    </section>
+    <div class="account-grid">
+      <section class="workspace-card account-profile" aria-labelledby="profile-title">
+        <div class="card-pad"><h2 class="section-title" id="profile-title">Instructor profile</h2><p class="section-copy">These details identify your account inside its institution.</p></div>
+        <dl class="account-facts" id="account-facts"><div><dt>Name</dt><dd>Loading…</dd></div><div><dt>Email</dt><dd>Loading…</dd></div><div><dt>Access</dt><dd>Loading…</dd></div></dl>
+      </section>
+      <section class="workspace-card account-password" aria-labelledby="password-title">
+        <div class="card-pad"><h2 class="section-title" id="password-title">Change password</h2><p class="section-copy">Changing your password signs this account out on every browser and device.</p></div>
+        <form class="account-form" id="change-password-form" novalidate>
+          <div class="field"><label for="current-password">Current password</label><input class="input" type="password" id="current-password" name="current_password" maxlength="1024" autocomplete="current-password" required></div>
+          <div class="field"><label for="new-password">New password</label><input class="input" type="password" id="new-password" name="new_password" minlength="10" maxlength="1024" autocomplete="new-password" required><span class="field-hint">Use at least 10 characters and do not reuse another account’s password.</span></div>
+          <div class="field"><label for="confirm-new-password">Confirm new password</label><input class="input" type="password" id="confirm-new-password" name="confirm_password" minlength="10" maxlength="1024" autocomplete="new-password" required></div>
+          <p class="form-message" id="change-password-message" aria-live="polite"></p>
+          <button class="btn btn-primary" type="submit">Change password</button>
+        </form>
+      </section>
+    </div>
+  </main>
+  <script src="../js/app.js"></script><script src="../js/api.js?v=14"></script><script src="../js/workspace.js?v=11"></script><script src="../js/account.js?v=1"></script>
+</body>
+</html>

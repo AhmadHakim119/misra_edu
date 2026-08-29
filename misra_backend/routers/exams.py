@@ -1,41 +1,59 @@
-import logging
-import os, re
-import uuid
+from pathlib import Path
+
 from fastapi import APIRouter, File, UploadFile, Form, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Submission, Exam, Answer, Question, Course
-from services.ocr_service import process_submission, create_submissions_from_upload, process_batch
-from fastapi import BackgroundTasks
-from database import SessionLocal
+from models import Submission, Exam, Answer, Question, Course, User
+from services.auth_dependencies import require_instructor
+from services.audit_service import record_audit_event
+from services.ocr_service import create_submissions_from_stored_upload
+from services.job_queue_service import create_processing_job, job_to_dict
+from services.upload_security_service import (
+    UploadValidationError,
+    remove_stored_uploads,
+    store_validated_batch,
+    store_validated_upload,
+)
 from models import Batch
 from typing import Optional
 from schemas.course_input import CourseCreateRequest
 from schemas.exam_input import ExamCreateRequest
 
 router = APIRouter(prefix="/api", tags=["exams"])
-logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = "storage/uploads"
 
 
+def _visible_courses(db: Session, user: User):
+    """Return the institution's shared assessment workspace.
+
+    MISRA's current instructor model is institution-scoped: authenticated
+    instructors can work with their institution's courses, while ``teacher_id``
+    remains the attribution for who created a course. Course/section-level
+    permissions are a later multi-instructor administration feature.
+    """
+    return db.query(Course).filter(Course.institution_id == user.institution_id)
+
+
+def _owned_exam(exam_id: str, db: Session, user: User) -> Exam | None:
+    query = db.query(Exam).join(Course, Course.id == Exam.course_id).filter(
+        Exam.id == exam_id,
+        Exam.institution_id == user.institution_id,
+    )
+    return query.first()
+
+
 @router.get("/courses")
-def list_courses(db: Session = Depends(get_db)):
-    return db.query(Course).order_by(Course.created_at.desc()).all()
+def list_courses(db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    return _visible_courses(db, user).order_by(Course.created_at.desc()).all()
 
 
 @router.post("/courses", status_code=201)
-def create_course(payload: CourseCreateRequest, db: Session = Depends(get_db)):
-    """Create a course under an existing persisted ownership profile.
-
-    Authentication is not connected yet, so the caller selects an existing
-    course whose institution and instructor ownership should be inherited.
-    This avoids accepting or inventing raw tenant/user identifiers.
-    """
-    owner_course = db.query(Course).filter(Course.id == payload.owner_course_id).first()
-    if not owner_course:
-        raise HTTPException(status_code=404, detail="Ownership profile course not found")
-
+def create_course(
+    payload: CourseCreateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
     course_code = payload.course_code.strip()
     title = payload.title.strip()
     term = payload.term.strip() if payload.term and payload.term.strip() else None
@@ -48,7 +66,7 @@ def create_course(payload: CourseCreateRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail="Course code and title are required")
 
     duplicate = db.query(Course).filter(
-        Course.institution_id == owner_course.institution_id,
+        Course.institution_id == user.institution_id,
         Course.course_code == course_code,
         Course.title == title,
         Course.term == term,
@@ -60,22 +78,36 @@ def create_course(payload: CourseCreateRequest, db: Session = Depends(get_db)):
         )
 
     course = Course(
-        institution_id=owner_course.institution_id,
-        teacher_id=owner_course.teacher_id,
-        instructor_name=instructor_name,
+        institution_id=user.institution_id,
+        teacher_id=user.id,
+        instructor_name=instructor_name or user.full_name,
         course_code=course_code,
         title=title,
         term=term,
     )
     db.add(course)
+    db.flush()
+    record_audit_event(
+        db,
+        institution_id=user.institution_id,
+        actor_id=user.id,
+        action="course_created",
+        entity_type="course",
+        entity_id=course.id,
+        details={"course_code": course.course_code},
+    )
     db.commit()
     db.refresh(course)
     return course
 
 
 @router.post("/exams", status_code=201)
-def create_exam(payload: ExamCreateRequest, db: Session = Depends(get_db)):
-    course = db.query(Course).filter(Course.id == payload.course_id).first()
+def create_exam(
+    payload: ExamCreateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    course = _visible_courses(db, user).filter(Course.id == payload.course_id).first()
     if not course:
         raise HTTPException(status_code=404, detail="Course not found")
 
@@ -86,19 +118,32 @@ def create_exam(payload: ExamCreateRequest, db: Session = Depends(get_db)):
         language=payload.language,
     )
     db.add(exam)
+    db.flush()
+    record_audit_event(
+        db,
+        institution_id=user.institution_id,
+        actor_id=user.id,
+        action="assessment_created",
+        entity_type="exam",
+        entity_id=exam.id,
+        details={"course_id": course.id, "language": exam.language},
+    )
     db.commit()
     db.refresh(exam)
     return exam
 
 
 @router.get("/exams")
-def list_exams(db: Session = Depends(get_db)):
+def list_exams(db: Session = Depends(get_db), user: User = Depends(require_instructor)):
     """Return the assessment catalog needed by the instructor workspace.
 
     This intentionally exposes persisted records only. The frontend never needs
     to invent exam names, course codes, or dashboard counts.
     """
-    exams = db.query(Exam).order_by(Exam.created_at.desc()).all()
+    query = db.query(Exam).join(Course, Course.id == Exam.course_id).filter(
+        Exam.institution_id == user.institution_id
+    )
+    exams = query.order_by(Exam.created_at.desc()).all()
     catalog = []
 
     for exam in exams:
@@ -132,115 +177,169 @@ def list_exams(db: Session = Depends(get_db)):
 
     return catalog
 
-def _run_submission_in_background(submission_id: str):
-    """Run OCR after the upload response using an independent DB session."""
-    db = SessionLocal()
-    try:
-        process_submission(submission_id, db)
-    except Exception:
-        # process_submission persists the submission error state before raising.
-        logger.exception("Background extraction failed for submission %s", submission_id)
-    finally:
-        db.close()
-
-
 @router.post("/upload-exam", status_code=202)
 async def upload_exam(
-    background_tasks: BackgroundTasks,
     exam_id: str = Form(...),
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
 ):
-    exam = db.query(Exam).filter(Exam.id == exam_id).first()
+    exam = _owned_exam(exam_id, db, user)
     if not exam:
         raise HTTPException(status_code=404, detail=f"Exam {exam_id} not found")
 
-    contents = await file.read()
-    _, ext = os.path.splitext(file.filename)
-    unique_name = f"{uuid.uuid4()}{ext}"
-    upload_path = os.path.join(UPLOAD_DIR, unique_name)
-
-    with open(upload_path, "wb") as f:
-        f.write(contents)
-
-    submission = Submission(
-        institution_id=exam.institution_id,
-        exam_id=exam.id,
-        original_file_path=upload_path,
-        status="uploaded"
-    )
-    db.add(submission)
-    db.commit()
-    db.refresh(submission)
-
-    background_tasks.add_task(_run_submission_in_background, submission.id)
-    return submission
-
-def _run_batch_in_background(batch_id: str):
-    """Background task entrypoint — opens its OWN database session,
-    since the request-scoped session will already be closed by the time
-    this runs."""
-    db = SessionLocal()
     try:
-        process_batch(batch_id, db)
-    finally:
-        db.close()
+        stored = await store_validated_upload(file, UPLOAD_DIR)
+    except UploadValidationError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+
+    try:
+        submission = Submission(
+            institution_id=exam.institution_id,
+            exam_id=exam.id,
+            original_file_path=str(stored.path),
+            page_count=stored.page_count,
+            status="uploaded",
+        )
+        db.add(submission)
+        db.commit()
+        db.refresh(submission)
+    except Exception:
+        db.rollback()
+        remove_stored_uploads([stored])
+        raise
+
+    job, created = create_processing_job(
+        db,
+        institution_id=exam.institution_id,
+        requested_by=user.id,
+        job_type="ocr_submission",
+        submission_id=submission.id,
+        progress_total=submission.page_count,
+    )
+    record_audit_event(
+        db,
+        institution_id=exam.institution_id,
+        actor_id=user.id,
+        action="paper_uploaded",
+        entity_type="submission",
+        entity_id=submission.id,
+        details={
+            "exam_id": exam.id,
+            "page_count": submission.page_count,
+            "job_id": job.id,
+            "job_created": created,
+        },
+    )
+    db.commit()
+    return {"submission": submission, "job": job_to_dict(job)}
 
 
-@router.post("/upload-batch")
+@router.post("/upload-batch", status_code=202)
 async def upload_batch(
-    background_tasks: BackgroundTasks,
     exam_id: str = Form(...),
     files: list[UploadFile] = File(...),
     pages_per_student: Optional[int] = Form(default=None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
 ):
-    exam = db.query(Exam).filter(Exam.id == exam_id).first()
+    exam = _owned_exam(exam_id, db, user)
     if not exam:
         raise HTTPException(status_code=404, detail=f"Exam {exam_id} not found")
+    if pages_per_student is not None and pages_per_student <= 0:
+        raise HTTPException(status_code=422, detail="pages_per_student must be a positive integer")
+
+    try:
+        stored_uploads = await store_validated_batch(files, UPLOAD_DIR)
+    except UploadValidationError as error:
+        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
 
     all_submissions = []
-
-    # Create the Batch row first with a placeholder count; update it once we know the real total.
-    batch = Batch(
-        institution_id=exam.institution_id,
-        exam_id=exam.id,
-        total_count=0,
-        status="queued"
-    )
-    db.add(batch)
-    db.commit()
-    db.refresh(batch)
-
-    for file in files:
-        contents = await file.read()
-        submissions = create_submissions_from_upload(
-            exam_id=exam.id,
+    generated_paths: list[str] = []
+    disposable_sources = []
+    try:
+        batch = Batch(
             institution_id=exam.institution_id,
-            batch_id=batch.id,
-            file_bytes=contents,
-            filename=file.filename,
-            upload_dir=UPLOAD_DIR,
-            pages_per_student=pages_per_student,
-            db=db
+            exam_id=exam.id,
+            total_count=0,
+            status="queued",
         )
-        all_submissions.extend(submissions)
+        db.add(batch)
+        db.flush()
 
-    batch.total_count = len(all_submissions)
+        for stored in stored_uploads:
+            submissions, paths, source_is_retained = create_submissions_from_stored_upload(
+                exam_id=exam.id,
+                institution_id=exam.institution_id,
+                batch_id=batch.id,
+                stored_upload=stored,
+                pages_per_student=pages_per_student,
+                db=db,
+            )
+            all_submissions.extend(submissions)
+            generated_paths.extend(paths)
+            if not source_is_retained:
+                disposable_sources.append(stored)
+
+        batch.total_count = len(all_submissions)
+        db.commit()
+        db.refresh(batch)
+    except Exception:
+        db.rollback()
+        remove_stored_uploads(stored_uploads)
+        for path in generated_paths:
+            try:
+                Path(path).unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
+
+    remove_stored_uploads(disposable_sources)
+
+    submission_ids = [submission.id for submission in all_submissions]
+    job, created = create_processing_job(
+        db,
+        institution_id=exam.institution_id,
+        requested_by=user.id,
+        job_type="ocr_batch",
+        batch_id=batch.id,
+        progress_total=len(all_submissions),
+        payload={"submission_ids": submission_ids},
+    )
+
+    record_audit_event(
+        db,
+        institution_id=exam.institution_id,
+        actor_id=user.id,
+        action="paper_batch_uploaded",
+        entity_type="batch",
+        entity_id=batch.id,
+        details={
+            "exam_id": exam.id,
+            "submission_count": len(all_submissions),
+            "job_id": job.id,
+            "job_created": created,
+        },
+    )
     db.commit()
-    db.refresh(batch)
-
-    background_tasks.add_task(_run_batch_in_background, batch.id)
 
     return {
         "batch_id": batch.id,
         "total_submissions": len(all_submissions),
-        "status": batch.status
+        "status": batch.status,
+        "job": job_to_dict(job),
     }
 
 @router.post("/submissions/{submission_id}/promote-unmatched")
-def promote_unmatched_segments(submission_id: str, db: Session = Depends(get_db)):
-    submission = db.query(Submission).filter(Submission.id == submission_id).first()
+def promote_unmatched_segments(
+    submission_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    submission = db.query(Submission).filter(
+        Submission.id == submission_id,
+        Submission.institution_id == user.institution_id,
+    ).first()
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found")
     if not submission.unmatched_segments:

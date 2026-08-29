@@ -12,6 +12,7 @@ import models  # noqa: E402,F401
 from models import Answer, AnswerSource, Question, Submission  # noqa: E402
 from services.extraction_review_service import (  # noqa: E402
     _has_noncontiguous_pages,
+    bulk_resolve_segments,
     build_extraction_review,
     move_answer_source,
 )
@@ -133,6 +134,104 @@ class ExtractionReviewTests(unittest.TestCase):
             if row["question"]["question_number"] == "2d"
         )
         self.assertEqual(moved_row["answer"]["raw_ocr_text"], "proof work")
+
+    def test_bulk_segment_resolution_moves_mapped_and_unmatched_fragments(self):
+        submission = Submission(
+            id="bulk-submission",
+            institution_id="institution-1",
+            exam_id="bulk-exam",
+            original_file_path="not-needed.pdf",
+            page_count=3,
+            status="extracted",
+            identity_status="unmatched_blank",
+            unmatched_segments=[
+                {"text": "page footer", "page_index": 2, "has_math": False},
+                {"text": "second SQL statement", "page_index": 2, "has_math": False},
+            ],
+        )
+        question_1 = Question(
+            id="bulk-question-1",
+            institution_id="institution-1",
+            exam_id="bulk-exam",
+            question_number="1",
+            question_text="First task",
+            max_score=1,
+            rubric_json={"criteria": []},
+            order_index=1,
+        )
+        question_2 = Question(
+            id="bulk-question-2",
+            institution_id="institution-1",
+            exam_id="bulk-exam",
+            question_number="2",
+            question_text="SQL tasks",
+            max_score=2,
+            rubric_json={"criteria": []},
+            order_index=2,
+        )
+        answer_1 = Answer(
+            id="bulk-answer-1",
+            institution_id="institution-1",
+            submission_id=submission.id,
+            question_id=question_1.id,
+            raw_ocr_text="first answer\nfirst SQL statement",
+            ocr_legibility="clear",
+        )
+        retained = AnswerSource(
+            id="bulk-source-retained",
+            answer_id=answer_1.id,
+            page_index=0,
+            segment_index=0,
+            question_number="1",
+            extracted_text="first answer",
+            has_math=False,
+            ocr_segment={"legibility": "clear"},
+        )
+        moved = AnswerSource(
+            id="bulk-source-moved",
+            answer_id=answer_1.id,
+            page_index=1,
+            segment_index=0,
+            question_number="1",
+            extracted_text="first SQL statement",
+            has_math=False,
+            ocr_segment={"legibility": "clear"},
+        )
+        self.db.add_all(
+            [submission, question_1, question_2, answer_1, retained, moved]
+        )
+        self.db.commit()
+
+        assigned = bulk_resolve_segments(
+            submission.id,
+            "assign",
+            question_2.id,
+            [moved.id],
+            [1],
+            self.db,
+        )
+        question_2_row = next(
+            row for row in assigned["questions"] if row["question"]["question_number"] == "2"
+        )
+        self.assertEqual(
+            question_2_row["answer"]["raw_ocr_text"],
+            "first SQL statement\nsecond SQL statement",
+        )
+        self.assertEqual(assigned["readiness"]["unmatched_segment_count"], 1)
+
+        cleaned = bulk_resolve_segments(
+            submission.id,
+            "ignore",
+            None,
+            [],
+            [0],
+            self.db,
+        )
+        self.assertEqual(cleaned["readiness"]["unmatched_segment_count"], 0)
+        question_1_row = next(
+            row for row in cleaned["questions"] if row["question"]["question_number"] == "1"
+        )
+        self.assertEqual(question_1_row["answer"]["raw_ocr_text"], "first answer")
 
     def test_confirmed_page_recovery_is_signed_and_idempotent(self):
         submission = Submission(
