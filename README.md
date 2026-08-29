@@ -1,20 +1,68 @@
 # MISRA-EDU
 
-MISRA-EDU is an instructor-facing assessment workflow for OCR extraction,
-rubric-based AI grading, multimodal evidence review, human overrides, and
-AI-instructor agreement evaluation.
+MISRA-EDU is an instructor-facing assessment workflow for secure paper upload,
+OCR extraction, rubric-based AI grading, multimodal evidence review, instructor
+overrides, grade export, and AI-instructor agreement evaluation.
 
-The active application is:
+MISRA-EDU is currently a local thesis prototype. It is not yet intended for
+public internet deployment or use as an official institutional gradebook.
 
-- `misra_backend/`: FastAPI, SQLAlchemy, MariaDB/MySQL, OCR and Gemini grading
-- `misra-frontend/`: static HTML/CSS/JavaScript instructor workspace
+## Core capabilities
 
-`misra_ui/` is legacy reference material and is not the active frontend.
+- Course and assessment creation
+- Versioned AI-assisted rubrics and configurable grading approaches
+- Secure individual and batch paper uploads
+- OCR extraction, question mapping, and page-level source tracking
+- Manual correction and recovery of OCR mappings
+- Text-only, image-plus-text, and adaptive grading
+- Instructor review, approval, and score overrides
+- Persistent grading-run and review-label history
+- Confidence-based review routing and agreement evaluation
+- Blackboard-compatible CSV, generic CSV, and detailed Excel exports
+- Instructor authentication, password recovery, and administration
+- Institution-scoped audit records
+- Redis-backed jobs, progress, retries, and orphan recovery
+
+## Active application
+
+- `misra_backend/` - FastAPI, SQLAlchemy, MariaDB/MySQL, OCR, Gemini grading,
+  authentication, exports, background jobs, and evaluation
+- `misra-frontend/` - static HTML, CSS, and JavaScript instructor workspace
+- `database/schema.sql` - complete database schema for fresh installations
+- `docs/` - detailed system and architecture documentation
+
+`misra_ui/` is legacy reference material and is not part of the active
+application.
+
+## Architecture overview
+
+```text
+Instructor browser
+        |
+        v
+MISRA frontend
+        |
+        v
+FastAPI backend
+   |         |
+   |         +---- Redis Queue ---- RQ worker
+   |                              |       |
+   v                              v       v
+MariaDB/MySQL                  OCR jobs  Grading jobs
+                                      |
+                                      v
+                                  Gemini API
+```
+
+MariaDB is the authoritative store for assessments, submissions, answers,
+rubrics, grading runs, review labels, processing jobs, users, and audit events.
+Redis coordinates background work; it does not replace MariaDB or hold the
+authoritative assessment results.
 
 ## Prerequisites
 
 - Python 3.11 or newer
-- MariaDB 10.6+ or MySQL 8+
+- MariaDB 10.4+ or MySQL 8+
 - Redis 5+ (or a Redis-compatible Windows service such as Memurai)
 - Poppler available on `PATH` (`pdftoppm -v` must work)
 - A Gemini API key
@@ -53,12 +101,33 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
 FLUSH PRIVILEGES;
 ```
 
-For a **new empty database**, create and verify the current model schema:
+For a fresh database, use **one** of the following methods. Do not run both
+against the same new database.
+
+### Option A - Import the complete SQL schema
+
+Run from the repository root:
+
+```powershell
+Get-Content .\database\schema.sql | mysql -u root -p misra_edu
+```
+
+### Option B - Create tables from the SQLAlchemy models
+
+Ensure `misra_backend/.env` points to the new empty database, then run:
 
 ```powershell
 Set-Location .\misra_backend
 python .\scripts\bootstrap_database.py --create
 ```
+
+Expected result:
+
+```text
+Database connection successful. The current model schema is present.
+```
+
+### Existing database upgrades
 
 For an existing database created before account administration was added, back
 it up and run the explicit additive upgrade once:
@@ -68,15 +137,6 @@ Set-Location .\misra_backend
 python .\scripts\upgrade_account_management.py
 python .\scripts\upgrade_processing_jobs.py
 ```
-
-For a new database, import the complete schema:
-
-```powershell
-mysql -u root -p -e "CREATE DATABASE misra_edu CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-Get-Content .\database\schema.sql | mysql -u root -p misra_edu
-```
-
-Fresh installations use the complete schema or current SQLAlchemy models.
 
 ## Run the application
 
@@ -162,6 +222,17 @@ python -m unittest discover -s tests -p "test_*.py" -v
 Tests use isolated in-memory databases and mocked model calls where applicable.
 They must not depend on files under `storage/uploads/`.
 
+At the current milestone, the suite contains 75 passing tests covering
+authentication, account management, institution authorization, secure uploads,
+submission deletion, OCR evidence, extraction review, rubric behavior, visual
+routing, exports, Redis/RQ jobs, retry idempotency, orphan recovery, and admin
+records.
+
+## Documentation
+
+- [Complete MISRA-EDU System Guide](docs/MISRA_EDU_Complete_System_Guide.docx)
+- [Redis, RQ, and Admin Operations Explained](docs/MISRA_EDU_Redis_RQ_Admin_Operations_Explained.docx)
+
 ## Privacy and repository safety
 
 Uploaded papers may contain names, student numbers, handwriting, and grades.
@@ -184,13 +255,17 @@ requires coordination with every clone and remote.
 
 ## Normal instructor workflow
 
-1. Create a course and assessment in the frontend.
-2. Add questions and draft/approve versioned rubrics in Rubric Studio.
-3. Upload one paper or a batch.
-4. Review OCR mapping and page sources; recover or move segments when needed.
-5. Grade with adaptive routing.
-6. Resolve flagged answers and record instructor labels.
-7. Inspect agreement metrics on the Evaluation page.
+1. Sign in with an administrator-provisioned account.
+2. Create a course and assessment in the frontend.
+3. Add questions and draft/approve versioned rubrics in Rubric Studio.
+4. Select the grading approach and evidence-routing policy.
+5. Upload one paper or a batch and monitor OCR progress.
+6. Verify student identity, OCR mapping, and source pages.
+7. Recover, move, or remove incorrectly mapped segments when needed.
+8. Grade with adaptive routing.
+9. Resolve flagged answers and record instructor labels.
+10. Inspect agreement metrics on the Evaluation page.
+11. Export Blackboard CSV, generic CSV, or a detailed Excel report.
 
 Seed scripts are development fixtures only. A normal assessment should not
 require a seed script.
@@ -203,6 +278,22 @@ institution-scoped extraction authorization, and validated upload limits are
 implemented. Password change/recovery, global session invalidation,
 administrator-provisioned instructor accounts, and database-backed recovery
 throttling are also implemented. Durable Redis-backed OCR and grading jobs are
-implemented for the local prototype. Login throttling, restrictive production
-CORS, managed encrypted file storage, retention automation, and deployment
-monitoring remain before public use.
+implemented for the local prototype. The browser-origin allowlist is
+configurable through `APP_ORIGINS`, but production CORS validation, login
+throttling, HTTPS, managed encrypted file storage, retention automation,
+centralized secrets, durable Redis monitoring, and deployment monitoring remain
+before public use.
+
+## Planned direction
+
+MISRA may later expose a stable, versioned assessment-processing API for LMS
+integration. The LMS would manage enrollment, assignments, student access, and
+the official gradebook. MISRA would manage paper ingestion, OCR, question
+mapping, rubric grading, multimodal review, instructor overrides, and
+evaluation evidence.
+
+Possible future integrations include LTI 1.3, Assignment and Grade Services,
+Blackboard REST APIs, Canvas and Moodle adapters, signed completion webhooks,
+external LMS identifiers, and idempotent API requests. A standalone student
+portal is optional and should be developed only when MISRA must operate without
+an LMS.
