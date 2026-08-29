@@ -11,6 +11,7 @@ from routers import admin_operations, admin_users, auth, batches, evaluation, ex
 from services.gemini_client import DEFAULT_MODEL
 from services.auth_dependencies import require_instructor
 from services.job_queue_service import redis_connection
+from services.build_info import build_info
 
 load_dotenv()
 
@@ -74,6 +75,7 @@ def health():
         "status": "online" if queue_online else "degraded",
         "model": DEFAULT_MODEL,
         "queue": "online" if queue_online else "unavailable",
+        "build": build_info(),
     }
 
 

@@ -5,6 +5,10 @@
   const requiredNotice = document.getElementById('password-required');
   const form = document.getElementById('change-password-form');
   const message = document.getElementById('change-password-message');
+  const preferencesForm = document.getElementById('preferences-form');
+  const preferencesMessage = document.getElementById('preferences-message');
+  const themeChoices = document.getElementById('theme-choices');
+  const appearanceMessage = document.getElementById('appearance-message');
 
   function setMessage(text, tone = '') {
     message.textContent = text;
@@ -58,5 +62,29 @@
       button.textContent = 'Change password';
       setMessage(error.message || 'Could not change your password. Try again.', 'error');
     }
+  });
+
+  const preferences = window.MisraPreferences.get();
+  preferencesForm.grading_mode.value = preferences.gradingMode;
+  preferencesForm.upload_mode.value = preferences.uploadMode;
+  preferencesForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    window.MisraPreferences.set({
+      gradingMode: preferencesForm.grading_mode.value,
+      uploadMode: preferencesForm.upload_mode.value,
+    });
+    preferencesMessage.textContent = 'Workspace defaults saved for this browser.';
+    preferencesMessage.dataset.tone = 'success';
+    window.showToast('Workspace defaults saved.', 'success');
+  });
+
+  window.MisraTheme.apply(window.MisraTheme.getPreference());
+  themeChoices.addEventListener('change', (event) => {
+    const option = event.target.closest('[data-theme-option]');
+    if (!option) return;
+    window.MisraTheme.set(option.value);
+    const label = option.value === 'system' ? 'System theme' : `${option.value[0].toUpperCase()}${option.value.slice(1)} theme`;
+    appearanceMessage.textContent = `${label} selected. This preference is saved on this device.`;
+    appearanceMessage.dataset.tone = 'success';
   });
 })();

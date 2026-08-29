@@ -75,8 +75,29 @@
       <td data-label="Questions" class="numeric">${exam.question_count}</td>
       <td data-label="Submissions" class="numeric">${exam.submission_count}</td>
       <td data-label="Review">${exam.review_count ? MisraUI.badge(`${exam.review_count} pending`, 'warning') : MisraUI.badge('Clear', 'success')}</td>
-      <td><div class="data-row-actions"><a class="link-button" href="rubric-studio.html?exam_id=${encodeURIComponent(exam.id)}">Rubrics</a><a class="link-button" href="upload.html?exam_id=${encodeURIComponent(exam.id)}">Upload</a></div></td>
+      <td><div class="data-row-actions"><a class="link-button" href="rubric-studio.html?exam_id=${encodeURIComponent(exam.id)}">Rubrics</a><a class="link-button" href="upload.html?exam_id=${encodeURIComponent(exam.id)}">Upload</a><button class="link-button" type="button" data-duplicate-exam="${MisraUI.escapeHTML(exam.id)}" data-exam-title="${MisraUI.escapeHTML(exam.title)}">Duplicate</button></div></td>
     </tr>`).join('')}</tbody></table>`;
+    host.querySelectorAll('[data-duplicate-exam]').forEach((button) => {
+      button.addEventListener('click', async () => {
+        const title = window.prompt('Name the duplicated assessment. Questions, approved rubrics, and grading policies will be reused. Student papers and grades will not be copied.', `${button.dataset.examTitle} — copy`);
+        if (!title?.trim()) return;
+        button.disabled = true;
+        button.textContent = 'Duplicating…';
+        try {
+          const result = await MisraAPI.duplicateExam(button.dataset.duplicateExam, {
+            title: title.trim(),
+            include_rubrics: true,
+            include_grading_policies: true,
+          });
+          window.showToast(`Assessment duplicated with ${result.question_count} question(s).`, 'success');
+          window.location.href = `rubric-studio.html?exam_id=${encodeURIComponent(result.exam.id)}`;
+        } catch (error) {
+          button.disabled = false;
+          button.textContent = 'Duplicate';
+          window.showToast(error.message, 'error');
+        }
+      });
+    });
   } catch (error) {
     host.innerHTML = `<div class="card-pad">${MisraUI.errorState(error.message)}</div>`;
   }

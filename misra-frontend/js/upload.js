@@ -9,7 +9,7 @@
   const pagesInput = document.getElementById('pages-per-student');
   const result = document.getElementById('upload-result');
   const button = document.getElementById('upload-button');
-  const acceptedExtensions = ['.pdf', '.png', '.jpg', '.jpeg'];
+  const acceptedExtensions = ['.pdf', '.png', '.jpg', '.jpeg', '.webp'];
   const pollIntervalMs = 2500;
   const maxPollAttempts = 240;
   let mode = 'single';
@@ -112,7 +112,7 @@
   function assignFiles(files) {
     const accepted = [...files].filter(isAccepted);
     if (!accepted.length) {
-      showError('Choose a PDF, PNG, or JPEG file.');
+      showError('Choose a PDF, PNG, JPEG, or WebP file.');
       return;
     }
     const skippedUnsupported = accepted.length !== files.length;
@@ -123,18 +123,23 @@
     input.files = transfer.files;
     updateFiles();
     if (skippedUnsupported) {
-      showError('Some files were skipped because they are not PDF, PNG, or JPEG.');
+      showError('Some files were skipped because they are not PDF, PNG, JPEG, or WebP.');
     }
   }
 
-  document.querySelectorAll('[data-mode]').forEach((control) => control.addEventListener('click', () => {
-    mode = control.dataset.mode;
-    document.querySelectorAll('[data-mode]').forEach((item) => item.setAttribute('aria-pressed', String(item === control)));
+  function setMode(nextMode, clearFiles = true) {
+    mode = nextMode === 'batch' ? 'batch' : 'single';
+    document.querySelectorAll('[data-mode]').forEach((item) => item.setAttribute('aria-pressed', String(item.dataset.mode === mode)));
     input.multiple = mode === 'batch';
     pagesField.hidden = mode !== 'batch';
     button.textContent = mode === 'batch' ? 'Upload batch' : 'Upload and start extraction';
-    input.value = ''; updateFiles(); result.innerHTML = '';
+    if (clearFiles) { input.value = ''; updateFiles(); result.innerHTML = ''; }
+  }
+
+  document.querySelectorAll('[data-mode]').forEach((control) => control.addEventListener('click', () => {
+    setMode(control.dataset.mode);
   }));
+  setMode(window.MisraPreferences.get().uploadMode, false);
 
   input.addEventListener('change', updateFiles);
   ['dragenter', 'dragover'].forEach((name) => dropzone.addEventListener(name, (event) => { event.preventDefault(); dropzone.classList.add('is-dragging'); }));
@@ -149,7 +154,7 @@
     event.preventDefault();
     const files = [...input.files];
     if (!examSelect.value) { showError('Choose an assessment before uploading.'); return; }
-    if (!files.length) { showError('Choose or drop at least one PDF, PNG, or JPEG file.'); return; }
+    if (!files.length) { showError('Choose or drop at least one PDF, PNG, JPEG, or WebP file.'); return; }
     if (mode === 'single' && files.length !== 1) { showError('Single mode accepts one file.'); return; }
     const body = new FormData(); body.append('exam_id', examSelect.value);
     if (mode === 'batch') files.forEach((file) => body.append('files', file)); else body.append('file', files[0]);

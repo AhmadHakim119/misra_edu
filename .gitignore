@@ -43,3 +43,7 @@ misra-frontend/pages/dashboard-placeholder.html
 *.log
 *.sqlite
 *.sqlite3
+node_modules/
+playwright-report/
+test-results/
+.local/

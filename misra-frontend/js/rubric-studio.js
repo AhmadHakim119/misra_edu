@@ -7,6 +7,7 @@
   const workspace = document.getElementById('rubric-workspace');
   const uploadLink = document.getElementById('upload-link');
   const questionForm = document.getElementById('question-form');
+  const questionTemplate = document.getElementById('question-template');
   const state = { exams: [], questions: [], question: null, rubric: null, version: null, versions: [], gradingMode: 'adaptive' };
 
   const gradingModeHelp = {
@@ -14,6 +15,40 @@
     image_text_required: 'The grader always receives the original source page together with the extracted text.',
     text_only: 'The grader receives extracted text only. Use this for answers where layout, symbols, and markings do not affect credit.',
   };
+
+  const questionTemplates = {
+    short_answer: {
+      title: 'Core concept and relevance',
+      description: 'Award credit when the response identifies the required concept and applies it directly to the question. Accept equivalent wording.',
+    },
+    calculation: {
+      title: 'Correct method, working, and result',
+      description: 'Award method credit for a valid setup and meaningful intermediate work. Apply one proportional penalty for a carried arithmetic error instead of repeatedly penalizing the same mistake.',
+    },
+    proof: {
+      title: 'Valid claim and logical justification',
+      description: 'Award credit for the correct conclusion supported by logically connected steps. Accept equivalent proof strategies and notation when the reasoning is valid.',
+    },
+    programming: {
+      title: 'Correct logic and intended outcome',
+      description: 'Award credit for logically correct code or queries that produce the intended result. Treat minor written-exam syntax issues leniently when intent is unambiguous.',
+    },
+    diagram: {
+      title: 'Correct structure and relationships',
+      description: 'Award credit for the required entities, labels, and relationships. Inspect the original image and accept visually equivalent layouts.',
+    },
+    subjective: {
+      title: 'Reasoned position addressing the core idea',
+      description: 'Award credit for a defensible response that reaches the central idea with relevant reasoning. Do not require the answer key wording or one specific position.',
+    },
+  };
+
+  questionTemplate.addEventListener('change', () => {
+    const template = questionTemplates[questionTemplate.value];
+    if (!template) return;
+    questionForm.criterion_title.value = template.title;
+    questionForm.criterion_description.value = template.description;
+  });
 
   function simpleGradingMode(mode) {
     if (mode === 'image_text' || mode === 'image_text_required') return 'image_text_required';

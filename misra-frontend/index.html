@@ -9,14 +9,14 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/tokens.css">
-<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/tokens.css?v=3">
+<link rel="stylesheet" href="css/base.css?v=3">
 <link rel="stylesheet" href="css/layout.css">
 <link rel="stylesheet" href="css/landing.css">
 </head>
 <body data-page="home">
 
-<a class="visually-hidden" href="#main">Skip to content</a>
+<a class="skip-link" href="#main">Skip to content</a>
 
 <!-- ============ NAV ============ -->
 <header class="nav">
@@ -36,13 +36,13 @@
     <div class="nav-actions">
       <a class="btn btn-ghost" href="pages/dashboard.html">Open workspace</a>
       <a class="btn btn-primary" href="pages/assessments.html">Set up assessment</a>
-      <button class="nav-menu-btn" data-menu-toggle aria-label="Open menu" aria-expanded="false">
+      <button class="nav-menu-btn" data-menu-toggle aria-label="Open menu" aria-expanded="false" aria-controls="mobile-navigation">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
       </button>
     </div>
   </div>
 
-  <div class="mobile-drawer" data-mobile-drawer>
+  <div class="mobile-drawer" data-mobile-drawer id="mobile-navigation" aria-hidden="true">
     <a class="nav-link" href="#platform">Platform</a>
     <a class="nav-link" href="#how-it-works">How it works</a>
     <a class="nav-link" href="#security">Data handling</a>
@@ -408,6 +408,6 @@
 .faq-item p { margin-top: 12px; color: var(--ink-soft); font-size: 14px; line-height: 1.6; }
 </style>
 
-<script src="js/app.js"></script>
+<script src="js/app.js?v=3"></script>
 </body>
 </html>

@@ -23,6 +23,7 @@
   const recoveryPanel = document.getElementById('page-recovery-panel');
   const gradeAll = document.getElementById('grade-all');
   const gradeMode = document.getElementById('grade-mode');
+  gradeMode.value = window.MisraPreferences.get().gradingMode;
   let report = null;
   const requestedPage = Number.parseInt(MisraUI.getParam('page'), 10);
   let pageIndex = Number.isInteger(requestedPage) && requestedPage >= 0 ? requestedPage : 0;

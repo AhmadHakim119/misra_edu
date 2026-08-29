@@ -12,6 +12,7 @@
     review: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 11 2 2 4-4"/><path d="M20 12a8 8 0 1 1-3-6.2"/></svg>',
     evaluation: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
     account: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="4"/><path d="M4.5 21a7.5 7.5 0 0 1 15 0"/></svg>',
+    settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21h-4v-.09A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1.1-.4H3v-4h.09A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V3h4v.09A1.7 1.7 0 0 0 15.4 4.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.4.26.75.6 1 1 .24.33.38.72.4 1.1V11h.1v4h-.09a1.7 1.7 0 0 0-1.41 0Z"/></svg>',
     instructors: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>',
     operations: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3 4.5 6v5.2c0 4.5 3 8.6 7.5 9.8 4.5-1.2 7.5-5.3 7.5-9.8V6L12 3Z"/><path d="M8.5 9.5h7M8.5 13h7M8.5 16.5h4"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M7 7l1 13h8l1-13M10 11v5M14 11v5"/></svg>',
@@ -26,7 +27,7 @@
     ['grades', 'Grades', 'grades.html'],
     ['review', 'Review queue', 'reviews.html'],
     ['evaluation', 'Evaluation', 'evaluation.html'],
-    ['account', 'Account', 'account.html'],
+    ['settings', 'Settings', 'account.html'],
     ['instructors', 'Instructor accounts', 'instructors.html', true],
     ['operations', 'Admin operations', 'admin-operations.html', true],
   ];
@@ -48,8 +49,8 @@
     return `<div class="empty-state"><div class="empty-state-icon">${icon}</div><h2>${escapeHTML(title)}</h2><p>${escapeHTML(copy)}</p></div>`;
   }
 
-  function errorState(message) {
-    return `<div class="error-state" role="alert"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 17h.01"/></svg><span>${escapeHTML(message)}</span></div>`;
+  function errorState(message, retryLabel = 'Reload and try again') {
+    return `<div class="error-state" role="alert"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 17h.01"/></svg><span>${escapeHTML(message)}</span>${retryLabel ? `<button class="link-button" type="button" data-retry-page>${escapeHTML(retryLabel)}</button>` : ''}</div>`;
   }
 
   function getParam(name) { return new URLSearchParams(window.location.search).get(name); }
@@ -112,6 +113,13 @@
   const activePageTitle = document.body.dataset.pageTitle || pages.find(([key]) => key === activePage)?.[1] || 'Instructor workspace';
   const content = document.getElementById('workspace-content');
   if (!content) return;
+  content.setAttribute('tabindex', '-1');
+
+  const skipLink = document.createElement('a');
+  skipLink.className = 'skip-link';
+  skipLink.href = '#workspace-content';
+  skipLink.textContent = 'Skip to main content';
+  document.body.prepend(skipLink);
 
   const shell = document.createElement('div');
   shell.className = 'workspace-shell';
@@ -151,15 +159,38 @@
     shell.classList.toggle('is-nav-open', open);
     openButton.setAttribute('aria-expanded', String(open));
     document.body.style.overflow = open ? 'hidden' : '';
+    if (window.matchMedia('(max-width: 820px)').matches) {
+      shell.querySelector('.workspace-sidebar').inert = !open;
+    }
+    if (open) {
+      window.requestAnimationFrame(() => shell.querySelector('.workspace-nav-link')?.focus());
+    }
   }
   openButton.addEventListener('click', () => setNav(!shell.classList.contains('is-nav-open')));
   closeButton.addEventListener('click', () => setNav(false));
   document.addEventListener('keydown', (event) => { if (event.key === 'Escape') setNav(false); });
+  shell.querySelectorAll('.workspace-nav-link').forEach((link) => link.addEventListener('click', () => setNav(false)));
+  const mobileQuery = window.matchMedia('(max-width: 820px)');
+  const syncNavMode = () => {
+    const sidebar = shell.querySelector('.workspace-sidebar');
+    if (!mobileQuery.matches) {
+      sidebar.inert = false;
+      shell.classList.remove('is-nav-open');
+      document.body.style.overflow = '';
+    } else if (!shell.classList.contains('is-nav-open')) {
+      sidebar.inert = true;
+    }
+  };
+  mobileQuery.addEventListener?.('change', syncNavMode);
+  syncNavMode();
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('[data-retry-page]')) window.location.reload();
+  });
 
   const apiStatus = shell.querySelector('[data-api-status]');
   const userPanel = shell.querySelector('[data-user-panel]');
   window.MisraAPI.currentUser().then((user) => {
-    if (user.must_change_password && activePage !== 'account') {
+    if (user.must_change_password && activePage !== 'settings') {
       window.location.replace('account.html?required=1');
       return;
     }

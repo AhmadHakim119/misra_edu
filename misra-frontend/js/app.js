@@ -8,23 +8,106 @@
 
   document.documentElement.classList.remove('no-js');
 
+  const THEME_KEY = 'misra-theme';
+  const themeMedia = window.matchMedia('(prefers-color-scheme: dark)');
+
+  function themePreference() {
+    try {
+      const value = window.localStorage.getItem(THEME_KEY);
+      return value === 'light' || value === 'dark' || value === 'system' ? value : 'system';
+    } catch (_) {
+      return 'system';
+    }
+  }
+
+  function applyTheme(value) {
+    const preference = value === 'dark' || value === 'light' || value === 'system'
+      ? value
+      : themePreference();
+    const theme = preference === 'system' ? (themeMedia.matches ? 'dark' : 'light') : preference;
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.themePreference = preference;
+    document.documentElement.style.colorScheme = theme;
+    document.querySelectorAll('[data-theme-option]').forEach((control) => {
+      const selected = control.value === preference;
+      control.checked = selected;
+      control.closest('[data-theme-choice]')?.classList.toggle('is-selected', selected);
+    });
+    return theme;
+  }
+
+  function setTheme(value) {
+    const preference = value === 'dark' || value === 'light' ? value : 'system';
+    try { window.localStorage.setItem(THEME_KEY, preference); } catch (_) {}
+    return applyTheme(preference);
+  }
+
+  applyTheme(themePreference());
+  themeMedia.addEventListener?.('change', () => {
+    if (themePreference() === 'system') applyTheme('system');
+  });
+  window.MisraTheme = {
+    apply: applyTheme,
+    set: setTheme,
+    getPreference: themePreference,
+    getResolved: () => document.documentElement.dataset.theme || 'light',
+  };
+
+  const PREFERENCES_KEY = 'misra-workspace-preferences';
+  const preferenceDefaults = { gradingMode: 'auto', uploadMode: 'single' };
+  function readPreferences() {
+    try {
+      return { ...preferenceDefaults, ...JSON.parse(window.localStorage.getItem(PREFERENCES_KEY) || '{}') };
+    } catch (_) {
+      return { ...preferenceDefaults };
+    }
+  }
+  function writePreferences(values) {
+    const next = { ...readPreferences(), ...values };
+    try { window.localStorage.setItem(PREFERENCES_KEY, JSON.stringify(next)); } catch (_) {}
+    return next;
+  }
+  window.MisraPreferences = { get: readPreferences, set: writePreferences };
+
+  const connectionBanner = document.createElement('div');
+  connectionBanner.className = 'connection-banner';
+  connectionBanner.hidden = navigator.onLine;
+  connectionBanner.setAttribute('role', 'status');
+  connectionBanner.setAttribute('aria-live', 'polite');
+  connectionBanner.textContent = 'You are offline. Saved information remains visible, but uploads and grading need a connection.';
+  document.body.appendChild(connectionBanner);
+
+  window.addEventListener('offline', () => {
+    connectionBanner.hidden = false;
+    connectionBanner.textContent = 'You are offline. Saved information remains visible, but uploads and grading need a connection.';
+  });
+  window.addEventListener('online', () => {
+    connectionBanner.hidden = true;
+    window.showToast?.('Connection restored.', 'success');
+  });
+
   /* ---- Mobile nav drawer ---- */
   const menuBtn = document.querySelector('[data-menu-toggle]');
   const drawer = document.querySelector('[data-mobile-drawer]');
 
   if (menuBtn && drawer) {
-    menuBtn.addEventListener('click', () => {
-      const isOpen = drawer.classList.toggle('is-open');
+    const setDrawer = (isOpen) => {
+      drawer.classList.toggle('is-open', isOpen);
       menuBtn.setAttribute('aria-expanded', String(isOpen));
+      drawer.setAttribute('aria-hidden', String(!isOpen));
+      drawer.inert = !isOpen;
       document.body.style.overflow = isOpen ? 'hidden' : '';
-    });
+      if (isOpen) drawer.querySelector('a')?.focus();
+      else if (document.activeElement && drawer.contains(document.activeElement)) menuBtn.focus();
+    };
+    setDrawer(false);
+    menuBtn.addEventListener('click', () => setDrawer(!drawer.classList.contains('is-open')));
 
     drawer.querySelectorAll('a').forEach((link) => {
-      link.addEventListener('click', () => {
-        drawer.classList.remove('is-open');
-        menuBtn.setAttribute('aria-expanded', 'false');
-        document.body.style.overflow = '';
-      });
+      link.addEventListener('click', () => setDrawer(false));
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && drawer.classList.contains('is-open')) setDrawer(false);
     });
   }
 

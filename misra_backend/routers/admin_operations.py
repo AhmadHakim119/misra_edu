@@ -26,6 +26,7 @@ from services.audit_service import (
 from services.auth_dependencies import require_admin
 from services.job_queue_service import job_to_dict, redis_connection
 from services.job_recovery_service import recover_orphaned_jobs
+from services.build_info import build_info
 
 
 router = APIRouter(prefix="/api/admin/operations", tags=["admin operations"])
@@ -291,6 +292,7 @@ def operations_health(
     return {
         "checked_at": datetime.now(),
         "retention_days": audit_retention_days(),
+        "build": build_info(),
         "services": services,
         "institution_id": admin.institution_id,
     }

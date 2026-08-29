@@ -3,7 +3,16 @@ from pathlib import Path
 from fastapi import APIRouter, File, UploadFile, Form, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import get_db
-from models import Submission, Exam, Answer, Question, Course, User
+from models import (
+    Submission,
+    Exam,
+    Answer,
+    Question,
+    Course,
+    User,
+    RubricVersion,
+    QuestionGradingPolicy,
+)
 from services.auth_dependencies import require_instructor
 from services.audit_service import record_audit_event
 from services.ocr_service import create_submissions_from_stored_upload
@@ -17,7 +26,7 @@ from services.upload_security_service import (
 from models import Batch
 from typing import Optional
 from schemas.course_input import CourseCreateRequest
-from schemas.exam_input import ExamCreateRequest
+from schemas.exam_input import ExamCreateRequest, ExamDuplicateRequest
 
 router = APIRouter(prefix="/api", tags=["exams"])
 
@@ -176,6 +185,123 @@ def list_exams(db: Session = Depends(get_db), user: User = Depends(require_instr
         )
 
     return catalog
+
+
+@router.post("/exams/{exam_id}/duplicate", status_code=201)
+def duplicate_exam(
+    exam_id: str,
+    payload: ExamDuplicateRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    """Reuse an assessment structure without copying student work or grades."""
+    source_exam = _owned_exam(exam_id, db, user)
+    if not source_exam:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+
+    title = payload.title.strip()
+    if not title:
+        raise HTTPException(status_code=422, detail="Assessment title is required")
+
+    duplicate = Exam(
+        institution_id=source_exam.institution_id,
+        course_id=source_exam.course_id,
+        title=title,
+        language=source_exam.language,
+    )
+    db.add(duplicate)
+    db.flush()
+
+    source_questions = (
+        db.query(Question)
+        .filter(Question.exam_id == source_exam.id)
+        .order_by(Question.order_index.asc(), Question.question_number.asc())
+        .all()
+    )
+    copied_rubrics = 0
+    copied_policies = 0
+
+    for source_question in source_questions:
+        question = Question(
+            institution_id=source_question.institution_id,
+            exam_id=duplicate.id,
+            question_number=source_question.question_number,
+            question_text=source_question.question_text,
+            max_score=source_question.max_score,
+            rubric_json=source_question.rubric_json,
+            order_index=source_question.order_index,
+            language=source_question.language,
+        )
+        db.add(question)
+        db.flush()
+
+        if payload.include_rubrics:
+            source_version = None
+            if source_question.active_rubric_version_id:
+                source_version = db.query(RubricVersion).filter(
+                    RubricVersion.id == source_question.active_rubric_version_id,
+                    RubricVersion.question_id == source_question.id,
+                    RubricVersion.status == "approved",
+                ).first()
+            if source_version:
+                version = RubricVersion(
+                    question_id=question.id,
+                    version_number=1,
+                    schema_version=source_version.schema_version,
+                    rubric_json=source_version.rubric_json,
+                    grading_approach=source_version.grading_approach,
+                    source="imported",
+                    status="approved",
+                    change_summary=f"Reused from assessment {source_exam.title}.",
+                    created_by=user.id,
+                    approved_by=user.id,
+                    approved_at=source_version.approved_at,
+                )
+                db.add(version)
+                db.flush()
+                question.active_rubric_version_id = version.id
+                question.rubric_json = version.rubric_json
+                copied_rubrics += 1
+
+        if payload.include_grading_policies:
+            source_policy = db.query(QuestionGradingPolicy).filter(
+                QuestionGradingPolicy.question_id == source_question.id
+            ).first()
+            if source_policy:
+                db.add(QuestionGradingPolicy(
+                    question_id=question.id,
+                    mode=source_policy.mode,
+                    audit_rate=source_policy.audit_rate,
+                    min_validated_samples=source_policy.min_validated_samples,
+                    material_absolute_points=source_policy.material_absolute_points,
+                    material_relative_ratio=source_policy.material_relative_ratio,
+                    enabled=source_policy.enabled,
+                    notes=source_policy.notes,
+                ))
+                copied_policies += 1
+
+    record_audit_event(
+        db,
+        institution_id=user.institution_id,
+        actor_id=user.id,
+        action="assessment_duplicated",
+        entity_type="exam",
+        entity_id=duplicate.id,
+        details={
+            "source_exam_id": source_exam.id,
+            "question_count": len(source_questions),
+            "rubric_count": copied_rubrics,
+            "policy_count": copied_policies,
+        },
+    )
+    db.commit()
+    db.refresh(duplicate)
+    return {
+        "exam": duplicate,
+        "question_count": len(source_questions),
+        "rubric_count": copied_rubrics,
+        "policy_count": copied_policies,
+    }
 
 @router.post("/upload-exam", status_code=202)
 async def upload_exam(

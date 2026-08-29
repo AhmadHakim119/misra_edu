@@ -82,6 +82,7 @@
     createCourse: (body) => request('/courses', { method: 'POST', body: JSON.stringify(body) }),
     exams: () => request('/exams'),
     createExam: (body) => request('/exams', { method: 'POST', body: JSON.stringify(body) }),
+    duplicateExam: (examId, body) => request(`/exams/${encodeURIComponent(examId)}/duplicate`, { method: 'POST', body: JSON.stringify(body) }),
     questions: (examId) => request(`/exams/${encodeURIComponent(examId)}/questions`),
     createQuestion: (examId, body) => request(`/exams/${encodeURIComponent(examId)}/questions`, { method: 'POST', body: JSON.stringify(body) }),
     rubric: (questionId) => request(`/questions/${encodeURIComponent(questionId)}/rubric`),

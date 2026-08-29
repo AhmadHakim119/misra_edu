@@ -109,8 +109,9 @@
   async function updatePreflight() {
     const requestId = ++preflightRequest;
     const examId = examSelect.value;
+    const blackboard = exportProfile.value === 'blackboard';
     if (!examId) {
-      exportPreflight.innerHTML = `<div class="identity-reminder"><span class="readiness-mark">!</span><div><strong>Student identity still needs a human check</strong><p>OCR names and student numbers can be missing or wrong. Select an assessment to review exactly which papers are ready for Blackboard.</p></div></div>`;
+      exportPreflight.innerHTML = `<div class="identity-reminder"><span class="readiness-mark">!</span><div><strong>Select one assessment before export</strong><p>${blackboard ? 'Blackboard requires a verified Username for every included student.' : 'MISRA will check grading completion, review flags, and recorded identity before creating the file.'}</p></div></div>`;
       return;
     }
     exportPreflight.innerHTML = '<div class="export-preflight-loading"><span class="api-status-dot"></span><span>Checking student identities and export readiness…</span></div>';
@@ -121,20 +122,20 @@
       const displayRows = (issues.length ? issues : preflight.rows).slice(0, 8);
       const hiddenCount = (issues.length ? issues : preflight.rows).length - displayRows.length;
       exportPreflight.innerHTML = `<div class="export-preflight-head">
-        <div><strong>Blackboard export check</strong><p>The import CSV intentionally contains only Blackboard Username and one grade column. Verify identities here; use the Excel report when you need a readable archive.</p></div>
-        <div class="export-preflight-counts">${MisraUI.badge(`${preflight.counts.ready} import ready`, 'success')}${preflight.counts.missing_name ? MisraUI.badge(`${preflight.counts.missing_name} missing name`, 'warning') : ''}${preflight.counts.missing_identifier ? MisraUI.badge(`${preflight.counts.missing_identifier} missing ID`, 'danger') : ''}${preflight.counts.incomplete_grading ? MisraUI.badge(`${preflight.counts.incomplete_grading} incomplete`, 'warning') : ''}${preflight.counts.needs_review ? MisraUI.badge(`${preflight.counts.needs_review} to review`, 'warning') : ''}</div>
+        <div><strong>${blackboard ? 'Blackboard import check' : 'Generic CSV export check'}</strong><p>${blackboard ? 'The import file intentionally contains only Blackboard Username and one grade column. Confirm the selected assessment and roster identity before upload.' : 'The generic file includes identity, score, maximum score, percentage, completion, and review state for local records or LMS mapping.'}</p></div>
+        <div class="export-preflight-counts">${MisraUI.badge(`${preflight.counts.ready} export ready`, 'success')}${preflight.counts.missing_name ? MisraUI.badge(`${preflight.counts.missing_name} missing name`, 'warning') : ''}${preflight.counts.missing_identifier ? MisraUI.badge(`${preflight.counts.missing_identifier} missing ID`, blackboard ? 'danger' : 'warning') : ''}${preflight.counts.incomplete_grading ? MisraUI.badge(`${preflight.counts.incomplete_grading} incomplete`, 'warning') : ''}${preflight.counts.needs_review ? MisraUI.badge(`${preflight.counts.needs_review} to review`, 'warning') : ''}</div>
       </div>
-      <div class="export-preflight-column"><span>Blackboard grade column</span><strong>${MisraUI.escapeHTML(preflight.grade_column)}</strong></div>
+      <div class="export-preflight-column"><span>${blackboard ? 'Blackboard grade column' : 'Selected assessment column'}</span><strong>${MisraUI.escapeHTML(preflight.grade_column)}</strong></div>
       ${displayRows.length ? `<div class="export-preflight-list">${displayRows.map((row) => {
         const name = row.student_name || 'Student name missing';
         const username = row.username || 'Student number missing';
         const blocking = row.issues.some((issue) => issue.blocking);
-        const status = blocking ? row.issues.filter((issue) => issue.blocking).map((issue) => issue.message).join(' · ') : row.issues.length ? row.issues.map((issue) => issue.message).join(' · ') : 'Ready for Blackboard import';
+        const status = blocking ? row.issues.filter((issue) => issue.blocking).map((issue) => issue.message).join(' · ') : row.issues.length ? row.issues.map((issue) => issue.message).join(' · ') : (blackboard ? 'Ready for Blackboard import' : 'Ready for generic export');
         return `<div class="export-preflight-row">
           <div><strong>${MisraUI.escapeHTML(name)}</strong><span>${MisraUI.escapeHTML(username)}</span></div>
           <div class="export-preflight-score"><strong>${number(row.score)}</strong><span>/ ${number(row.max_score)}</span></div>
           <div>${MisraUI.badge(status, blocking ? 'danger' : row.issues.length ? 'warning' : 'success')}</div>
-          <a class="link-button" href="submission.html?id=${encodeURIComponent(row.submission_id)}">Check identity</a>
+          <a class="link-button" href="submission.html?id=${encodeURIComponent(row.submission_id)}">Check record</a>
         </div>`;
       }).join('')}</div>` : '<p class="section-copy">No submissions are recorded for this assessment.</p>'}
       ${hiddenCount > 0 ? `<p class="export-preflight-more">${hiddenCount} more row${hiddenCount === 1 ? '' : 's'} not shown. The downloaded Excel report includes every student.</p>` : ''}`;

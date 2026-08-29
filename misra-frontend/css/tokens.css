@@ -4,6 +4,7 @@
    ========================================================================== */
 
 :root {
+  color-scheme: light;
   /* ---- Logo palette (exact) ---- */
   --porcelain:      #F8F9F2;
   --ivory:          #F8FBF2;
@@ -18,6 +19,7 @@
   --line-strong:    #D3D5C9;
   --surface:        #FFFFFF;   /* card surface */
   --surface-sunken: #F1F3EA;   /* recessed panels, inputs */
+  --surface-soft:   var(--surface-sunken);
 
   /* ---- Celadon ramp (accent — the ONE accent color for this project) ---- */
   --celadon-50:     #EEF5F0;
@@ -26,6 +28,7 @@
   --celadon-500:    #7FAE8E;   /* accessible mid-tone for text-on-light */
   --celadon-600:    #567F65;   /* primary button fill (4.5:1+ with white text) */
   --celadon-700:    #4C7259;   /* button hover / pressed */
+  --celadon-800:    #3E5B48;
   --celadon-900:    #2E4436;   /* deep accent for dark contexts */
 
   /* ---- Slate ramp (granite/dim-grey family — used for chrome, nav, footer) ---- */
@@ -66,6 +69,38 @@
   /* ---- Layout ---- */
   --page-max: 1180px;
   --nav-h: 76px;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --porcelain: #171B18;
+  --ivory: #1A1F1B;
+  --ink: #EEF2ED;
+  --ink-soft: #B5BDB6;
+  --line: #343B35;
+  --line-strong: #485149;
+  --surface: #222823;
+  --surface-sunken: #1A1F1B;
+  --surface-soft: #1E241F;
+  --celadon-50: #263229;
+  --celadon-100: #304337;
+  --celadon-300: #B1D2BB;
+  --celadon-500: #98C4A5;
+  --celadon-600: #79A989;
+  --celadon-700: #A9D0B4;
+  --celadon-800: #C5DEC9;
+  --celadon-900: #DCEBE1;
+  --slate-500: #B1B7B2;
+  --slate-600: #C2C8C3;
+  --slate-700: #D4D9D5;
+  --slate-800: #E6EAE7;
+  --slate-900: #29272E;
+  --danger: #F0A397;
+  --danger-bg: #402824;
+  --focus-ring: 0 0 0 3px rgba(177, 210, 187, 0.42);
+  --shadow-sm: 0 2px 5px rgba(8, 10, 8, 0.22);
+  --shadow-md: 0 8px 24px rgba(8, 10, 8, 0.30);
+  --shadow-lg: 0 22px 52px rgba(8, 10, 8, 0.40);
 }
 
 @media (prefers-reduced-motion: reduce) {

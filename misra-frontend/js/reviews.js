@@ -4,7 +4,18 @@
   const list = document.getElementById('review-list');
   const count = document.getElementById('queue-count');
   const detail = document.getElementById('review-detail');
-  const state = { answers: [], questions: new Map(), selected: null };
+  const bulkToolbar = document.getElementById('review-bulk-toolbar');
+  const selectAll = document.getElementById('review-select-all');
+  const approveSelected = document.getElementById('review-approve-selected');
+  const state = { answers: [], questions: new Map(), selected: null, checked: new Set() };
+
+  function syncBulkControls() {
+    bulkToolbar.hidden = state.answers.length === 0;
+    selectAll.checked = state.answers.length > 0 && state.checked.size === state.answers.length;
+    selectAll.indeterminate = state.checked.size > 0 && state.checked.size < state.answers.length;
+    approveSelected.disabled = state.checked.size === 0;
+    approveSelected.textContent = state.checked.size ? `Approve selected (${state.checked.size})` : 'Approve selected';
+  }
 
   function renderReasons(reasons) {
     if (!reasons) return '';
@@ -64,14 +75,46 @@
     detail.innerHTML = '';
     try {
       const [answers, questions] = await Promise.all([MisraAPI.reviewQueue(examSelect.value), MisraAPI.questions(examSelect.value)]);
-      state.answers = answers; state.questions = new Map(questions.map((question) => [question.id, question]));
+      state.answers = answers; state.questions = new Map(questions.map((question) => [question.id, question])); state.checked.clear();
       count.textContent = `${answers.length} answer${answers.length === 1 ? '' : 's'} waiting`;
+      syncBulkControls();
       if (!answers.length) { list.innerHTML = MisraUI.emptyState('Queue is clear', 'No answers in this assessment need instructor review.', MisraUI.icons.review); return; }
-      list.innerHTML = answers.map((answer) => { const question = state.questions.get(answer.question_id); return `<button class="question-button" type="button" data-answer-id="${answer.id}" aria-current="false"><span class="question-number">${MisraUI.escapeHTML(question?.question_number || '?')}</span><span class="question-summary">${MisraUI.escapeHTML(answer.feedback || answer.raw_ocr_text || 'Flagged answer')}</span><span class="question-points">${answer.score ?? '—'}/${answer.max_score ?? question?.max_score ?? '—'}</span></button>`; }).join('');
+      list.innerHTML = answers.map((answer) => { const question = state.questions.get(answer.question_id); return `<div class="review-queue-row"><label class="review-select"><input type="checkbox" data-select-answer="${answer.id}" aria-label="Select Question ${MisraUI.escapeHTML(question?.question_number || '?')}"></label><button class="question-button" type="button" data-answer-id="${answer.id}" aria-current="false"><span class="question-number">${MisraUI.escapeHTML(question?.question_number || '?')}</span><span class="question-summary">${MisraUI.escapeHTML(answer.feedback || answer.raw_ocr_text || 'Flagged answer')}</span><span class="question-points">${answer.score ?? '—'}/${answer.max_score ?? question?.max_score ?? '—'}</span></button></div>`; }).join('');
       list.querySelectorAll('[data-answer-id]').forEach((button) => button.addEventListener('click', () => selectAnswer(button.dataset.answerId)));
+      list.querySelectorAll('[data-select-answer]').forEach((checkbox) => checkbox.addEventListener('change', () => {
+        if (checkbox.checked) state.checked.add(checkbox.dataset.selectAnswer);
+        else state.checked.delete(checkbox.dataset.selectAnswer);
+        syncBulkControls();
+      }));
       selectAnswer(answers[0].id);
     } catch (error) { list.innerHTML = MisraUI.errorState(error.message); }
   }
+
+  selectAll.addEventListener('change', () => {
+    state.checked = new Set(selectAll.checked ? state.answers.map((answer) => answer.id) : []);
+    list.querySelectorAll('[data-select-answer]').forEach((checkbox) => { checkbox.checked = selectAll.checked; });
+    syncBulkControls();
+  });
+
+  approveSelected.addEventListener('click', async () => {
+    const selectedAnswers = state.answers.filter((answer) => state.checked.has(answer.id));
+    if (!selectedAnswers.length) return;
+    if (!window.confirm(`Approve the current AI score for ${selectedAnswers.length} selected answer${selectedAnswers.length === 1 ? '' : 's'}? Each approval creates an evaluation label.`)) return;
+    approveSelected.disabled = true;
+    approveSelected.textContent = 'Approving…';
+    const outcomes = await Promise.allSettled(selectedAnswers.map((answer) => MisraAPI.resolveReview(answer.id, {
+      action: 'approve',
+      was_review_warranted: true,
+      reviewer_notes: 'Bulk-approved from the instructor review queue.',
+      label_source: 'bulk_review',
+    })));
+    const failed = outcomes.filter((outcome) => outcome.status === 'rejected');
+    window.showToast(
+      failed.length ? `${selectedAnswers.length - failed.length} approved; ${failed.length} could not be saved.` : `${selectedAnswers.length} selected answer${selectedAnswers.length === 1 ? '' : 's'} approved.`,
+      failed.length ? 'warning' : 'success',
+    );
+    await loadQueue();
+  });
 
   async function init() {
     try {

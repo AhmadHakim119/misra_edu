@@ -6,7 +6,7 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css"><link rel="stylesheet" href="../css/base.css"><link rel="stylesheet" href="../css/workspace.css">
+  <link rel="stylesheet" href="../css/tokens.css?v=3"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=17">
 </head>
 <body class="workspace-body" data-page="review">
   <main class="workspace-content" id="workspace-content">
@@ -15,11 +15,15 @@
     <div class="review-layout">
       <section class="workspace-card card-pad">
         <div class="section-head"><div><h2 class="section-title">Flagged answers</h2><p class="section-copy" id="queue-count">Choose an assessment.</p></div></div>
+        <div class="review-bulk-toolbar" id="review-bulk-toolbar" hidden>
+          <label class="checkbox-row"><input type="checkbox" id="review-select-all"><span>Select all visible</span></label>
+          <button class="btn btn-secondary" type="button" id="review-approve-selected" disabled>Approve selected</button>
+        </div>
         <div id="review-list" class="question-list" aria-live="polite"></div>
       </section>
       <aside id="review-detail" aria-live="polite"></aside>
     </div>
   </main>
-  <script src="../js/app.js"></script><script src="../js/api.js?v=11"></script><script src="../js/workspace.js?v=11"></script><script src="../js/reviews.js?v=2"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=11"></script><script src="../js/workspace.js?v=13"></script><script src="../js/reviews.js?v=3"></script>
 </body>
 </html>

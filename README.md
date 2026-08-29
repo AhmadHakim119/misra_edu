@@ -22,6 +22,8 @@ public internet deployment or use as an official institutional gradebook.
 - Instructor authentication, password recovery, and administration
 - Institution-scoped audit records
 - Redis-backed jobs, progress, retries, and orphan recovery
+- Responsive instructor workspace with keyboard support and light/dark themes
+- Assessment duplication with rubric and grading-policy reuse
 
 ## Active application
 
@@ -222,11 +224,23 @@ python -m unittest discover -s tests -p "test_*.py" -v
 Tests use isolated in-memory databases and mocked model calls where applicable.
 They must not depend on files under `storage/uploads/`.
 
-At the current milestone, the suite contains 75 passing tests covering
+At the current milestone, the suite contains 77 passing backend tests covering
 authentication, account management, institution authorization, secure uploads,
 submission deletion, OCR evidence, extraction review, rubric behavior, visual
 routing, exports, Redis/RQ jobs, retry idempotency, orphan recovery, and admin
 records.
+
+Frontend interaction tests use Playwright. From the repository root:
+
+```powershell
+npm ci
+npx playwright install chromium
+npm run test:e2e
+```
+
+The suite exercises desktop and mobile navigation, keyboard access, persisted
+theme selection, live records, and actionable request-failure states with
+mocked API responses.
 
 ## Documentation
 

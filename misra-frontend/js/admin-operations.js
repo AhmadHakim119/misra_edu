@@ -17,7 +17,13 @@
   const exportLink = document.getElementById('audit-export');
   const refreshButton = document.getElementById('operations-refresh');
   const recoverButton = document.getElementById('recover-jobs');
+  const auditPagination = document.getElementById('audit-pagination');
+  const auditPrevious = document.getElementById('audit-previous');
+  const auditNext = document.getElementById('audit-next');
+  const auditPageStatus = document.getElementById('audit-page-status');
   let activeSection = 'activity';
+  let auditOffset = 0;
+  const auditPageSize = 50;
 
   const jobLabels = {
     ocr_submission: 'Paper extraction',
@@ -38,7 +44,7 @@
 
   function auditParams() {
     const values = Object.fromEntries(new FormData(auditFilters));
-    const params = { category: activeSection, outcome: values.outcome, search: values.search.trim(), limit: 200 };
+    const params = { category: activeSection, outcome: values.outcome, search: values.search.trim(), limit: auditPageSize, offset: auditOffset };
     if (values.date_from) params.date_from = `${values.date_from}T00:00:00`;
     if (values.date_to) params.date_to = `${values.date_to}T23:59:59`;
     return params;
@@ -62,6 +68,12 @@
     try {
       const response = await window.MisraAPI.adminAudit(params);
       auditCopy.textContent = `${response.total} recorded event${response.total === 1 ? '' : 's'} · retained for ${response.retention_days} days`;
+      const page = Math.floor(auditOffset / auditPageSize) + 1;
+      const pages = Math.max(1, Math.ceil(response.total / auditPageSize));
+      auditPagination.hidden = response.total <= auditPageSize;
+      auditPageStatus.textContent = `Page ${page} of ${pages}`;
+      auditPrevious.disabled = auditOffset === 0;
+      auditNext.disabled = auditOffset + auditPageSize >= response.total;
       if (!response.items.length) {
         auditList.innerHTML = window.MisraUI.emptyState(
           activeSection === 'security' ? 'No security events match' : 'No activity matches',
@@ -79,6 +91,7 @@
       window.MisraUI.reveal(auditList.querySelectorAll('.operations-row'), { limit: 8 });
     } catch (error) {
       auditCopy.textContent = 'Audit history unavailable';
+      auditPagination.hidden = true;
       auditList.innerHTML = window.MisraUI.errorState(error.message || 'Could not load audit events.');
     }
   }
@@ -138,7 +151,9 @@
           : '';
         return `<article class="workspace-card health-service" data-state="${healthTone(service.status)}"><div class="health-service-head"><span class="api-status-dot"></span><strong>${escapeHTML(titleCase(key))}</strong>${window.MisraUI.badge(titleCase(service.status), service.status === 'online' ? 'success' : 'danger')}</div><p>${escapeHTML(service.detail || '')}${escapeHTML(extra)}</p></article>`;
       }).join('');
-      retentionCopy.textContent = `Audit records are automatically retained for ${health.retention_days} days. Last checked ${dateTime(health.checked_at)}.`;
+      const version = health.build?.version || 'development';
+      const build = health.build?.build || 'local';
+      retentionCopy.textContent = `MISRA ${version} · build ${build}. Audit records are retained for ${health.retention_days} days. Last checked ${dateTime(health.checked_at)}.`;
       window.MisraUI.reveal(healthSummary.querySelectorAll('.health-service'), { limit: 5 });
     } catch (error) {
       healthSummary.innerHTML = window.MisraUI.errorState(error.message || 'Could not check system health.');
@@ -148,6 +163,7 @@
 
   async function selectSection(section) {
     activeSection = section;
+    auditOffset = 0;
     tabs.forEach((tab) => tab.setAttribute('aria-pressed', String(tab.dataset.operationsTab === section)));
     auditPanel.hidden = !['activity', 'security'].includes(section);
     jobsPanel.hidden = section !== 'background_jobs';
@@ -164,7 +180,9 @@
   }
 
   tabs.forEach((tab) => tab.addEventListener('click', () => selectSection(tab.dataset.operationsTab)));
-  auditFilters.addEventListener('submit', (event) => { event.preventDefault(); loadAudit(); });
+  auditFilters.addEventListener('submit', (event) => { event.preventDefault(); auditOffset = 0; loadAudit(); });
+  auditPrevious.addEventListener('click', () => { auditOffset = Math.max(0, auditOffset - auditPageSize); loadAudit(); });
+  auditNext.addEventListener('click', () => { auditOffset += auditPageSize; loadAudit(); });
   jobFilters.addEventListener('submit', (event) => { event.preventDefault(); loadJobs(); });
   refreshButton.addEventListener('click', () => selectSection(activeSection));
 
