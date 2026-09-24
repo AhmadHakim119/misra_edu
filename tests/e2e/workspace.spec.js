@@ -48,7 +48,7 @@ test('dashboard is usable with keyboard and exposes live records', async ({ page
   await page.goto('/pages/dashboard.html');
 
   await expect(page.getByRole('heading', { name: 'Keep every assessment moving.' })).toBeVisible();
-  await expect(page.getByText('Database Systems Midterm')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Database Systems Midterm' })).toBeVisible();
   await expect(page.getByText('Finish rubrics')).toBeVisible();
   await expect(page.getByText('What needs you now')).toBeVisible();
   await expect(page.getByText('Test Instructor')).toBeVisible();

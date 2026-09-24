@@ -7,6 +7,7 @@
   const focusCopy = document.getElementById('focus-copy');
   const dashboardLead = document.getElementById('dashboard-lead');
   const pipeline = document.getElementById('dashboard-pipeline');
+  const primaryAction = document.getElementById('dashboard-primary-action');
 
   const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
   const plural = (value, singular, pluralForm = `${singular}s`) => `${value} ${value === 1 ? singular : pluralForm}`;
@@ -71,10 +72,25 @@
   }
 
   try {
-    const [exams, submissions] = await Promise.all([
-      window.MisraAPI.exams(),
+    const [context, submissions] = await Promise.all([
+      MisraUI.assessmentReady,
       window.MisraAPI.submissions(),
     ]);
+    const exams = context.exams;
+    if (context.error) throw context.error;
+    const current = exams.find((exam) => exam.id === context.selectedId) || exams[0];
+    if (current) {
+      const checks = await MisraAPI.setupReadiness(current.id).catch(() => null);
+      const action = !checks?.ready
+        ? { label: 'Finish assessment setup', page: 'rubric-studio.html' }
+        : !number(current.submission_count)
+          ? { label: 'Upload student papers', page: 'upload.html' }
+          : number(current.review_count)
+            ? { label: 'Review flagged grades', page: 'reviews.html' }
+            : { label: 'Open grades', page: 'grades.html' };
+      primaryAction.textContent = action.label;
+      primaryAction.href = `${action.page}?exam_id=${encodeURIComponent(current.id)}`;
+    }
 
     const totals = exams.reduce((sum, exam) => ({
       questions: sum.questions + number(exam.question_count),

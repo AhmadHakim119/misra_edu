@@ -7,7 +7,8 @@
   const bulkToolbar = document.getElementById('review-bulk-toolbar');
   const selectAll = document.getElementById('review-select-all');
   const approveSelected = document.getElementById('review-approve-selected');
-  const state = { answers: [], questions: new Map(), selected: null, checked: new Set() };
+  const state = { answers: [], questions: new Map(), selected: null, checked: new Set(), formDirty: false, resolving: false };
+  let loadedExamId = '';
   const reviewReasonOptions = [
     ['valid_alternative', 'Valid alternative', 'Another correct approach.'],
     ['minor_notation', 'Minor notation', 'The meaning is clear despite notation or handwritten syntax.'],
@@ -48,10 +49,14 @@
   }
 
   function selectAnswer(answerId) {
+    if (state.resolving) return;
+    if (state.selected && state.selected.id !== answerId && state.formDirty && !window.confirm('Discard your unsaved review edits and open another answer?')) return;
     state.selected = state.answers.find((answer) => answer.id === answerId);
     list.querySelectorAll('.question-button').forEach((button) => button.setAttribute('aria-current', String(button.dataset.answerId === answerId)));
     if (!state.selected) return;
+    state.formDirty = false;
     const answer = state.selected;
+    const index = state.answers.findIndex((item) => item.id === answerId);
     const question = state.questions.get(answer.question_id);
     const confidence = Number.isFinite(Number(answer.final_confidence))
       ? `${Number(answer.final_confidence)}%`
@@ -71,6 +76,7 @@
       <div class="review-answer" style="margin-top:10px">${MisraUI.escapeHTML(answer.raw_ocr_text || 'No OCR text available.')}</div>
       ${renderReasons(answer.review_reasons)}
       ${evidenceLink}
+      <nav class="review-sequence" aria-label="Review queue navigation"><span>Answer ${index + 1} of ${state.answers.length}</span><div><button type="button" class="btn btn-ghost" data-review-step="-1" ${index === 0 ? 'disabled' : ''}>Previous</button><button type="button" class="btn btn-ghost" data-review-step="1" ${index === state.answers.length - 1 ? 'disabled' : ''}>Next</button></div></nav>
       <form id="review-form" style="margin-top:20px;padding-top:18px;border-top:1px solid var(--line)">
         <div class="field"><label for="human-score">Human score</label><input class="input" id="human-score" name="human_score" type="number" min="0" max="${answer.max_score}" step="0.25" value="${answer.teacher_override_score ?? answer.score ?? ''}"></div>
         <div class="field"><label for="review-notes">Instructor notes</label><textarea class="input textarea" id="review-notes" name="reviewer_notes" placeholder="Record why this result was approved or changed."></textarea></div>
@@ -103,16 +109,51 @@
       review_reason_note: form.get('review_reason_note')?.trim() || null,
     };
     if (action === 'override') body.human_score = Number(form.get('human_score'));
+    const resolvedId = state.selected.id;
+    const resolvedIndex = state.answers.findIndex((answer) => answer.id === resolvedId);
+    state.resolving = true;
     submitter.disabled = true; submitter.textContent = 'Saving…';
     try {
-      await MisraAPI.resolveReview(state.selected.id, body);
+      await MisraAPI.resolveReview(resolvedId, body);
       window.showToast('Review saved and evaluation label created.', 'success');
-      await loadQueue();
+      state.answers.splice(resolvedIndex, 1);
+      state.checked.delete(resolvedId);
+      list.querySelector(`[data-answer-id="${CSS.escape(resolvedId)}"]`)?.closest('.review-queue-row')?.remove();
+      count.textContent = `${state.answers.length} answer${state.answers.length === 1 ? '' : 's'} waiting`;
+      syncBulkControls();
+      state.selected = null;
+      state.formDirty = false;
+      state.resolving = false;
+      if (state.answers.length) {
+        selectAnswer(state.answers[Math.min(resolvedIndex, state.answers.length - 1)].id);
+        detail.querySelector('#human-score')?.focus();
+      } else {
+        list.innerHTML = MisraUI.emptyState('Queue is clear', 'No answers in this assessment need instructor review.', MisraUI.icons.review);
+        detail.innerHTML = '';
+      }
     } catch (error) { window.showToast(error.message, 'error'); submitter.disabled = false; submitter.textContent = action === 'override' ? 'Save human score' : 'Approve AI score'; }
+    finally { state.resolving = false; }
   }
+
+  detail.addEventListener('input', (event) => { if (event.target.closest('#review-form')) state.formDirty = true; });
+  detail.addEventListener('change', (event) => { if (event.target.closest('#review-form')) state.formDirty = true; });
+  detail.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-review-step]');
+    if (!button) return;
+    const index = state.answers.findIndex((answer) => answer.id === state.selected?.id);
+    const next = state.answers[index + Number(button.dataset.reviewStep)];
+    if (next) selectAnswer(next.id);
+  });
 
   async function loadQueue() {
     if (!examSelect.value) return;
+    if (loadedExamId && loadedExamId !== examSelect.value && state.formDirty && !window.confirm('Discard your unsaved review edits and switch assessments?')) {
+      examSelect.value = loadedExamId;
+      return;
+    }
+    loadedExamId = examSelect.value;
+    state.formDirty = false;
+    state.selected = null;
     list.innerHTML = '<div class="loading-list"><div class="skel loading-row"></div><div class="skel loading-row"></div></div>';
     detail.innerHTML = '';
     try {
@@ -159,9 +200,11 @@
 
   async function init() {
     try {
-      const exams = await MisraAPI.exams();
+      const context = await MisraUI.assessmentReady;
+      if (context.error) throw context.error;
+      const exams = context.exams;
       examSelect.innerHTML = exams.length ? exams.map((exam) => `<option value="${exam.id}">${MisraUI.escapeHTML(exam.course_code ? `${exam.course_code} · ${exam.title}` : exam.title)}</option>`).join('') : '<option value="">No assessments found</option>';
-      const requested = MisraUI.getParam('exam_id'); if (exams.some((exam) => exam.id === requested)) examSelect.value = requested;
+      const requested = MisraUI.getParam('exam_id') || context.selectedId; if (exams.some((exam) => exam.id === requested)) examSelect.value = requested;
       examSelect.addEventListener('change', loadQueue); await loadQueue();
     } catch (error) { list.innerHTML = MisraUI.errorState(error.message); }
   }
