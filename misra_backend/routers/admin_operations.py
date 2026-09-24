@@ -191,7 +191,7 @@ def export_audit_events(
 @router.get("/jobs")
 def list_processing_jobs(
     status: str | None = Query(default=None, pattern="^(queued|processing|completed|failed|retrying)$"),
-    job_type: str | None = Query(default=None, pattern="^(ocr_submission|ocr_batch|grade_submission)$"),
+    job_type: str | None = Query(default=None, pattern="^(ocr_submission|ocr_batch|grade_submission|exam_setup)$"),
     limit: int = Query(default=100, ge=1, le=200),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),

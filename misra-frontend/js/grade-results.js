@@ -96,9 +96,36 @@
     </div>`;
   }
 
-  function renderCriteria(criteria) {
+  function renderCriteria(criteria, gradingPackage) {
     if (!Array.isArray(criteria) || !criteria.length) return '<p class="grade-empty-copy">No criterion-level scores were recorded.</p>';
-    return `<div class="criteria-results">${criteria.map((criterion) => `<div class="criterion-result"><div class="criterion-result-head"><strong>${MisraUI.escapeHTML(criterionName(criterion.criterion_id))}</strong><span>${number(criterion.points_earned)} / ${number(criterion.max_points)}</span></div><p>${MisraUI.escapeHTML(criterion.feedback || 'No criterion feedback was recorded.')}</p></div>`).join('')}</div>`;
+    const evidence = new Map((gradingPackage?.student_evidence || []).map(item => [item.id, item]));
+    const label = id => {
+      const item = evidence.get(id);
+      if (!item) return id;
+      return item.page_index === undefined ? 'Combined extracted answer' : `Page ${item.page_index + 1}${item.segment_index === undefined ? ' image' : ` · segment ${item.segment_index + 1}`}`;
+    };
+    return `<div class="criteria-results">${criteria.map((criterion) => `<div class="criterion-result"><div class="criterion-result-head"><strong>${MisraUI.escapeHTML(criterionName(criterion.criterion_id))}</strong><span>${number(criterion.points_earned)} / ${number(criterion.max_points)}</span></div><p>${MisraUI.escapeHTML(criterion.feedback || 'No criterion feedback was recorded.')}</p>
+      ${gradingPackage ? `<p><strong>Evidence:</strong> ${MisraUI.escapeHTML((criterion.evidence_refs || []).map(label).join('; ') || 'No evidence cited — review required.')}</p>` : ''}
+      ${criterion.reference_refs?.length ? `<p><strong>Reference:</strong> ${MisraUI.escapeHTML(gradingPackage?.answer_key?.version ? `Answer key v${gradingPackage.answer_key.version}` : 'Legacy rubric reference')}</p>` : ''}
+      ${criterion.policy_applied?.length ? `<p><strong>Rules applied:</strong> ${MisraUI.escapeHTML(criterion.policy_applied.map(criterionName).join(', '))}</p>` : ''}
+      ${criterion.uncertainties?.length ? `<p class="mapping-warning"><strong>Needs judgment:</strong> ${MisraUI.escapeHTML(criterion.uncertainties.join('; '))}</p>` : ''}
+      </div>`).join('')}</div>`;
+  }
+
+  function renderGradingPackage(pack) {
+    if (!pack?.question || !pack?.answer_key) return '<p>This older run has no complete grading-package snapshot. Existing rubric/run records are retained.</p>';
+    const key = pack.answer_key;
+    const policies = Object.entries(pack.policy || {});
+    return `<p>Saved at grading time. Later edits do not change this record. Citations identify sources; they do not prove that the AI interpreted them correctly.</p>
+      <h4>Question at grading</h4><p>${MisraUI.escapeHTML(pack.question.text || '')}</p>
+      <p><strong>Rubric / policy version:</strong> ${MisraUI.escapeHTML(pack.rubric_version_id || 'Legacy definition')}</p>
+      <p><strong>Answer key:</strong> ${key.is_legacy_fallback ? 'Legacy rubric reference' : `Version ${number(key.version)}`}${key.mode === 'no_fixed_answer' ? ' · No fixed answer' : ''}</p>
+      ${key.reference_text ? `<pre>${MisraUI.escapeHTML(key.reference_text)}</pre>` : ''}
+      ${key.alternatives?.length ? `<p><strong>Accepted alternatives:</strong></p><ul>${key.alternatives.map(text => `<li>${MisraUI.escapeHTML(text)}</li>`).join('')}</ul>` : ''}
+      ${key.document_refs?.length ? `<p><strong>Reference pages:</strong> ${MisraUI.escapeHTML(key.document_refs.map(ref => `Pages ${ref.page_indices.map(p => p + 1).join(', ')} (document ${ref.job_id})`).join('; '))}</p>` : ''}
+      <h4>Marking policy</h4>${policies.length ? `<dl>${policies.map(([name,value]) => `<dt>${MisraUI.escapeHTML(criterionName(name))}</dt><dd>${MisraUI.escapeHTML(String(value ?? 'Not specified').replaceAll('_', ' '))}</dd>`).join('')}</dl>` : '<p>Legacy criteria and notes apply; no explicit policy was stored.</p>'}
+      <p><strong>Route:</strong> ${MisraUI.escapeHTML(modeLabel(pack.routing?.selected_mode))} · ${MisraUI.escapeHTML(pack.routing?.policy_mode || 'Not recorded')}</p>
+      <details><summary>Snapshot identifiers</summary><p class="grade-empty-copy">Definition fingerprint: ${MisraUI.escapeHTML(pack.snapshot_sha256 || 'Not recorded')}</p><p class="grade-empty-copy">Student document fingerprint: ${MisraUI.escapeHTML(pack.student_document_sha256 || 'Not available')}</p></details>`;
   }
 
   function validEvidenceBox(source) {
@@ -160,6 +187,24 @@
         ? 'Instructor approved'
         : 'AI grade recorded';
     const statusTone = answer.review_status === 'overridden' ? 'warning' : answer.review_status === 'approved' ? 'success' : 'draft';
+    const selectedReasons = new Set(latestLabel?.review_reason_codes || []);
+    const reasonOptions = [
+      ['valid_alternative', 'Valid alternative', 'The answer is correct using another accepted approach.'],
+      ['minor_notation', 'Minor notation', 'Meaning is clear despite a small notation or handwritten syntax issue.'],
+      ['method_credit', 'Method credit', 'The method earns credit even though the final answer is incomplete or incorrect.'],
+      ['carried_forward_error', 'Carried-forward error', 'A later step is consistent with an earlier mistake.'],
+      ['language_tolerance', 'Language tolerance', 'Language quality is not being assessed by this criterion.'],
+      ['rubric_issue', 'Rubric issue', 'The approved rubric does not represent the intended marking decision.'],
+      ['ocr_or_mapping_error', 'OCR or mapping error', 'The extracted evidence is wrong. This is never treated as a marking preference.'],
+      ['other', 'Other', 'Record a different reason in the detail field.'],
+    ];
+    const reasonEditor = `<fieldset class="review-reason-fieldset">
+      <legend>Reason for this decision <span>Required when changing the grade</span></legend>
+      <p>Select every reason that influenced the decision. Extraction errors are kept separate from marking preferences.</p>
+      <div class="review-reason-options">${reasonOptions.map(([value, label, description]) => `<label><input type="checkbox" name="review_reason_codes" value="${value}"${selectedReasons.has(value) ? ' checked' : ''}><span><strong>${label}</strong><small>${description}</small></span></label>`).join('')}</div>
+      <label class="field review-reason-note"><span>Reason detail <small>Optional</small></span><textarea class="input" name="review_reason_note" rows="2" maxlength="1000" placeholder="Add context that will help interpret this decision later.">${MisraUI.escapeHTML(latestLabel?.review_reason_note || '')}</textarea></label>
+      <p class="field-error" data-review-reason-error role="alert" hidden>Select at least one reason before saving a changed grade.</p>
+    </fieldset>`;
     const criterionEditor = criteria.length ? `<details class="grade-criterion-editor">
       <summary>Adjust criterion scores <span>Optional</span></summary>
       <div class="grade-criterion-inputs">${criteria.map((criterion) => {
@@ -179,6 +224,7 @@
           <small>AI suggested ${number(answer.score)} / ${number(answer.max_score)}</small>
         </div>
         ${criterionEditor}
+        ${reasonEditor}
         <label class="field instructor-note"><span>Instructor note <small>Optional</small></span><textarea class="input" name="reviewer_notes" rows="2" placeholder="Explain the adjustment for your records.">${MisraUI.escapeHTML(answer.teacher_notes || latestLabel?.reviewer_notes || '')}</textarea></label>
         <div class="instructor-grade-actions"><button class="btn btn-primary" type="submit">Save instructor grade</button>${answer.teacher_override_score !== null && answer.teacher_override_score !== undefined ? `<button class="btn btn-ghost" type="button" data-restore-ai="${answer.id}">Restore AI score</button>` : ''}<span data-grade-form-status role="status"></span></div>
       </form>
@@ -207,8 +253,10 @@
           <div class="question-grade-column">
             ${renderInstructorEditor(row, answer, latestLabel)}
             <section class="grade-feedback"><h3>Feedback</h3><p>${MisraUI.escapeHTML(answer?.feedback || 'No feedback was recorded for this answer.')}</p></section>
-            <section class="grade-criteria"><h3>Criterion breakdown</h3>${renderCriteria(answer?.criteria_scores)}</section>
+            <section class="grade-criteria"><h3>Criterion breakdown</h3>${renderCriteria(answer?.criteria_scores, answer?.grading_raw_response?.grading_package)}</section>
             <div class="grade-disclosures">
+              <details><summary>Rules &amp; references used</summary>${renderGradingPackage(answer?.grading_raw_response?.grading_package)}</details>
+              ${answer ? `<details><summary>Grading history</summary><button class="btn btn-secondary" type="button" data-load-history="${answer.id}">Load saved runs</button><div data-run-history role="status"></div></details>` : ''}
               <details><summary>AI reasoning</summary><p>${MisraUI.escapeHTML(answer?.reasoning || 'No reasoning was recorded.')}</p></details>
               <details><summary>Extracted answer</summary><pre>${MisraUI.escapeHTML(answer?.raw_ocr_text || 'No OCR text was recorded.')}</pre></details>
             </div>
@@ -268,6 +316,23 @@
     toggleResults.textContent = expand ? 'Collapse all' : 'Expand all';
   });
 
+  questionsHost.addEventListener('click', async event => {
+    const button = event.target.closest('[data-load-history]');
+    if (!button || button.disabled) return;
+    const host = button.parentElement.querySelector('[data-run-history]');
+    button.disabled = true;
+    host.textContent = 'Loading saved runs…';
+    try {
+      const runs = await MisraAPI.gradingRuns(button.dataset.loadHistory);
+      if (!host.isConnected) return;
+      host.innerHTML = runs.length ? runs.map(run => `<details><summary>${MisraUI.escapeHTML(new Date(run.created_at).toLocaleString())} · ${number(run.score)} / ${number(run.max_score)} · ${MisraUI.escapeHTML(modeLabel(run.mode))}</summary><p>${MisraUI.escapeHTML(run.prompt_version || '')}</p>${renderGradingPackage(run.response_json?.grading_package)}${renderCriteria(run.criteria_scores, run.response_json?.grading_package)}</details>`).join('') : '<p>No saved grading runs.</p>';
+      button.hidden = true;
+    } catch (error) {
+      host.textContent = error.message || 'Unable to load runs. Try again.';
+      button.textContent = 'Retry loading runs';
+    } finally { button.disabled = false; }
+  });
+
   jobRegion.addEventListener('click', async (event) => {
     const retry = event.target.closest('[data-retry-grading]');
     if (!retry) return;
@@ -311,19 +376,30 @@
       }))
       : null;
     const notes = form.elements.reviewer_notes.value.trim();
+    const reasonCodes = [...form.querySelectorAll('[name="review_reason_codes"]:checked')].map((input) => input.value);
+    const reasonNote = form.elements.review_reason_note.value.trim();
+    const isOverride = criteriaDirty || Math.abs(humanScore - aiScore) > 0.001;
+    const reasonError = form.querySelector('[data-review-reason-error]');
+    if (isOverride && !reasonCodes.length) {
+      reasonError.hidden = false;
+      form.querySelector('[name="review_reason_codes"]').focus();
+      return;
+    }
+    reasonError.hidden = true;
 
     submit.disabled = true;
     submit.textContent = 'Saving grade…';
     status.textContent = '';
     try {
       await MisraAPI.resolveReview(form.dataset.answerId, {
-        action: 'override',
+        action: isOverride ? 'override' : 'approve',
         apply_as_current: true,
-        human_score: humanScore,
-        human_criteria_scores: humanCriteriaScores,
-        was_review_warranted: criteriaDirty || Math.abs(humanScore - aiScore) > 0.001,
+        human_score: isOverride ? humanScore : null,
+        human_criteria_scores: isOverride ? humanCriteriaScores : null,
+        was_review_warranted: isOverride,
+        review_reason_codes: reasonCodes,
+        review_reason_note: reasonNote || null,
         reviewer_notes: notes || null,
-        label_source: 'grade_page',
       });
       await load();
       window.showToast('Instructor grade saved. Totals and exports are updated.', 'success');
@@ -363,7 +439,6 @@
           apply_as_current: true,
           was_review_warranted: true,
           reviewer_notes: 'Instructor restored the current AI grade from the grade editor.',
-          label_source: 'grade_page',
         });
         window.showToast('AI score restored.', 'success');
       } else {

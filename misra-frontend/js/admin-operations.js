@@ -29,6 +29,7 @@
     ocr_submission: 'Paper extraction',
     ocr_batch: 'Batch extraction',
     grade_submission: 'Submission grading',
+    exam_setup: 'Exam and rubric setup',
   };
 
   function titleCase(value) {

@@ -8,57 +8,89 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css?v=3">
+  <link rel="stylesheet" href="../css/tokens.css?v=4">
   <link rel="stylesheet" href="../css/base.css?v=3">
-  <link rel="stylesheet" href="../css/workspace.css?v=17">
+  <link rel="stylesheet" href="../css/workspace.css?v=24">
 </head>
 <body class="workspace-body" data-page="dashboard">
-  <main class="workspace-content" id="workspace-content">
-    <header class="page-heading">
-      <div>
-        <h1>Instructor overview</h1>
-        <p>Live assessment activity, rubric readiness, and review work from the MISRA grading engine.</p>
+  <main class="workspace-content dashboard-page" id="workspace-content">
+    <section class="dashboard-command" aria-labelledby="dashboard-title">
+      <div class="dashboard-command-copy">
+        <span class="dashboard-eyebrow">Instructor workspace</span>
+        <h1 id="dashboard-title">Keep every assessment moving.</h1>
+        <p id="dashboard-lead">Review what needs attention, continue assessment setup, or start grading the next set of papers.</p>
       </div>
-      <div class="page-actions">
-        <a class="btn btn-secondary" href="rubric-studio.html">Open Rubric Studio</a>
+      <div class="dashboard-command-actions" aria-label="Primary actions">
         <a class="btn btn-primary" href="upload.html">Upload papers</a>
+        <a class="btn btn-secondary" href="rubric-studio.html">Build a rubric</a>
+        <a class="dashboard-text-link" href="assessments.html">New assessment <span aria-hidden="true">→</span></a>
       </div>
-    </header>
-
-    <section class="stats-grid" aria-label="Assessment summary" id="dashboard-stats">
-      <div class="workspace-card stat"><div class="skel" style="height:54px"></div></div>
-      <div class="workspace-card stat"><div class="skel" style="height:54px"></div></div>
-      <div class="workspace-card stat"><div class="skel" style="height:54px"></div></div>
-      <div class="workspace-card stat"><div class="skel" style="height:54px"></div></div>
     </section>
 
-    <div class="dashboard-grid">
-      <section class="workspace-card card-pad">
-        <div class="section-head">
-          <div><h2 class="section-title">Recent assessments</h2><p class="section-copy">Select an assessment to manage its rubric or upload work.</p></div>
-          <a class="link-button" href="assessments.html">View all</a>
+    <section class="dashboard-focus" aria-labelledby="focus-title">
+      <div class="dashboard-focus-heading">
+        <span class="focus-kicker">Priority</span>
+        <div>
+          <h2 id="focus-title">What needs you now</h2>
+          <p id="focus-copy">Checking your live workspace…</p>
         </div>
-        <div id="recent-assessments" class="loading-list" aria-live="polite">
-          <div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div>
+      </div>
+      <div id="dashboard-focus-actions" class="focus-actions" aria-live="polite">
+        <div class="skel" style="height:72px"></div>
+        <div class="skel" style="height:72px"></div>
+        <div class="skel" style="height:72px"></div>
+      </div>
+    </section>
+
+    <section class="dashboard-metrics" aria-label="Workspace summary" id="dashboard-stats">
+      <div class="dashboard-metric"><div class="skel" style="height:66px"></div></div>
+      <div class="dashboard-metric"><div class="skel" style="height:66px"></div></div>
+      <div class="dashboard-metric"><div class="skel" style="height:66px"></div></div>
+      <div class="dashboard-metric"><div class="skel" style="height:66px"></div></div>
+    </section>
+
+    <div class="dashboard-workspace-grid">
+      <section class="workspace-card dashboard-assessments-card">
+        <div class="dashboard-section-head">
+          <div>
+            <span class="dashboard-section-kicker">Assessment workspace</span>
+            <h2>Continue where you left off</h2>
+            <p>Readiness and next actions are calculated from saved questions, approved rubrics, papers, and reviews.</p>
+          </div>
+          <a class="link-button" href="assessments.html">All assessments</a>
+        </div>
+        <div id="recent-assessments" class="dashboard-assessment-list" aria-live="polite">
+          <div class="skel loading-row"></div>
+          <div class="skel loading-row"></div>
+          <div class="skel loading-row"></div>
         </div>
       </section>
 
-      <aside class="stack">
-        <section class="workspace-card card-pad">
-          <div class="section-head"><div><h2 class="section-title">Attention queue</h2><p class="section-copy">The shortest path to results that are safe to release.</p></div></div>
-          <div id="review-summary" aria-live="polite"><div class="skel" style="height:108px"></div></div>
+      <aside class="dashboard-rail" aria-label="Workflow overview">
+        <section class="workspace-card dashboard-pipeline-card">
+          <div class="dashboard-section-head compact">
+            <div>
+              <span class="dashboard-section-kicker">Live pipeline</span>
+              <h2>From setup to release</h2>
+            </div>
+          </div>
+          <ol id="dashboard-pipeline" class="pipeline-list" aria-live="polite">
+            <li><span class="pipeline-marker"></span><div><strong>Preparing workspace</strong><small>Checking saved records</small></div></li>
+          </ol>
         </section>
-        <section class="workspace-card card-pad">
-          <h2 class="section-title">Recommended workflow</h2>
-          <p class="section-copy" style="margin-bottom:15px">Approve a granular rubric before grading a new batch. This keeps evaluation snapshots traceable.</p>
-          <a class="btn btn-secondary btn-block" href="rubric-studio.html">Review rubrics</a>
+
+        <section class="workspace-card dashboard-guidance-card">
+          <span class="dashboard-section-kicker">Grading safeguard</span>
+          <h2>Approve before you grade</h2>
+          <p>MISRA snapshots the approved question, answer key, rubric, and policy used for each grading run.</p>
+          <a class="dashboard-text-link" href="rubric-studio.html">Review grading foundations <span aria-hidden="true">→</span></a>
         </section>
       </aside>
     </div>
   </main>
   <script src="../js/app.js?v=3"></script>
-  <script src="../js/api.js?v=13"></script>
-  <script src="../js/workspace.js?v=13"></script>
-  <script src="../js/dashboard.js?v=2"></script>
+  <script src="../js/api.js?v=21"></script>
+  <script src="../js/workspace.js?v=16"></script>
+  <script src="../js/dashboard.js?v=3"></script>
 </body>
 </html>

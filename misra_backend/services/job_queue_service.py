@@ -15,6 +15,7 @@ from services.audit_service import safe_error_message
 
 ACTIVE_JOB_STATUSES = ("queued", "processing", "retrying")
 QUEUE_BY_JOB_TYPE = {
+    "exam_setup": "ocr",
     "ocr_submission": "ocr",
     "ocr_batch": "ocr",
     "grade_submission": "grading",

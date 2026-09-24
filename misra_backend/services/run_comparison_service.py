@@ -9,19 +9,49 @@ DEFAULT_RELATIVE_THRESHOLD = 0.20
 DISAGREEMENT_CONFIDENCE_CAP = 40.0
 
 
-def _latest_run_by_mode(answer_id: str, db: Session) -> dict[str, GradingRun]:
+def _comparison_context(run: GradingRun) -> dict | None:
+    package = (run.response_json or {}).get("grading_package")
+    if not package:
+        return None
+    # Page-image availability and selected mode are the intentional differences
+    # in a mode audit. All actual definitions and source evidence must match.
+    fields = ("schema_version", "institution_id", "assessment_id", "submission_id",
+              "answer_id", "question", "rubric_version_id", "rubric",
+              "policy_version_id", "policy", "answer_key", "student_document_sha256")
+    context = {field: package.get(field) for field in fields}
+    context["student_evidence"] = [item for item in package.get("student_evidence", [])
+                                   if item.get("kind") != "student_image"]
+    # A mode audit intentionally has different selection reasons and audit flags.
+    # Compare only the policy configuration that must stay stable across runs.
+    routing = package.get("routing", {})
+    context["routing"] = {key: routing.get(key) for key in (
+        "policy_mode", "policy_enabled", "audit_rate", "material_absolute_points",
+        "material_relative_ratio", "min_validated_samples",
+    ) if key in routing}
+    return context
+
+
+def _paired_runs(
+    answer_id: str,
+    comparison_pair_id: str,
+    db: Session,
+) -> dict[str, GradingRun]:
     runs = (
         db.query(GradingRun)
         .filter(GradingRun.answer_id == answer_id)
-        .order_by(GradingRun.created_at.desc())
+        .order_by(GradingRun.created_at.desc(), GradingRun.id.desc())
         .all()
     )
 
-    latest = {}
+    paired = {}
     for run in runs:
-        if run.mode in {"text_only", "image_text"} and run.mode not in latest:
-            latest[run.mode] = run
-    return latest
+        package = (run.response_json or {}).get("grading_package") or {}
+        routing = package.get("routing") or {}
+        if routing.get("comparison_pair_id") != comparison_pair_id:
+            continue
+        if run.mode in {"text_only", "image_text"} and run.mode not in paired:
+            paired[run.mode] = run
+    return paired
 
 
 def _criterion_differences(text_run: GradingRun, image_run: GradingRun) -> list[dict]:
@@ -47,14 +77,38 @@ def _criterion_differences(text_run: GradingRun, image_run: GradingRun) -> list[
     return differences
 
 
-def apply_material_disagreement_gate(answer: Answer, db: Session) -> bool:
-    """Flags an answer when the latest text and image grades materially differ."""
-    latest = _latest_run_by_mode(answer.id, db)
-    text_run = latest.get("text_only")
-    image_run = latest.get("image_text")
+def apply_material_disagreement_gate(
+    answer: Answer,
+    db: Session,
+    *,
+    comparison_pair_id: str | None = None,
+) -> bool:
+    """Flag only a text/image pair created by the same audit operation."""
+    if not comparison_pair_id:
+        return False
+    paired = _paired_runs(answer.id, comparison_pair_id, db)
+    text_run = paired.get("text_only")
+    image_run = paired.get("image_text")
 
     if not text_run or not image_run:
         return False
+
+    if _comparison_context(text_run) != _comparison_context(image_run):
+        human_review_status = resolved_review_status(answer)
+        answer.needs_review = not bool(human_review_status)
+        answer.review_status = human_review_status or "pending"
+        answer.final_confidence = min(
+            float(answer.final_confidence if answer.final_confidence is not None else 100),
+            DISAGREEMENT_CONFIDENCE_CAP,
+        )
+        answer.review_reasons = {
+            "code": "grading_context_changed",
+            "comparison_pair_id": comparison_pair_id,
+            "text_only_run_id": text_run.id,
+            "image_text_run_id": image_run.id,
+            "message": "Approved definitions or student evidence changed between runs; mode comparison is unavailable.",
+        }
+        return True
 
     max_score = max(float(text_run.max_score), float(image_run.max_score))
     score_difference = abs(float(text_run.score) - float(image_run.score))
@@ -76,7 +130,7 @@ def apply_material_disagreement_gate(answer: Answer, db: Session) -> bool:
         # A fresh agreeing pair supersedes an older disagreement. Restore the
         # confidence of the grading mode currently displayed on the answer.
         existing_reason = answer.review_reasons or {}
-        if existing_reason.get("code") == "material_mode_disagreement":
+        if existing_reason.get("code") in {"material_mode_disagreement", "grading_context_changed"}:
             displayed_mode = (answer.grading_raw_response or {}).get("mode")
             displayed_run = image_run if displayed_mode == "image_text" else text_run
             answer.final_confidence = float(displayed_run.final_confidence)
@@ -103,6 +157,7 @@ def apply_material_disagreement_gate(answer: Answer, db: Session) -> bool:
     )
     answer.review_reasons = {
         "code": "material_mode_disagreement",
+        "comparison_pair_id": comparison_pair_id,
         "text_only_run_id": text_run.id,
         "image_text_run_id": image_run.id,
         "text_only_score": float(text_run.score),

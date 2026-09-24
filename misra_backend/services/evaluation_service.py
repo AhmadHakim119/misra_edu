@@ -4,6 +4,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from models import Answer, GradingRun, Question, ReviewLabel, Submission
+from schemas.review_input import PREFERENCE_REASON_VALUES
 
 
 EPSILON = 0.001
@@ -36,23 +37,51 @@ def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def build_evaluation_report(db: Session, exam_id: str | None = None) -> dict[str, Any]:
+def build_evaluation_report(
+    db: Session,
+    *,
+    institution_id: str,
+    exam_id: str | None = None,
+) -> dict[str, Any]:
     query = (
         db.query(ReviewLabel, Answer, Question, GradingRun)
         .join(Answer, ReviewLabel.answer_id == Answer.id)
         .join(Question, Answer.question_id == Question.id)
+        .join(Submission, Answer.submission_id == Submission.id)
         .outerjoin(GradingRun, ReviewLabel.grading_run_id == GradingRun.id)
+        .filter(
+            Submission.institution_id == institution_id,
+            Answer.institution_id == institution_id,
+            Question.institution_id == institution_id,
+        )
+        .order_by(ReviewLabel.created_at.desc(), ReviewLabel.id.desc())
     )
     if exam_id:
-        query = query.join(Submission, Answer.submission_id == Submission.id).filter(
-            Submission.exam_id == exam_id
-        )
+        query = query.filter(Submission.exam_id == exam_id)
 
     records: list[dict[str, Any]] = []
     criterion_records: list[dict[str, Any]] = []
     review_snapshot_records: list[dict[str, bool]] = []
 
-    for label, answer, question, grading_run in query.all():
+    # A reviewer may revise a decision for the same grading run. Evaluation
+    # represents the current instructor decision, while the database retains
+    # every immutable revision for audit history. Follow the explicit
+    # supersession chain first because database timestamps can share the same
+    # precision and UUID ordering is not chronological.
+    label_rows = query.all()
+    superseded_label_ids = {
+        label.supersedes_label_id
+        for label, _answer, _question, _grading_run in label_rows
+        if label.supersedes_label_id
+    }
+    latest_label_keys: set[tuple[str, str | None]] = set()
+    for label, answer, question, grading_run in label_rows:
+        if label.id in superseded_label_ids:
+            continue
+        label_key = (answer.id, label.grading_run_id)
+        if label_key in latest_label_keys:
+            continue
+        latest_label_keys.add(label_key)
         ai_score = float(label.ai_score_snapshot)
         human_score = float(label.human_score)
         absolute_error = abs(ai_score - human_score)
@@ -85,6 +114,13 @@ def build_evaluation_report(db: Session, exam_id: str | None = None) -> dict[str
             "absolute_error": absolute_error,
             "final_confidence": confidence,
             "was_review_warranted": bool(label.was_review_warranted),
+            "review_reason_codes": list(label.review_reason_codes or []),
+            "review_reason_note": label.review_reason_note,
+            "preference_reason_codes": [
+                code
+                for code in (label.review_reason_codes or [])
+                if code in PREFERENCE_REASON_VALUES
+            ],
         })
 
         ai_criteria = _criteria_by_id(

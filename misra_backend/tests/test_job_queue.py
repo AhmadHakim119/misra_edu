@@ -15,6 +15,7 @@ from database import Base  # noqa: E402
 from models import (  # noqa: E402
     Answer,
     AnswerSource,
+    Batch,
     Course,
     Exam,
     Institution,
@@ -23,7 +24,7 @@ from models import (  # noqa: E402
     Submission,
     User,
 )
-from routers.jobs import _owned_job  # noqa: E402
+from routers.jobs import _owned_job, list_workspace_jobs  # noqa: E402
 from services.job_execution_service import _grade_submission, execute_processing_job  # noqa: E402
 from services.job_queue_service import dispatch_processing_job  # noqa: E402
 from services.job_recovery_service import recover_orphaned_jobs  # noqa: E402
@@ -56,6 +57,13 @@ class ProcessingJobTests(unittest.TestCase):
             hashed_password="unused",
             role="teacher",
         )
+        self.colleague = User(
+            id="teacher-3",
+            institution_id=self.institution.id,
+            email="colleague@example.edu",
+            hashed_password="unused",
+            role="teacher",
+        )
         self.course = Course(
             id="course-1",
             institution_id=self.institution.id,
@@ -84,6 +92,7 @@ class ProcessingJobTests(unittest.TestCase):
                 self.other_institution,
                 self.user,
                 self.other_user,
+                self.colleague,
                 self.course,
                 self.exam,
                 self.submission,
@@ -117,6 +126,71 @@ class ProcessingJobTests(unittest.TestCase):
         job = self._job()
         self.assertEqual(_owned_job(job.id, self.db, self.user).id, job.id)
         self.assertIsNone(_owned_job(job.id, self.db, self.other_user))
+
+    def test_workspace_jobs_persist_with_assessment_context(self):
+        own_job = self._job()
+        self.db.add(ProcessingJob(
+            id="colleague-job",
+            institution_id=self.institution.id,
+            requested_by=self.colleague.id,
+            submission_id=self.submission.id,
+            job_type="ocr_submission",
+            status="processing",
+            progress_total=2,
+            payload={},
+        ))
+        self.db.commit()
+
+        response = list_workspace_jobs(limit=8, db=self.db, user=self.user)
+
+        self.assertEqual(response["active_count"], 1)
+        self.assertEqual([item["id"] for item in response["items"]], [own_job.id])
+        self.assertEqual(response["items"][0]["exam_id"], self.exam.id)
+        self.assertEqual(response["items"][0]["exam_title"], self.exam.title)
+        self.assertEqual(response["items"][0]["course_code"], self.course.course_code)
+
+    def test_workspace_jobs_keeps_recent_completion_visible(self):
+        completed = self._job(
+            status="completed",
+            completed_at=datetime.now(),
+            progress_current=2,
+        )
+
+        response = list_workspace_jobs(limit=8, db=self.db, user=self.user)
+
+        self.assertEqual(response["active_count"], 0)
+        self.assertEqual(response["items"][0]["id"], completed.id)
+        self.assertEqual(response["items"][0]["status"], "completed")
+
+    def test_workspace_batch_job_reports_paper_level_failures(self):
+        batch = Batch(
+            id="batch-1",
+            institution_id=self.institution.id,
+            exam_id=self.exam.id,
+            total_count=11,
+            completed_count=0,
+            failed_count=11,
+            status="completed_with_errors",
+        )
+        self.db.add(batch)
+        self.db.commit()
+        self._job(
+            submission_id=None,
+            batch_id=batch.id,
+            job_type="ocr_batch",
+            status="completed",
+            completed_at=datetime.now(),
+            progress_current=11,
+            progress_total=11,
+        )
+
+        response = list_workspace_jobs(limit=8, db=self.db, user=self.user)
+
+        item = response["items"][0]
+        self.assertEqual(item["batch_status"], "completed_with_errors")
+        self.assertEqual(item["batch_completed_count"], 0)
+        self.assertEqual(item["batch_failed_count"], 11)
+        self.assertEqual(item["batch_total_count"], 11)
 
     def test_worker_persists_progress_and_completion(self):
         job = self._job()

@@ -10,7 +10,6 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
-    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -27,7 +26,8 @@ class ReviewLabel(Base):
         default=lambda: str(uuid.uuid4()),
     )
 
-    # An answer may be labelled once for each grading run/rubric version.
+    # Each review action is immutable. Later decisions for the same grading run
+    # create a new row linked through ``supersedes_label_id``.
     answer_id: Mapped[str] = mapped_column(
         CHAR(36),
         ForeignKey("answers.id"),
@@ -43,6 +43,12 @@ class ReviewLabel(Base):
     rubric_version_id: Mapped[str | None] = mapped_column(
         CHAR(36),
         ForeignKey("rubric_versions.id"),
+        nullable=True,
+        index=True,
+    )
+    supersedes_label_id: Mapped[str | None] = mapped_column(
+        CHAR(36),
+        ForeignKey("review_labels.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -83,6 +89,14 @@ class ReviewLabel(Base):
         Text,
         nullable=True,
     )
+    review_reason_codes: Mapped[list[str] | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+    review_reason_note: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
 
     label_source: Mapped[str] = mapped_column(
         String(50),
@@ -97,11 +111,4 @@ class ReviewLabel(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
         server_default=func.now(),
-    )
-
-    __table_args__ = (
-        UniqueConstraint(
-            "grading_run_id",
-            name="uq_review_labels_grading_run_id",
-        ),
     )

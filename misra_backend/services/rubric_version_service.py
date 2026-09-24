@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from models import Answer, GradingRun, Question, RubricVersion
 from schemas.rubric_v2 import RubricV2
+from services.assessment_readiness_service import definition_errors
 
 
 def validate_rubric_v2(rubric_json: dict) -> RubricV2:
@@ -29,7 +30,15 @@ def get_effective_rubric(
             .first()
         )
         if version:
+            errors = definition_errors(question, version.rubric_json)
+            if errors:
+                raise ValueError('Assessment setup needs attention: ' + ' '.join(errors))
             return version.rubric_json, version.id
+    if db.query(RubricVersion).filter(RubricVersion.question_id == question.id).first():
+        raise ValueError('This question has no approved rubric. Review and approve its draft first.')
+    errors = definition_errors(question, question.rubric_json)
+    if errors:
+        raise ValueError('Assessment setup needs attention: ' + ' '.join(errors))
     return question.rubric_json, None
 
 

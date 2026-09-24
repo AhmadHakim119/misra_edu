@@ -6,7 +6,8 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css?v=3"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=17">
+  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=24">
+  <link rel="stylesheet" href="../css/assessment-workspace.css?v=24">
 </head>
 <body class="workspace-body" data-page="rubric">
   <main class="workspace-content" id="workspace-content">
@@ -17,31 +18,70 @@
     <section class="workspace-card card-pad" style="margin-bottom:20px">
       <div class="control-row">
         <div class="field"><label for="rubric-exam">Assessment</label><select class="input select" id="rubric-exam"><option value="">Loading assessments…</option></select></div>
-        <a class="btn btn-secondary" id="upload-link" href="upload.html">Upload papers</a>
+        <a class="btn btn-secondary" id="upload-link" href="upload.html" aria-disabled="true">Upload student answers</a>
       </div>
+    </section>
+
+    <section class="workspace-card card-pad exam-setup" aria-labelledby="setup-title">
+      <div class="section-head"><div><h2 class="section-title" id="setup-title">Start from your exam</h2><p class="section-copy">Upload a blank exam and, optionally, its answer key. Review the questions, then approve their rubrics. These files never become student submissions.</p></div></div>
+      <ol class="setup-steps" aria-label="Assessment setup"><li>Upload exam</li><li>Review questions</li><li>Approve rubrics</li><li>Upload student answers</li></ol>
+      <p id="setup-readiness" class="field-hint" role="status">Choose an assessment to check its setup.</p>
+      <details class="setup-check-details"><summary>Question-by-question setup checks</summary><div id="rubric-setup-checks"><p>Choose an assessment first.</p></div></details>
+      <form id="setup-upload-form">
+        <div class="setup-file-grid">
+          <div class="field"><label for="setup-exam-file">Blank exam</label><input class="input" id="setup-exam-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" required><span class="field-hint">Questions and printed maximum marks, not a student’s answers.</span></div>
+          <div class="field"><label for="setup-key-file">Answer key <span class="field-hint">(optional)</span></label><input class="input" id="setup-key-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp"><span class="field-hint">Include accepted solutions or marking guidance if available.</span></div>
+        </div>
+        <div class="setup-actions"><button class="btn btn-primary" id="setup-upload-button" disabled>Read exam & suggest questions</button><span class="field-hint">PDF or image · files are securely validated on upload.</span></div>
+      </form>
+      <div id="setup-status" role="status" aria-live="polite" tabindex="-1"></div>
+      <button type="button" class="btn btn-secondary" id="setup-new-upload" hidden>Upload another setup document</button>
+      <details id="setup-history" hidden><summary>Previous setup uploads</summary><div id="setup-history-list" class="setup-actions"></div></details>
+      <div id="setup-review" hidden></div>
     </section>
 
     <div class="rubric-layout">
       <aside class="workspace-card card-pad question-panel">
         <div class="section-head"><div><h2 class="section-title">Questions</h2><p class="section-copy" id="question-count">Choose an assessment first.</p></div></div>
+        <button class="btn btn-primary btn-block" id="open-question-form" type="button" aria-controls="question-composer" aria-expanded="false" disabled>Add question</button>
         <div class="question-list" id="question-list"></div>
-        <details style="margin-top:16px;padding-top:16px;border-top:1px solid var(--line)">
-          <summary style="cursor:pointer;font-size:13.5px;font-weight:600;color:var(--celadon-700)">Add question</summary>
-          <form id="question-form" style="margin-top:14px">
-            <div class="field"><label for="question-template">Starting template</label><select class="input select" id="question-template"><option value="">Blank criterion</option><option value="short_answer">Short answer</option><option value="calculation">Calculation or numerical method</option><option value="proof">Proof or reasoning</option><option value="programming">Programming or SQL</option><option value="diagram">Diagram or model</option><option value="subjective">Subjective response</option></select><span class="field-hint">Templates only prefill the draft fields. Review and approve the final rubric yourself.</span></div>
-            <div class="field"><label for="question-number">Number</label><input class="input" id="question-number" name="question_number" required placeholder="e.g. 2a"></div>
-            <div class="field"><label for="question-text">Question text</label><textarea class="input textarea" id="question-text" name="question_text" required></textarea></div>
-            <div class="field"><label for="question-score">Maximum score</label><input class="input" id="question-score" name="max_score" type="number" min="0.25" step="0.25" required></div>
-            <div class="field"><label for="criterion-title">Initial criterion</label><input class="input" id="criterion-title" name="criterion_title" required placeholder="e.g. Correct method and result"></div>
-            <div class="field"><label for="criterion-description">What earns credit</label><textarea class="input textarea" id="criterion-description" name="criterion_description" required></textarea></div>
-            <button class="btn btn-primary btn-block" type="submit">Add question</button>
-          </form>
-        </details>
       </aside>
 
+      <div class="rubric-main">
+      <section class="workspace-card question-composer" id="question-composer" aria-labelledby="question-composer-title" hidden>
+        <header class="question-composer-head">
+          <div><h2 id="question-composer-title" tabindex="-1">Add a question</h2><p class="section-copy" id="question-exam-context"></p></div>
+          <button class="btn btn-secondary" id="close-question-form" type="button">Back to rubric</button>
+        </header>
+        <form id="question-form">
+          <p class="question-form-status" id="question-form-status" role="status"></p>
+          <div class="question-form-error" id="question-form-error" role="alert" tabindex="-1" hidden></div>
+          <fieldset id="question-form-fields">
+            <legend>Question details</legend>
+            <p class="field-hint">Use the same number and wording as the exam so student answers map to the right question. All fields below are required unless marked optional.</p>
+            <div class="question-metadata">
+              <div class="field"><label for="question-number">Question number</label><input class="input" id="question-number" name="question_number" required placeholder="e.g. 1 or 2a" aria-describedby="question-number-help"><span class="field-hint" id="question-number-help">Use 2a, 2b, etc. to mark subparts separately.</span></div>
+              <div class="field"><label for="question-score">Total marks</label><input class="input" id="question-score" name="max_score" type="number" min="0.01" step="any" required placeholder="e.g. 5" aria-describedby="question-score-help"><span class="field-hint" id="question-score-help">Decimals are welcome, such as 2.5.</span></div>
+            </div>
+            <div class="field"><label for="question-text">Full question text</label><textarea class="input textarea" id="question-text" name="question_text" rows="8" required dir="auto" placeholder="Paste or type the question exactly as students see it. Include instructions and any subparts." aria-describedby="question-text-help"></textarea><span class="field-hint" id="question-text-help">Keep line breaks for code, equations, and multi-part questions.</span></div>
+            <div class="question-marking-heading"><h3>Marking guide</h3><p class="field-hint">Describe what earns the marks. This creates one starting criterion; you can split it into detailed criteria in the rubric editor.</p></div>
+            <div class="question-template-row">
+              <div class="field"><label for="question-template">Use a starting template <span class="field-hint">(optional)</span></label><select class="input select" id="question-template"><option value="">Choose a question type</option><option value="short_answer">Short answer</option><option value="calculation">Calculation or numerical method</option><option value="proof">Proof or reasoning</option><option value="programming">Programming or SQL</option><option value="diagram">Diagram or model</option><option value="subjective">Subjective response</option></select></div>
+              <button class="btn btn-secondary" id="apply-question-template" type="button" disabled>Apply template</button>
+            </div>
+            <div class="field"><label for="criterion-title">What are you assessing?</label><input class="input" id="criterion-title" name="criterion_title" required dir="auto" placeholder="e.g. Correct method and result"></div>
+            <div class="field"><label for="criterion-description">What earns credit?</label><textarea class="input textarea" id="criterion-description" name="criterion_description" rows="5" required dir="auto" placeholder="Describe the expected answer, acceptable alternatives, and when to award partial credit."></textarea></div>
+          </fieldset>
+          <footer class="question-composer-actions">
+            <p class="field-hint">Saving creates the question and its initial marking guide. Review the rubric before grading papers.</p>
+            <div><button class="btn btn-primary" type="submit" name="next" value="review">Save &amp; review rubric</button><button class="btn btn-secondary" type="submit" name="next" value="another">Save &amp; add another</button></div>
+          </footer>
+        </form>
+      </section>
       <section class="rubric-editor" id="rubric-workspace" aria-live="polite"></section>
+      </div>
     </div>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=11"></script><script src="../js/workspace.js?v=13"></script><script src="../js/rubric-studio.js?v=3"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=16"></script><script src="../js/assessment-checks.js?v=1"></script><script src="../js/exam-setup.js?v=2"></script><script src="../js/answer-keys.js?v=2"></script><script src="../js/rubric-studio.js?v=9"></script>
 </body>
 </html>

@@ -1,0 +1,70 @@
+/* Operate: extend MISRA's existing celadon workspace, keeping work grouped by assessment. */
+.assessment-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 250px) auto; align-items: end; gap: 16px; margin-bottom: 28px; }
+.assessment-toolbar .field { margin: 0; }
+body[data-page="assessments"] .setup-stack { margin-top: 32px; }
+.assessment-course-group { margin: 0 0 32px; }
+.assessment-course-group > h3 { font-size: 16px; margin: 0 0 12px; display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.assessment-course-group > h3 > span { color: var(--ink-soft); font-weight: 400; }
+.assessment-items { overflow: hidden; box-shadow: none; }
+.assessment-item + .assessment-item { border-top: 1px solid var(--line); }
+.assessment-item-header { padding: 22px 24px; display: flex; gap: 16px; align-items: center; }
+.assessment-item-name { flex: 1; min-width: 0; }
+.assessment-item-name h4 { margin: 0 0 6px; }
+.assessment-open { background: none; border: 0; padding: 0; color: var(--ink); font: inherit; font-size: 18px; font-weight: 600; text-align: start; cursor: pointer; line-height: 1.4; overflow-wrap: anywhere; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 5px; }
+.assessment-open:hover, .assessment-open[aria-expanded="true"] { color: var(--celadon-800); text-decoration-color: currentColor; }
+.assessment-open:focus-visible { outline: 2px solid var(--celadon-600); outline-offset: 5px; border-radius: 2px; }
+.assessment-item-header > .btn { flex-shrink: 0; }
+.assessment-workspace { padding: 0 24px 24px; }
+.assessment-workspace[hidden] { display: none; }
+.assessment-workflow { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 1px solid var(--line); margin-bottom: 28px; }
+.assessment-workflow a { color: var(--ink); padding: 18px 14px; text-decoration: none; }
+.assessment-workflow a + a { border-inline-start: 1px solid var(--line); }
+.assessment-workflow a:hover, .assessment-workflow a:focus-visible { background: var(--surface-sunken); }
+.assessment-workflow strong, .assessment-workflow span { display: block; }
+.assessment-workflow strong { font-size: 15px; }
+.assessment-workflow span { color: var(--ink-soft); font-size: 13px; margin-top: 5px; }
+.assessment-checks h3 { font-size: 17px; }
+.assessment-checks > .section-copy { max-width: 75ch; }
+.readiness-list { list-style: none; padding: 0; margin: 20px 0 0; }
+.readiness-list li { display: grid; grid-template-columns: 115px minmax(0, 1fr) auto; gap: 18px; padding: 18px 0; border-top: 1px solid var(--line); align-items: start; }
+.readiness-question > a { font-weight: 600; color: var(--celadon-800); }
+.readiness-question span { display: block; color: var(--ink-soft); font-size: 13px; margin-top: 4px; font-variant-numeric: tabular-nums; }
+.readiness-detail p { font-size: 14px; line-height: 1.6; margin: 0 0 6px; overflow-wrap: anywhere; }
+.check-error { color: var(--danger); font-weight: 500; }
+.check-advisory { color: var(--ink-soft); }
+.assessment-workspace-footer { display: flex; gap: 12px 24px; align-items: center; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 18px; }
+.assessment-workspace-footer p { flex-basis: 100%; }
+.setup-check-details { margin-top: 16px; }
+.setup-check-details > summary { cursor: pointer; color: var(--celadon-800); padding: 10px 0; font-weight: 600; }
+.setup-check-details .assessment-checks { margin-top: 16px; }
+.rubric-reference .field + .field { margin-top: 18px; }
+.rubric-reference textarea { line-height: 1.6; resize: vertical; }
+.rubric-reference textarea:disabled { opacity: 1; color: var(--ink-soft); }
+.answer-key-fields { border: 0; padding: 0; margin: 22px 0; min-width: 0; display: grid; gap: 18px; }
+.answer-key-fields .field { margin: 0; }
+.answer-key-fields textarea { resize: vertical; line-height: 1.6; }
+.answer-key-fields :disabled { opacity: 1; color: var(--ink-soft); }
+.key-documents { display: grid; gap: 12px; border-block: 1px solid var(--line); padding-block: 20px; }
+.key-documents h3 { margin: 0; font-size: 16px; }
+.key-document { display: grid; gap: 8px; padding-block: 12px; }
+.key-document a { color: var(--celadon-800); overflow-wrap: anywhere; }
+.key-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.key-history { margin-top: 24px; }
+.key-history summary { cursor: pointer; padding-block: 10px; font-weight: 600; }
+@media (max-width: 800px) {
+  .assessment-item-header { flex-wrap: wrap; padding: 20px; }
+  .assessment-item-name { flex-basis: 100%; }
+  .assessment-item-header > .btn { margin-inline-start: auto; }
+  .assessment-workspace { padding: 0 20px 20px; }
+  .readiness-list li { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+  .readiness-detail { grid-column: 1 / -1; grid-row: 2; }
+}
+@media (max-width: 560px) {
+  .assessment-toolbar { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+  .assessment-toolbar > .field:first-child { grid-column: 1 / -1; }
+  .assessment-workflow { grid-template-columns: 1fr; }
+  .assessment-workflow a + a { border-inline-start: 0; border-top: 1px solid var(--line); }
+  .assessment-open { font-size: 17px; }
+  .assessment-item-header > .btn { font-size: 13px; padding: 10px 14px; }
+  .assessment-checks .section-head { flex-wrap: wrap; gap: 10px; }
+}
