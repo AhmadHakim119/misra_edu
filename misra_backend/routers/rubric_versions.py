@@ -23,22 +23,61 @@ from services.rubric_version_service import (
 router = APIRouter(prefix="/api", tags=["rubric-versions"])
 
 
+def _owned_question(db: Session, question_id: str, user: User) -> Question:
+    question = (
+        db.query(Question)
+        .filter(
+            Question.id == question_id,
+            Question.institution_id == user.institution_id,
+        )
+        .first()
+    )
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    return question
+
+
+def _owned_rubric_version(
+    db: Session,
+    version_id: str,
+    user: User,
+) -> RubricVersion:
+    version = (
+        db.query(RubricVersion)
+        .join(Question, Question.id == RubricVersion.question_id)
+        .filter(
+            RubricVersion.id == version_id,
+            Question.institution_id == user.institution_id,
+        )
+        .first()
+    )
+    if not version:
+        raise HTTPException(status_code=404, detail="Rubric version not found")
+    return version
+
+
 @router.post("/questions/{question_id}/suggest-rubric-version")
 def suggest_existing_question_rubric_version(
     question_id: str,
     payload: ExistingQuestionRubricSuggestionRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
 ):
-    question = db.query(Question).filter(Question.id == question_id).first()
-    if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
+    question = _owned_question(db, question_id, user)
     if not question.question_text or not question.question_text.strip():
         raise HTTPException(
             status_code=422,
             detail="Question text is required before AI can suggest a rubric",
         )
 
-    exam = db.query(Exam).filter(Exam.id == question.exam_id).first()
+    exam = (
+        db.query(Exam)
+        .filter(
+            Exam.id == question.exam_id,
+            Exam.institution_id == user.institution_id,
+        )
+        .first()
+    )
     if not exam:
         raise HTTPException(status_code=404, detail="Question exam not found")
     if payload.grading_approach == "custom" and payload.policy is None:
@@ -47,7 +86,12 @@ def suggest_existing_question_rubric_version(
             detail="A custom grading approach requires an explicit policy",
         )
 
-    current_rubric, _ = get_effective_rubric(question, db)
+    try:
+        current_rubric, _ = get_effective_rubric(question, db)
+    except ValueError:
+        draft = db.query(RubricVersion).filter(RubricVersion.question_id == question_id,
+            RubricVersion.status == 'draft').order_by(RubricVersion.version_number.desc()).first()
+        current_rubric = draft.rubric_json if draft else {}
     try:
         rubric = suggest_rubric(
             question_text=question.question_text,
@@ -93,12 +137,17 @@ def suggest_existing_question_rubric_version(
 
 
 @router.get("/questions/{question_id}/rubric")
-def get_active_rubric(question_id: str, db: Session = Depends(get_db)):
-    question = db.query(Question).filter(Question.id == question_id).first()
-    if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
+def get_active_rubric(
+    question_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    question = _owned_question(db, question_id, user)
 
-    rubric, version_id = get_effective_rubric(question, db)
+    try:
+        rubric, version_id = get_effective_rubric(question, db)
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
     return {
         "question_id": question.id,
         "rubric_version_id": version_id,
@@ -108,10 +157,12 @@ def get_active_rubric(question_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/questions/{question_id}/rubric-versions")
-def list_rubric_versions(question_id: str, db: Session = Depends(get_db)):
-    question = db.query(Question).filter(Question.id == question_id).first()
-    if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
+def list_rubric_versions(
+    question_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    question = _owned_question(db, question_id, user)
 
     return (
         db.query(RubricVersion)
@@ -126,10 +177,9 @@ def create_draft_rubric_version(
     question_id: str,
     payload: RubricVersionCreateRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
 ):
-    question = db.query(Question).filter(Question.id == question_id).first()
-    if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
+    question = _owned_question(db, question_id, user)
 
     try:
         return create_rubric_version(
@@ -148,10 +198,9 @@ def update_draft_rubric_version(
     version_id: str,
     payload: RubricVersionUpdateRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
 ):
-    version = db.query(RubricVersion).filter(RubricVersion.id == version_id).first()
-    if not version:
-        raise HTTPException(status_code=404, detail="Rubric version not found")
+    version = _owned_rubric_version(db, version_id, user)
     if version.status != "draft":
         raise HTTPException(
             status_code=409,
@@ -176,17 +225,7 @@ def approve_draft_rubric_version(
     db: Session = Depends(get_db),
     user: User = Depends(require_instructor),
 ):
-    version = (
-        db.query(RubricVersion)
-        .join(Question, Question.id == RubricVersion.question_id)
-        .filter(
-            RubricVersion.id == version_id,
-            Question.institution_id == user.institution_id,
-        )
-        .first()
-    )
-    if not version:
-        raise HTTPException(status_code=404, detail="Rubric version not found")
+    version = _owned_rubric_version(db, version_id, user)
 
     try:
         approved, regrade_required = approve_rubric_version(

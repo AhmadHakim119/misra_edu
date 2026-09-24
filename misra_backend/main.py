@@ -7,11 +7,12 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from database import engine, Base
 import models
-from routers import admin_operations, admin_users, auth, batches, evaluation, exams, exports, grading, grading_policies, identity_routes, jobs, ocr, questions, results, review_resolution, rubric_resolution, rubric_suggestions, rubric_versions
+from routers import admin_operations, admin_users, answer_keys, auth, batches, evaluation, exams, exports, grading, grading_policies, identity_routes, instructor_preferences, jobs, ocr, questions, results, review_resolution, rubric_resolution, rubric_suggestions, rubric_versions
 from services.gemini_client import DEFAULT_MODEL
 from services.auth_dependencies import require_instructor
 from services.job_queue_service import redis_connection
 from services.build_info import build_info
+from routers import exam_setup
 
 load_dotenv()
 
@@ -58,8 +59,11 @@ app.include_router(review_resolution.router, dependencies=protected)
 app.include_router(grading_policies.router, dependencies=protected)
 app.include_router(evaluation.router, dependencies=protected)
 app.include_router(rubric_versions.router, dependencies=protected)
+app.include_router(answer_keys.router, dependencies=protected)
+app.include_router(instructor_preferences.router, dependencies=protected)
 app.include_router(exports.router, dependencies=protected)
 app.include_router(jobs.router, dependencies=protected)
+app.include_router(exam_setup.router, dependencies=protected)
 
 @app.get("/")
 def read_root():

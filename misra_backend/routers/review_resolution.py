@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Answer, GradingRun, ReviewLabel, Submission, User
-from schemas.review_input import ReviewResolutionRequest
+from schemas.review_input import PREFERENCE_REASON_CODES, ReviewResolutionRequest
 from services.auth_dependencies import require_instructor
 from services.audit_service import record_audit_event
 
@@ -36,13 +36,27 @@ def resolve_review(
             detail="Grade the answer before resolving its review.",
         )
 
-    latest_run = (
-        db.query(GradingRun)
-        .filter(GradingRun.answer_id == answer.id)
-        .order_by(GradingRun.created_at.desc(), GradingRun.id.desc())
-        .first()
-    )
-    selected_run = latest_run
+    operational_run = None
+    operational_run_id = (answer.grading_raw_response or {}).get("grading_run_id")
+    if operational_run_id:
+        operational_run = (
+            db.query(GradingRun)
+            .filter(
+                GradingRun.id == operational_run_id,
+                GradingRun.answer_id == answer.id,
+            )
+            .first()
+        )
+    if not operational_run:
+        displayed_mode = (answer.grading_raw_response or {}).get("mode")
+        query = db.query(GradingRun).filter(GradingRun.answer_id == answer.id)
+        if displayed_mode in {"text_only", "image_text"}:
+            query = query.filter(GradingRun.mode == displayed_mode)
+        operational_run = query.order_by(
+            GradingRun.created_at.desc(), GradingRun.id.desc()
+        ).first()
+
+    selected_run = operational_run
     if request.grading_run_id:
         selected_run = (
             db.query(GradingRun)
@@ -60,8 +74,8 @@ def resolve_review(
     if (
         request.apply_as_current
         and selected_run
-        and latest_run
-        and selected_run.id != latest_run.id
+        and operational_run
+        and selected_run.id != operational_run.id
     ):
         raise HTTPException(
             status_code=409,
@@ -113,6 +127,14 @@ def resolve_review(
                 status_code=422,
                 detail="Instructor criterion scores must match the graded rubric criteria.",
             )
+        if abs(
+            sum(float(item["points_earned"]) for item in human_criteria_scores)
+            - float(human_score)
+        ) > 0.01:
+            raise HTTPException(
+                status_code=422,
+                detail="Instructor criterion scores must add up to the human score.",
+            )
 
     if request.apply_as_current:
         if request.action == "override":
@@ -128,30 +150,32 @@ def resolve_review(
         answer.reviewed_at = func.now()
 
     if selected_run:
-        label = (
+        previous_label = (
             db.query(ReviewLabel)
             .filter(ReviewLabel.grading_run_id == selected_run.id)
+            .order_by(ReviewLabel.created_at.desc(), ReviewLabel.id.desc())
             .first()
         )
     else:
-        label = (
+        previous_label = (
             db.query(ReviewLabel)
             .filter(
                 ReviewLabel.answer_id == answer.id,
                 ReviewLabel.grading_run_id.is_(None),
             )
+            .order_by(ReviewLabel.created_at.desc(), ReviewLabel.id.desc())
             .first()
         )
 
-    if not label:
-        label = ReviewLabel(
-            answer_id=answer.id,
-            grading_run_id=selected_run.id if selected_run else None,
-            rubric_version_id=(
-                selected_run.rubric_version_id if selected_run else None
-            ),
-        )
-        db.add(label)
+    label = ReviewLabel(
+        answer_id=answer.id,
+        grading_run_id=selected_run.id if selected_run else None,
+        rubric_version_id=(
+            selected_run.rubric_version_id if selected_run else None
+        ),
+        supersedes_label_id=previous_label.id if previous_label else None,
+    )
+    db.add(label)
 
     label.ai_score_snapshot = ai_score
     label.human_score = human_score
@@ -161,7 +185,9 @@ def resolve_review(
     label.was_review_warranted = request.was_review_warranted
     label.human_criteria_scores = human_criteria_scores
     label.reviewer_notes = request.reviewer_notes
-    label.label_source = request.label_source
+    label.review_reason_codes = [code.value for code in request.review_reason_codes]
+    label.review_reason_note = request.review_reason_note
+    label.label_source = "instructor_review"
     label.labeled_by = user.id
     label.rubric_version_id = (
         selected_run.rubric_version_id if selected_run else None
@@ -180,6 +206,12 @@ def resolve_review(
             "ai_score": ai_score,
             "human_score": human_score,
             "apply_as_current": request.apply_as_current,
+            "review_reason_codes": label.review_reason_codes,
+            "preference_reason_codes": [
+                code.value
+                for code in request.review_reason_codes
+                if code in PREFERENCE_REASON_CODES
+            ],
         },
     )
 

@@ -10,13 +10,15 @@ public internet deployment or use as an official institutional gradebook.
 ## Core capabilities
 
 - Course and assessment creation
-- Versioned AI-assisted rubrics and configurable grading approaches
+- Versioned AI-assisted rubrics, answer keys, and configurable grading policies
 - Secure individual and batch paper uploads
 - OCR extraction, question mapping, and page-level source tracking
 - Manual correction and recovery of OCR mappings
 - Text-only, image-plus-text, and adaptive grading
 - Instructor review, approval, and score overrides
-- Persistent grading-run and review-label history
+- Evidence-cited criterion results and immutable grading-package snapshots
+- Persistent grading-run history and structured instructor review reasons
+- Optional versioned instructor preference profiles and non-binding suggestions
 - Confidence-based review routing and agreement evaluation
 - Blackboard-compatible CSV, generic CSV, and detailed Excel exports
 - Instructor authentication, password recovery, and administration
@@ -138,7 +140,13 @@ it up and run the explicit additive upgrade once:
 Set-Location .\misra_backend
 python .\scripts\upgrade_account_management.py
 python .\scripts\upgrade_processing_jobs.py
+python .\scripts\upgrade_grading_foundations.py
 ```
+
+The grading-foundation coordinator adds exam-setup jobs, versioned answer keys,
+instructor preference versions, structured review reasons, and immutable review
+revision links. It is idempotent and does not regrade or rewrite existing answers. Restart both
+Uvicorn and the RQ worker after upgrading.
 
 ## Run the application
 
@@ -271,9 +279,9 @@ requires coordination with every clone and remote.
 
 1. Sign in with an administrator-provisioned account.
 2. Create a course and assessment in the frontend.
-3. Add questions and draft/approve versioned rubrics in Rubric Studio.
+3. In Rubric Studio, upload a blank exam and optional answer key to suggest questions, or add questions manually. Review the extracted text, numbering and marks; confirm the import to create **draft** rubrics, then edit and approve them.
 4. Select the grading approach and evidence-routing policy.
-5. Upload one paper or a batch and monitor OCR progress.
+5. Once every question has an approved rubric, upload student answers (one paper or a batch) and monitor OCR progress.
 6. Verify student identity, OCR mapping, and source pages.
 7. Recover, move, or remove incorrectly mapped segments when needed.
 8. Grade with adaptive routing.
@@ -283,6 +291,73 @@ requires coordination with every clone and remote.
 
 Seed scripts are development fixtures only. A normal assessment should not
 require a seed script.
+
+Exam/key uploads use separate `exam_setup` processing jobs and never create student
+submissions or answers. The worker must be restarted after upgrading. Setup drafts
+can be reopened from Rubric Studio after leaving the page; unsaved edits in the
+question-review form are not persisted until confirmation. Review image-dependent
+questions against the original document and verify any shared diagram/table context.
+Imported marking guides are initial suggestions; refine their criteria before approval.
+Setup documents remain in private local upload storage until explicitly removed;
+automatic retention for these documents is not yet implemented.
+
+## Assessment workspace and setup checks
+
+The Assessments page groups work by course, supports typo-tolerant local search,
+and opens an assessment-specific workspace linking marking rules, student papers,
+grades, and exports. Question-by-question setup checks show approved rubric
+versions, evidence-routing settings, and reference-answer availability.
+
+Deterministic checks block setup readiness when approved criteria have invalid
+marks, duplicate identifiers, mismatched totals, or missing question text. Approved
+rubric definitions are checked again when resolved for grading. A missing reference
+answer is advisory: open-ended questions can be graded against sufficiently clear
+criteria. Passing these checks does not establish that an AI grade is correct.
+Legacy references remain supported. Rubric Studio also provides independent,
+versioned answer keys: reference text, acceptable alternatives, and selected pages
+from private PDF/image documents, or an explicit **No fixed answer** setting.
+Drafts do not affect grading; approved versions are immutable. Reference uploads
+do not create student submissions or call OCR. Each question supports up to five
+reference documents and 20 selected pages in total.
+
+For an existing database, the `upgrade_grading_foundations.py` command in the
+setup section creates these additive tables and fields. Back up first, then
+restart both Uvicorn and the RQ worker.
+
+New grading runs save a question-linked grading package containing the approved
+key, rubric and policy, student evidence, version identifiers and document hashes.
+The policy is versioned within the rubric. Later edits do not rewrite saved runs;
+older runs are not retroactively populated with packages. Grades exposes the saved
+rules and run history. Criterion responses support evidence references, applied
+policy fields and uncertainties; invalid references are rejected, while missing
+citations or reported uncertainty require review. Valid citations do not by
+themselves prove that a deduction is justified.
+
+Explicit policy fields cover handwritten syntax, language quality and
+error-carried-forward handling alongside the existing marking controls.
+Deterministic consistency checks compare explicit question, key, rubric, and
+routing fields. Structural conflicts stop grading before a provider call;
+advisories cap confidence and require instructor review. These checks do not
+claim to understand whether academic prose is semantically correct.
+
+Settings provides optional, versioned instructor marking profiles. Scenario
+answers create proposed rubric defaults, but approval never changes an
+assessment. An instructor must explicitly copy an approved profile into an
+editable Rubric Studio draft and approve that rubric separately. Review forms
+record structured reasons such as valid alternatives, notation tolerance,
+method credit, and carried-forward errors. After three distinct decisions of
+one kind, MISRA may suggest a new profile rule. OCR/mapping failures, rubric
+problems, and miscellaneous reasons are excluded from preference evidence, and
+suggestions are never applied automatically.
+
+Long-document semantic retrieval remains a future phase. No vector database is
+required for the current exact question-linked references.
+
+The pinned Fuse.js browser bundle and its license are committed locally; runtime
+search does not contact a CDN or send assessment text to a search service. To
+rebuild that bundle after dependency changes, run `npm ci` followed by
+`npm run vendor:frontend` from the repository root. Normal use still requires no
+frontend build step.
 
 ## Known deployment boundary
 

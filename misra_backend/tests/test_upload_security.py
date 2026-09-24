@@ -18,7 +18,7 @@ os.environ.setdefault("GEMINI_API_KEY", "test-key-not-used")
 
 from database import Base  # noqa: E402
 import models  # noqa: E402,F401
-from models import Course, Exam, Institution, Submission, User  # noqa: E402
+from models import Course, Exam, Institution, Question, RubricVersion, Submission, User  # noqa: E402
 from routers.exams import upload_exam  # noqa: E402
 from services.ocr_service import create_submissions_from_stored_upload  # noqa: E402
 from services.upload_security_service import (  # noqa: E402
@@ -259,6 +259,15 @@ class UploadRouteTests(unittest.TestCase):
             language="en",
         )
         self.db.add_all([institution, self.teacher, course, exam])
+        question = Question(id='upload-question', institution_id=institution.id, exam_id=exam.id,
+            question_number='1', question_text='Test', max_score=1, rubric_json={}, order_index=1)
+        version = RubricVersion(id='upload-rubric', question_id=question.id, version_number=1,
+            schema_version=2, rubric_json={'max_score': 1, 'criteria': [
+                {'id': 'answer', 'description': 'Correct answer', 'points': 1}]},
+            grading_approach='balanced', source='manual', status='approved')
+        self.db.add_all([question, version])
+        self.db.flush()
+        question.active_rubric_version_id = version.id
         self.db.commit()
         self.temp = tempfile.TemporaryDirectory()
 

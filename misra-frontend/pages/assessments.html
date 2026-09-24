@@ -6,28 +6,29 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css?v=3"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=17">
+  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=24">
+  <link rel="stylesheet" href="../css/assessment-workspace.css?v=24">
 </head>
 <body class="workspace-body" data-page="assessments">
   <main class="workspace-content" id="workspace-content">
-    <header class="page-heading"><div><h1>Assessments</h1><p>Every assessment stored in MISRA, with live question, submission, and review counts.</p></div><div class="page-actions"><a class="btn btn-primary" href="#new-assessment">New assessment</a></div></header>
+    <header class="page-heading"><div><h1>Assessments</h1><p>Set the marking rules, review student work, and release grades. One workspace for each assessment.</p></div><div class="page-actions"><button class="btn btn-primary" type="button" id="create-assessment-toggle">New assessment</button></div></header>
     <div class="setup-stack">
     <details class="workspace-card suggestion-panel" id="new-course">
       <summary>Create a course</summary>
-      <p class="section-copy setup-copy">Add a course to your authenticated institution and instructor workspace.</p>
+      <p class="section-copy setup-copy">Create a course once, then add its exams and assignments below.</p>
       <form id="course-form">
         <div class="suggestion-fields">
           <div class="field"><label for="course-code">Course code</label><input class="input" id="course-code" name="course_code" maxlength="50" required placeholder="CS2071" autocomplete="off"></div>
           <div class="field"><label for="course-term">Term</label><input class="input" id="course-term" name="term" maxlength="50" placeholder="Spring 2022" autocomplete="off"></div>
           <div class="field wide"><label for="course-title">Course title</label><input class="input" id="course-title" name="title" maxlength="255" required placeholder="Database Systems" autocomplete="off"></div>
-          <div class="field wide"><label for="course-instructor">Instructor name</label><input class="input" id="course-instructor" name="instructor_name" maxlength="255" required placeholder="Zain Balfagih" autocomplete="name"></div>
+          <div class="field wide"><label for="course-instructor">Instructor name</label><input class="input" id="course-instructor" name="instructor_name" maxlength="255" required placeholder="Instructor’s full name" autocomplete="name"></div>
         </div>
         <button class="btn btn-primary" type="submit">Create course</button>
       </form>
     </details>
     <details class="workspace-card suggestion-panel" id="new-assessment">
-      <summary style="cursor:pointer;font-weight:600">Create an assessment</summary>
-      <p class="section-copy" style="margin:7px 0 16px">Choose an existing course. Institution ownership is inherited from that persisted course.</p>
+      <summary>Create an assessment</summary>
+      <p class="section-copy setup-copy">Choose a course, then upload your blank exam or add questions in Rubric Studio. Student papers come after rubric approval.</p>
       <form id="assessment-form">
         <div class="suggestion-fields">
           <div class="field"><label for="assessment-course">Course</label><select class="input select" id="assessment-course" name="course_id" required><option value="">Loading courses…</option></select></div>
@@ -38,11 +39,16 @@
       </form>
     </details>
     </div>
-    <section class="workspace-card" aria-labelledby="assessment-list-title">
-      <div class="card-pad section-head" style="margin:0"><div><h2 class="section-title" id="assessment-list-title">Assessment catalog</h2><p class="section-copy">Open Rubric Studio before grading a new assessment.</p></div></div>
-      <div style="overflow-x:auto" id="assessment-table"><div class="card-pad loading-list"><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
+    <section aria-labelledby="assessment-list-title" class="assessment-library">
+      <div class="section-head"><div><h2 class="section-title" id="assessment-list-title">Your assessments</h2><p class="section-copy" id="assessment-count" role="status">Loading assessments…</p></div></div>
+      <div class="assessment-toolbar">
+        <div class="field"><label for="assessment-search">Find an assessment</label><input type="search" class="input" id="assessment-search" placeholder="Search title, course, or term" autocomplete="off"></div>
+        <div class="field"><label for="assessment-filter">Show</label><select class="input select" id="assessment-filter"><option value="all">All assessments</option><option value="setup">Setup to finish</option><option value="review">Grades needing review</option><option value="papers">With student papers</option></select></div>
+        <button type="button" class="btn btn-secondary" id="assessment-refresh">Refresh</button>
+      </div>
+      <div id="assessment-table" aria-busy="true"><div class="loading-list"><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
     </section>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=16"></script><script src="../js/workspace.js?v=13"></script><script src="../js/assessments.js?v=8"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=16"></script><script src="../js/vendor/fuse.min.js"></script><script src="../js/assessment-checks.js?v=1"></script><script src="../js/assessments.js?v=9"></script>
 </body>
 </html>

@@ -84,7 +84,11 @@ class VisualEvidenceRoutingTests(unittest.TestCase):
     def test_adaptive_routes_diagram_to_image_and_text(self):
         with patch("services.grading_service.process_grading", return_value=self.answer) as grade:
             process_grading_with_policy(self.answer.id, self.db)
-        grade.assert_called_once_with(self.answer.id, self.db, mode="image_text")
+        kwargs = grade.call_args.kwargs
+        self.assertEqual(kwargs["mode"], "image_text")
+        self.assertEqual(kwargs["routing_context"]["route_reasons"][0], {
+            "code": "adaptive_visual_evidence", "detail": "question_or_rubric"
+        })
 
     def test_text_only_policy_is_respected(self):
         self.db.add(QuestionGradingPolicy(
@@ -95,7 +99,10 @@ class VisualEvidenceRoutingTests(unittest.TestCase):
         self.db.commit()
         with patch("services.grading_service.process_grading", return_value=self.answer) as grade:
             process_grading_with_policy(self.answer.id, self.db)
-        grade.assert_called_once_with(self.answer.id, self.db, mode="text_only")
+        kwargs = grade.call_args.kwargs
+        self.assertEqual(kwargs["mode"], "text_only")
+        self.assertEqual(kwargs["routing_context"]["route_reasons"][0]["code"],
+                         "explicit_question_policy")
 
     def test_required_visual_policy_routes_to_image_and_text(self):
         self.db.add(QuestionGradingPolicy(
@@ -106,7 +113,10 @@ class VisualEvidenceRoutingTests(unittest.TestCase):
         self.db.commit()
         with patch("services.grading_service.process_grading", return_value=self.answer) as grade:
             process_grading_with_policy(self.answer.id, self.db)
-        grade.assert_called_once_with(self.answer.id, self.db, mode="image_text")
+        kwargs = grade.call_args.kwargs
+        self.assertEqual(kwargs["mode"], "image_text")
+        self.assertEqual(kwargs["routing_context"]["route_reasons"][0]["detail"],
+                         "image_text_required")
 
     def test_text_only_run_is_capped_when_visuals_are_required(self):
         self.db.add(QuestionGradingPolicy(

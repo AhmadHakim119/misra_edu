@@ -107,7 +107,10 @@ def execute_processing_job(processing_job_id: str) -> None:
         db.commit()
 
         progress = _progress_callback(job, db)
-        if job.job_type == "ocr_submission":
+        if job.job_type == "exam_setup":
+            from services.exam_setup_service import extract_setup_documents
+            extract_setup_documents(job, db, progress)
+        elif job.job_type == "ocr_submission":
             process_submission(job.submission_id, db, progress_callback=progress)
         elif job.job_type == "ocr_batch":
             payload = job.payload or {}

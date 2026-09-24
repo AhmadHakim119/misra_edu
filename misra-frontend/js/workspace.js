@@ -142,13 +142,24 @@
           <button class="workspace-menu-button" type="button" data-open-nav aria-label="Open navigation" aria-expanded="false">
             <svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
           </button>
-          <div class="workspace-topbar-title"><strong>${escapeHTML(activePageTitle)}</strong><span>No simulated records</span></div>
+          <div class="workspace-topbar-title"><strong>${escapeHTML(activePageTitle)}</strong><span>Instructor workspace</span></div>
         </div>
         <div class="workspace-topbar-actions">
           <span class="api-status" data-api-status data-state="checking"><span class="api-status-dot"></span><span>Checking engine</span></span>
-          <a class="btn btn-secondary" href="../index.html" style="padding:8px 14px;font-size:12.5px">Public site</a>
+          <a class="btn btn-secondary" href="../index.html" style="padding:8px 14px;font-size:12.5px">Project overview</a>
         </div>
       </header>
+      <section class="workspace-job-center" data-job-center hidden aria-live="polite">
+        <div class="workspace-job-summary">
+          <span class="workspace-job-symbol" aria-hidden="true">${icons.upload}</span>
+          <div class="workspace-job-heading">
+            <strong data-job-center-title>Background activity</strong>
+            <span data-job-center-copy>Uploads and grading continue safely when you change pages.</span>
+          </div>
+          <button class="workspace-job-toggle" type="button" data-job-toggle aria-expanded="true">Hide details</button>
+        </div>
+        <div class="workspace-job-list" data-job-list></div>
+      </section>
     </div>`;
   document.body.prepend(shell);
   shell.querySelector('.workspace-main').appendChild(content);
@@ -189,6 +200,192 @@
 
   const apiStatus = shell.querySelector('[data-api-status]');
   const userPanel = shell.querySelector('[data-user-panel]');
+
+  function initializeJobCenter(user) {
+    const center = shell.querySelector('[data-job-center]');
+    const list = shell.querySelector('[data-job-list]');
+    const title = shell.querySelector('[data-job-center-title]');
+    const copy = shell.querySelector('[data-job-center-copy]');
+    const toggle = shell.querySelector('[data-job-toggle]');
+    const dismissedKey = `misra-dismissed-jobs:${user.id}`;
+    const collapsedKey = `misra-job-center-collapsed:${user.id}`;
+    const activeStatuses = new Set(['queued', 'processing', 'retrying']);
+    let timer = null;
+    let loading = false;
+    let initialized = false;
+    let previousStatuses = new Map();
+
+    function dismissedJobs() {
+      try { return new Set(JSON.parse(localStorage.getItem(dismissedKey) || '[]')); }
+      catch (_) { return new Set(); }
+    }
+
+    function dismiss(jobId) {
+      const dismissed = dismissedJobs();
+      dismissed.add(jobId);
+      try { localStorage.setItem(dismissedKey, JSON.stringify([...dismissed].slice(-50))); } catch (_) {}
+    }
+
+    function destination(job) {
+      if (job.job_type === 'exam_setup' && job.exam_id) return `rubric-studio.html?exam_id=${encodeURIComponent(job.exam_id)}`;
+      if (job.job_type === 'ocr_batch' && job.exam_id) return `submissions.html?exam_id=${encodeURIComponent(job.exam_id)}`;
+      if (job.job_type === 'ocr_submission' && job.submission_id) return `submission.html?id=${encodeURIComponent(job.submission_id)}`;
+      if (job.job_type === 'grade_submission' && job.submission_id) return `grade-results.html?id=${encodeURIComponent(job.submission_id)}`;
+      return job.exam_id ? `submissions.html?exam_id=${encodeURIComponent(job.exam_id)}` : 'admin-operations.html';
+    }
+
+    function jobLabel(job) {
+      const labels = {
+        exam_setup: 'Reading assessment setup',
+        ocr_batch: 'Extracting uploaded batch',
+        ocr_submission: 'Extracting student paper',
+        grade_submission: 'Grading submission',
+      };
+      return labels[job.job_type] || 'Background task';
+    }
+
+    function statusLabel(job) {
+      if (Number(job.batch_failed_count || 0) > 0) return 'Completed with errors';
+      if (job.status === 'completed') return 'Completed';
+      if (job.status === 'failed') return 'Needs attention';
+      if (job.status === 'retrying') return 'Retrying';
+      if (job.status === 'processing') return 'Processing';
+      return 'Queued';
+    }
+
+    function render(response) {
+      const dismissed = dismissedJobs();
+      const jobs = (response.items || []).filter((job) => activeStatuses.has(job.status) || !dismissed.has(job.id));
+      const activeCount = jobs.filter((job) => activeStatuses.has(job.status)).length;
+      center.hidden = jobs.length === 0;
+      if (!jobs.length) {
+        list.innerHTML = '';
+        return;
+      }
+
+      title.textContent = activeCount
+        ? `${activeCount} background ${activeCount === 1 ? 'task' : 'tasks'} in progress`
+        : 'Background activity finished';
+      copy.textContent = activeCount
+        ? 'You can move between pages. MISRA will keep working and preserve progress.'
+        : 'Review the completed work or dismiss this notice.';
+      center.dataset.state = jobs.some((job) => job.status === 'failed' || Number(job.batch_failed_count || 0) > 0) ? 'attention' : activeCount ? 'active' : 'complete';
+      list.innerHTML = jobs.map((job) => {
+        const percent = Math.max(0, Math.min(100, Number(job.progress_percent || 0)));
+        const isActive = activeStatuses.has(job.status);
+        const assessment = [job.course_code, job.exam_title].filter(Boolean).join(' · ') || 'Assessment';
+        const batchFailed = Number(job.batch_failed_count || 0);
+        const batchCompleted = Number(job.batch_completed_count || 0);
+        const message = batchFailed
+          ? `${batchCompleted} extracted successfully; ${batchFailed} failed. Review the batch before retrying failed papers.`
+          : job.status === 'failed'
+          ? (job.error_message || 'The worker could not finish this task.')
+          : (job.progress_message || (job.status === 'completed' ? 'Work completed successfully.' : 'Waiting for worker progress.'));
+        return `<article class="workspace-job-row" data-job-status="${escapeHTML(job.status)}"${batchFailed ? ' data-batch-errors="true"' : ''}>
+          <div class="workspace-job-main">
+            <div class="workspace-job-line"><strong>${escapeHTML(jobLabel(job))}</strong><span>${escapeHTML(statusLabel(job))}</span></div>
+            <small class="workspace-job-assessment">${escapeHTML(assessment)}</small>
+            <p>${escapeHTML(message)}</p>
+            ${isActive ? `<div class="workspace-job-progress" role="progressbar" aria-label="${escapeHTML(jobLabel(job))} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>` : ''}
+          </div>
+          <div class="workspace-job-actions">
+            ${batchFailed && job.batch_id ? `<button type="button" data-global-retry-batch="${escapeHTML(job.batch_id)}">Retry failed papers</button>` : job.status === 'failed' ? `<button type="button" data-global-retry-job="${escapeHTML(job.id)}">Retry</button>` : ''}
+            <a href="${destination(job)}">${job.status === 'completed' ? 'Review' : 'Open'}</a>
+            ${isActive ? '' : `<button type="button" data-dismiss-job="${escapeHTML(job.id)}" aria-label="Dismiss ${escapeHTML(jobLabel(job))}">Dismiss</button>`}
+          </div>
+        </article>`;
+      }).join('');
+
+      if (initialized) {
+        jobs.forEach((job) => {
+          const prior = previousStatuses.get(job.id);
+          if (prior && prior !== job.status && job.status === 'completed') window.showToast(`${jobLabel(job)} completed.`, 'success');
+          if (prior && prior !== job.status && job.status === 'failed') window.showToast(`${jobLabel(job)} needs attention.`, 'error');
+        });
+      }
+      previousStatuses = new Map(jobs.map((job) => [job.id, job.status]));
+      initialized = true;
+    }
+
+    function schedule(activeCount) {
+      window.clearTimeout(timer);
+      const delay = document.hidden ? 20000 : activeCount ? 4000 : 15000;
+      timer = window.setTimeout(refresh, delay);
+    }
+
+    async function refresh() {
+      if (loading) return;
+      loading = true;
+      try {
+        const response = await window.MisraAPI.workspaceJobs();
+        render(response);
+        schedule(Number(response.active_count || 0));
+      } catch (error) {
+        if (!center.hidden) {
+          copy.textContent = 'Status could not refresh. Your background worker may still be running.';
+          center.dataset.state = 'attention';
+        }
+        schedule(0);
+      } finally {
+        loading = false;
+      }
+    }
+
+    const initiallyCollapsed = (() => {
+      try { return localStorage.getItem(collapsedKey) === 'true'; } catch (_) { return false; }
+    })();
+    center.classList.toggle('is-collapsed', initiallyCollapsed);
+    toggle.setAttribute('aria-expanded', String(!initiallyCollapsed));
+    toggle.textContent = initiallyCollapsed ? 'Show details' : 'Hide details';
+    toggle.addEventListener('click', () => {
+      const collapsed = center.classList.toggle('is-collapsed');
+      toggle.setAttribute('aria-expanded', String(!collapsed));
+      toggle.textContent = collapsed ? 'Show details' : 'Hide details';
+      try { localStorage.setItem(collapsedKey, String(collapsed)); } catch (_) {}
+    });
+    center.addEventListener('click', async (event) => {
+      const dismissButton = event.target.closest('[data-dismiss-job]');
+      if (dismissButton) {
+        dismiss(dismissButton.dataset.dismissJob);
+        refresh();
+        return;
+      }
+      const retryButton = event.target.closest('[data-global-retry-job]');
+      const retryBatchButton = event.target.closest('[data-global-retry-batch]');
+      if (!retryButton && !retryBatchButton) return;
+      const actionButton = retryBatchButton || retryButton;
+      actionButton.disabled = true;
+      actionButton.textContent = 'Queueing…';
+      if (retryBatchButton) {
+        try {
+          const response = await window.MisraAPI.retryBatch(retryBatchButton.dataset.globalRetryBatch);
+          window.showToast(response.retry_count ? `${response.retry_count} failed papers queued again.` : 'No failed papers need retrying.', response.retry_count ? 'success' : 'info');
+          window.dispatchEvent(new CustomEvent('misra:job-started', { detail: { jobId: response.job?.id } }));
+          refresh();
+        } catch (error) {
+          actionButton.disabled = false;
+          actionButton.textContent = 'Retry failed papers';
+          window.showToast(error.message || 'Could not retry this batch.', 'error');
+        }
+        return;
+      }
+      try {
+        await window.MisraAPI.retryJob(retryButton.dataset.globalRetryJob);
+        window.showToast('Retry queued.', 'success');
+        refresh();
+      } catch (error) {
+        actionButton.disabled = false;
+        actionButton.textContent = 'Retry';
+        window.showToast(error.message || 'Could not retry this task.', 'error');
+      }
+    });
+    window.addEventListener('misra:job-started', refresh);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) refresh();
+    });
+    refresh();
+  }
+
   window.MisraAPI.currentUser().then((user) => {
     if (user.must_change_password && activePage !== 'settings') {
       window.location.replace('account.html?required=1');
@@ -197,6 +394,7 @@
     if (user.role === 'admin') {
       shell.querySelectorAll('[data-admin-only]').forEach((link) => { link.hidden = false; });
     }
+    initializeJobCenter(user);
     userPanel.innerHTML = `<strong>${escapeHTML(user.full_name || user.email)}</strong><br><span>${escapeHTML(user.email)}</span><button class="workspace-signout" type="button" data-signout>Sign out</button>`;
     userPanel.querySelector('[data-signout]').addEventListener('click', async () => {
       const button = userPanel.querySelector('[data-signout]');
@@ -204,6 +402,10 @@
       button.textContent = 'Signing out…';
       try {
         await window.MisraAPI.logout();
+        try {
+          localStorage.removeItem(`misra-dismissed-jobs:${user.id}`);
+          localStorage.removeItem(`misra-job-center-collapsed:${user.id}`);
+        } catch (_) {}
         window.location.replace('login.html?v=2');
       } catch (error) {
         button.disabled = false;

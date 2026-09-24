@@ -253,7 +253,7 @@ CREATE TABLE `processing_jobs` (
   `requested_by` char(36) DEFAULT NULL,
   `submission_id` char(36) DEFAULT NULL,
   `batch_id` char(36) DEFAULT NULL,
-  `job_type` enum('ocr_submission','ocr_batch','grade_submission') NOT NULL,
+  `job_type` enum('ocr_submission','ocr_batch','grade_submission','exam_setup') NOT NULL,
   `status` enum('queued','processing','completed','failed','retrying') NOT NULL DEFAULT 'queued',
   `rq_job_id` varchar(255) DEFAULT NULL,
   `progress_current` int(11) NOT NULL DEFAULT 0,
@@ -361,6 +361,8 @@ CREATE TABLE `review_labels` (
   `was_review_warranted` tinyint(1) NOT NULL,
   `human_criteria_scores` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`human_criteria_scores`)),
   `reviewer_notes` longtext DEFAULT NULL,
+  `review_reason_codes` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`review_reason_codes`)),
+  `review_reason_note` longtext DEFAULT NULL,
   `label_source` varchar(50) NOT NULL DEFAULT 'instructor_review',
   `labeled_by` char(36) DEFAULT NULL,
   `created_at` datetime NOT NULL DEFAULT current_timestamp(),
@@ -369,14 +371,17 @@ CREATE TABLE `review_labels` (
   `ai_criteria_scores_snapshot` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`ai_criteria_scores_snapshot`)),
   `grading_run_id` char(36) DEFAULT NULL,
   `rubric_version_id` char(36) DEFAULT NULL,
+  `supersedes_label_id` char(36) DEFAULT NULL,
   PRIMARY KEY (`id`),
-  UNIQUE KEY `uq_review_labels_grading_run_id` (`grading_run_id`),
+  KEY `ix_review_labels_grading_run_id` (`grading_run_id`),
+  KEY `ix_review_labels_supersedes_label_id` (`supersedes_label_id`),
   KEY `ix_review_labels_created_at` (`created_at`),
   KEY `fk_review_labels_user` (`labeled_by`),
   KEY `ix_review_labels_answer_id_lookup` (`answer_id`),
   KEY `ix_review_labels_rubric_version_id` (`rubric_version_id`),
   CONSTRAINT `fk_review_labels_answer` FOREIGN KEY (`answer_id`) REFERENCES `answers` (`id`),
   CONSTRAINT `fk_review_labels_grading_run` FOREIGN KEY (`grading_run_id`) REFERENCES `grading_runs` (`id`),
+  CONSTRAINT `fk_review_labels_supersedes` FOREIGN KEY (`supersedes_label_id`) REFERENCES `review_labels` (`id`) ON DELETE SET NULL,
   CONSTRAINT `fk_review_labels_rubric_version` FOREIGN KEY (`rubric_version_id`) REFERENCES `rubric_versions` (`id`),
   CONSTRAINT `fk_review_labels_user` FOREIGN KEY (`labeled_by`) REFERENCES `users` (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -553,4 +558,56 @@ CREATE TABLE `password_reset_tokens` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
+-- Additive Phase 1 answer-key definitions; independent of rubric versions.
+CREATE TABLE IF NOT EXISTS `answer_key_versions` (
+  `id` char(36) NOT NULL,
+  `question_id` char(36) NOT NULL,
+  `version_number` int NOT NULL,
+  `status` varchar(20) NOT NULL DEFAULT 'draft',
+  `mode` varchar(30) NOT NULL,
+  `reference_text` longtext NOT NULL,
+  `acceptable_answers` JSON NOT NULL,
+  `document_refs` JSON NOT NULL,
+  `change_summary` text NOT NULL,
+  `created_by` char(36) DEFAULT NULL,
+  `approved_by` char(36) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `approved_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_answer_key_question_version` (`question_id`, `version_number`),
+  FOREIGN KEY (`question_id`) REFERENCES `questions` (`id`) ON DELETE CASCADE,
+  FOREIGN KEY (`created_by`) REFERENCES `users` (`id`),
+  FOREIGN KEY (`approved_by`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- Dump completed
+
+-- Optional instructor-owned preference proposals. Approval records history only;
+-- it does not modify assessment rubrics or grading runs.
+CREATE TABLE IF NOT EXISTS `instructor_preference_versions` (
+  `id` char(36) NOT NULL,
+  `institution_id` char(36) NOT NULL,
+  `user_id` char(36) NOT NULL,
+  `version_number` int NOT NULL,
+  `status` varchar(20) NOT NULL DEFAULT 'draft',
+  `explicit_preferences` JSON NOT NULL,
+  `scenario_answers` JSON NOT NULL,
+  `derived_proposal` JSON NOT NULL,
+  `proposal_provenance` JSON NOT NULL,
+  `change_summary` text NOT NULL,
+  `created_by` char(36) NOT NULL,
+  `approved_by` char(36) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `approved_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_instructor_preference_user_version` (`user_id`, `version_number`),
+  KEY `ix_instructor_preference_institution` (`institution_id`),
+  KEY `ix_instructor_preference_user` (`user_id`),
+  KEY `ix_instructor_preference_status` (`status`),
+  KEY `ix_instructor_preference_created_by` (`created_by`),
+  KEY `ix_instructor_preference_approved_by` (`approved_by`),
+  CONSTRAINT `fk_instructor_preference_institution` FOREIGN KEY (`institution_id`) REFERENCES `institutions` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_instructor_preference_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_instructor_preference_created_by` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_instructor_preference_approved_by` FOREIGN KEY (`approved_by`) REFERENCES `users` (`id`) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

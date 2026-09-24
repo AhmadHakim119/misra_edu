@@ -6,7 +6,7 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css?v=3"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=17">
+  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=24">
 </head>
 <body class="workspace-body" data-page="operations" data-page-title="Admin operations">
   <main class="workspace-content" id="workspace-content">
@@ -44,7 +44,7 @@
     <section class="operations-panel" data-operations-panel="jobs" hidden aria-live="polite">
       <form class="workspace-card operations-filters operations-job-filters" id="job-filters">
         <div class="field"><label for="job-status">Status</label><select class="input" id="job-status" name="status"><option value="">All statuses</option><option value="queued">Queued</option><option value="processing">Processing</option><option value="retrying">Retrying</option><option value="completed">Completed</option><option value="failed">Failed</option></select></div>
-        <div class="field"><label for="job-type">Work type</label><select class="input" id="job-type" name="job_type"><option value="">All work</option><option value="ocr_submission">Paper extraction</option><option value="ocr_batch">Batch extraction</option><option value="grade_submission">Submission grading</option></select></div>
+        <div class="field"><label for="job-type">Work type</label><select class="input" id="job-type" name="job_type"><option value="">All work</option><option value="ocr_submission">Paper extraction</option><option value="ocr_batch">Batch extraction</option><option value="grade_submission">Submission grading</option><option value="exam_setup">Exam and rubric setup</option></select></div>
         <button class="btn btn-secondary" type="submit">Apply filters</button>
         <button class="btn btn-primary" type="button" id="recover-jobs">Recover abandoned work</button>
       </form>
@@ -61,6 +61,6 @@
       </section>
     </section>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=15"></script><script src="../js/workspace.js?v=13"></script><script src="../js/admin-operations.js?v=2"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=16"></script><script src="../js/admin-operations.js?v=2"></script>
 </body>
 </html>

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from fastapi import APIRouter, File, UploadFile, Form, Depends, HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from database import get_db
 from models import (
@@ -154,6 +155,12 @@ def list_exams(db: Session = Depends(get_db), user: User = Depends(require_instr
     )
     exams = query.order_by(Exam.created_at.desc()).all()
     catalog = []
+    approved_counts = dict(db.query(Question.exam_id, func.count(Question.id)).join(
+        RubricVersion, Question.active_rubric_version_id == RubricVersion.id
+    ).join(Exam, Question.exam_id == Exam.id).filter(
+        Exam.institution_id == user.institution_id,
+        RubricVersion.question_id == Question.id, RubricVersion.status == "approved"
+    ).group_by(Question.exam_id).all())
 
     for exam in exams:
         course = db.query(Course).filter(Course.id == exam.course_id).first()
@@ -179,6 +186,7 @@ def list_exams(db: Session = Depends(get_db), user: User = Depends(require_instr
                 "language": exam.language,
                 "created_at": exam.created_at,
                 "question_count": question_count,
+                "approved_question_count": approved_counts.get(exam.id, 0),
                 "submission_count": submission_count,
                 "review_count": review_count,
             }
@@ -314,6 +322,8 @@ async def upload_exam(
     if not exam:
         raise HTTPException(status_code=404, detail=f"Exam {exam_id} not found")
 
+    from services.exam_setup_service import require_ready
+    require_ready(db, exam_id)
     try:
         stored = await store_validated_upload(file, UPLOAD_DIR)
     except UploadValidationError as error:
@@ -375,6 +385,8 @@ async def upload_batch(
     if pages_per_student is not None and pages_per_student <= 0:
         raise HTTPException(status_code=422, detail="pages_per_student must be a positive integer")
 
+    from services.exam_setup_service import require_ready
+    require_ready(db, exam_id)
     try:
         stored_uploads = await store_validated_batch(files, UPLOAD_DIR)
     except UploadValidationError as error:

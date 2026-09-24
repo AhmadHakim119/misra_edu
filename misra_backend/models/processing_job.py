@@ -33,7 +33,7 @@ class ProcessingJob(Base):
         CHAR(36), ForeignKey("batches.id", ondelete="CASCADE"), nullable=True
     )
     job_type: Mapped[str] = mapped_column(
-        Enum("ocr_submission", "ocr_batch", "grade_submission"), nullable=False
+        Enum("ocr_submission", "ocr_batch", "grade_submission", "exam_setup"), nullable=False
     )
     status: Mapped[str] = mapped_column(
         Enum("queued", "processing", "completed", "failed", "retrying"),

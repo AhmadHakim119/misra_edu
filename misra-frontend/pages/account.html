@@ -6,7 +6,7 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css?v=3"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=17">
+  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=24">
 </head>
 <body class="workspace-body" data-page="settings" data-page-title="Settings">
   <main class="workspace-content" id="workspace-content">
@@ -50,6 +50,11 @@
         </form>
       </section>
 
+      <section class="workspace-card settings-section marking-preferences-section" aria-labelledby="marking-preferences-title">
+        <div class="settings-section-copy"><h2 class="section-title" id="marking-preferences-title">Marking preferences</h2><p class="section-copy">Answer a few optional marking scenarios to create proposed defaults. MISRA never changes an assessment rubric from these answers unless you explicitly apply them in Rubric Studio.</p></div>
+        <div id="marking-preferences" aria-live="polite" aria-busy="true"><p class="section-copy" role="status">Loading marking preferences…</p></div>
+      </section>
+
       <div class="account-grid settings-account-grid">
       <section class="workspace-card account-profile" aria-labelledby="profile-title">
         <div class="card-pad"><h2 class="section-title" id="profile-title">Instructor account</h2><p class="section-copy">These details identify your account inside its institution.</p></div>
@@ -68,6 +73,6 @@
       </div>
     </div>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=14"></script><script src="../js/workspace.js?v=13"></script><script src="../js/account.js?v=3"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=16"></script><script src="../js/instructor-preferences.js?v=3"></script><script src="../js/account.js?v=4"></script>
 </body>
 </html>

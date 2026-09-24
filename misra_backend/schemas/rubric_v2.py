@@ -72,6 +72,9 @@ class RubricCriterionV2(BaseModel):
 
 
 class RubricPolicy(BaseModel):
+    language_quality_policy: Literal["criterion_specific", "ignore_unless_assessed", "assess"] = "criterion_specific"
+    error_carried_forward: Literal["criterion_specific", "single_penalty", "penalize_each"] = "criterion_specific"
+    handwritten_syntax_policy: Literal["criterion_specific", "accept_unambiguous", "require_correct"] = "criterion_specific"
     grading_approach: GradingApproach = "balanced"
     method_credit: Literal["none", "partial", "full_if_valid"] = "partial"
     arithmetic_error_policy: Literal[

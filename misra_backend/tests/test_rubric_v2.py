@@ -221,6 +221,14 @@ class RubricV2Tests(unittest.TestCase):
                     grading_approach="balanced",
                 ),
                 self.db,
+                User(
+                    id="suggestion-teacher",
+                    institution_id="institution-1",
+                    email="suggestion@example.edu",
+                    hashed_password="unused",
+                    full_name="Suggestion Teacher",
+                    role="teacher",
+                ),
             )
 
         version = response["rubric_version"]
@@ -337,8 +345,8 @@ class RubricV2Tests(unittest.TestCase):
                 grading_run_id=run.id,
                 human_score=2.5,
                 was_review_warranted=True,
+                review_reason_codes=["minor_notation"],
                 reviewer_notes="Instructor adjusted the recorded grade.",
-                label_source="grade_page",
             ),
             self.db,
             user,
@@ -346,6 +354,20 @@ class RubricV2Tests(unittest.TestCase):
         self.db.refresh(answer)
         self.assertEqual(float(answer.teacher_override_score), 2.5)
         self.assertEqual(answer.review_status, "overridden")
+        revised_labels = (
+            self.db.query(ReviewLabel)
+            .filter(ReviewLabel.grading_run_id == run.id)
+            .order_by(ReviewLabel.created_at.asc(), ReviewLabel.id.asc())
+            .all()
+        )
+        self.assertEqual(len(revised_labels), 2)
+        approved_label = next(
+            label for label in revised_labels if float(label.human_score) == 3
+        )
+        override_label = next(
+            label for label in revised_labels if float(label.human_score) == 2.5
+        )
+        self.assertEqual(override_label.supersedes_label_id, approved_label.id)
 
         other_user = User(
             id="teacher-2",
