@@ -80,7 +80,16 @@ test('student upload requires approved rubrics', async ({ page }) => {
   await page.goto('/pages/upload.html');
   await expect(page.locator('#upload-readiness')).toContainText('approve');
   await expect(page.locator('#upload-button')).toBeDisabled();
+  await expect(page.locator('#upload-ready-fields')).toBeHidden();
+  await expect(page.getByRole('heading', { name: 'Finish assessment setup first' })).toBeVisible();
   await expect(page.locator('#setup-link')).toHaveAttribute('href', 'rubric-studio.html?exam_id=exam1');
+});
+
+test('ready rubrics hand off to student upload without treating setup documents as submissions', async ({ page }) => {
+  await setup(page, { ready: true });
+  await page.goto('/pages/rubric-studio.html');
+  await expect(page.locator('#rubric-next-step')).toContainText('Assessment ready for student papers');
+  await expect(page.getByRole('link', { name: 'Continue to student uploads' })).toHaveAttribute('href', 'upload.html?exam_id=exam1');
 });
 
 test('switching assessments cannot leave the manual workspace hidden', async ({ page }) => {

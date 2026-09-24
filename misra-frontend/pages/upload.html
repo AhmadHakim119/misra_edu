@@ -6,7 +6,7 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=24">
+  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=25">
 </head>
 <body class="workspace-body" data-page="upload">
   <main class="workspace-content" id="workspace-content">
@@ -16,6 +16,8 @@
         <form id="upload-form" novalidate>
           <div class="field"><label for="upload-exam">Assessment</label><select class="input select" id="upload-exam" name="exam_id" required><option value="">Loading assessments…</option></select></div>
           <p id="upload-readiness" class="field-hint" role="status">Checking assessment setup…</p>
+          <div id="upload-setup-gate" class="upload-setup-gate" aria-live="polite"></div>
+          <div id="upload-ready-fields" hidden>
           <div class="section-head" style="margin-top:8px"><div><h2 class="section-title">Submission type</h2><p class="section-copy">A batch may contain multiple files or a combined PDF.</p></div><div class="segmented" aria-label="Submission type"><button type="button" aria-pressed="true" data-mode="single">Single</button><button type="button" aria-pressed="false" data-mode="batch">Batch</button></div></div>
           <label class="dropzone" id="dropzone" for="paper-files">
             <div><svg aria-hidden="true" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg><strong id="dropzone-title">Choose or drop a PDF or image</strong><p id="selection-hint">PDF, PNG, JPEG, or WebP. In batch mode, select multiple files.</p><div class="file-summary" id="file-summary" role="status">No files selected</div></div>
@@ -24,11 +26,12 @@
           <button class="btn btn-secondary upload-clear" id="clear-files" type="button" hidden>Remove file</button>
           <div class="field" id="pages-field" hidden style="margin-top:16px"><label for="pages-per-student">Pages per student (optional)</label><input class="input" id="pages-per-student" type="number" min="1" step="1" placeholder="Use only for one combined PDF"><span class="field-hint">Leave blank when each file is one student.</span></div>
           <button class="btn btn-primary btn-block" id="upload-button" type="submit" style="margin-top:18px" disabled>Upload and start extraction</button>
+          </div>
         </form>
         <div id="upload-result" style="margin-top:16px" aria-live="polite"></div>
         <button class="btn btn-secondary" id="upload-another" type="button" hidden>Upload another student paper</button>
       </section>
-      <aside class="workspace-card card-pad">
+      <aside class="workspace-card card-pad" id="upload-tips" hidden>
         <h2 class="section-title">Before uploading</h2>
         <div class="data-list" style="margin-top:14px">
           <div class="data-row"><div><div class="data-row-title">Approve the rubric</div><div class="data-row-meta">Draft criteria are never used for grading.</div></div></div>
@@ -38,6 +41,6 @@
       </aside>
     </div>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=16"></script><script src="../js/upload.js?v=11"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=17"></script><script src="../js/upload.js?v=12"></script>
 </body>
 </html>

@@ -523,13 +523,15 @@
 
   async function init() {
     try {
-      state.exams = await MisraAPI.exams();
+      const context = await MisraUI.assessmentReady;
+      if (context.error) throw context.error;
+      state.exams = context.exams;
       try {
         const profiles = await MisraAPI.instructorPreferenceVersions();
         state.instructorProfile = (Array.isArray(profiles) ? profiles : []).find(profile => profile.status === 'approved') || null;
       } catch (_) { state.instructorProfile = null; }
       examSelect.innerHTML = state.exams.length ? state.exams.map((exam) => `<option value="${exam.id}">${MisraUI.escapeHTML(exam.course_code ? `${exam.course_code} · ${exam.title}` : exam.title)}</option>`).join('') : '<option value="">No assessments found</option>';
-      const requested = MisraUI.getParam('exam_id');
+      const requested = MisraUI.getParam('exam_id') || context.selectedId;
       if (state.exams.some((exam) => exam.id === requested)) examSelect.value = requested;
       if (examSelect.value) await loadExam(examSelect.value);
       else renderEditor();

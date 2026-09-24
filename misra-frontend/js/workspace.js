@@ -149,6 +149,14 @@
           <a class="btn btn-secondary" href="../index.html" style="padding:8px 14px;font-size:12.5px">Project overview</a>
         </div>
       </header>
+      <section class="workspace-assessment-context" data-assessment-context hidden aria-label="Current assessment workflow">
+        <div class="workspace-assessment-choice">
+          <label for="workspace-assessment-select">Current assessment</label>
+          <select id="workspace-assessment-select" class="input select" data-assessment-select></select>
+        </div>
+        <nav class="workspace-assessment-flow" data-assessment-flow aria-label="Assessment steps"></nav>
+        <a class="workspace-assessment-next" data-assessment-next href="assessments.html">Continue <span aria-hidden="true">→</span></a>
+      </section>
       <section class="workspace-job-center" data-job-center hidden aria-live="polite">
         <div class="workspace-job-summary">
           <span class="workspace-job-symbol" aria-hidden="true">${icons.upload}</span>
@@ -200,6 +208,100 @@
 
   const apiStatus = shell.querySelector('[data-api-status]');
   const userPanel = shell.querySelector('[data-user-panel]');
+  let assessmentContext = null;
+  let resolveAssessmentReady;
+  const assessmentReady = new Promise((resolve) => { resolveAssessmentReady = resolve; });
+
+  function rememberAssessment(examId) {
+    if (!assessmentContext || !assessmentContext.exams.some((exam) => exam.id === examId)) return;
+    if (assessmentContext.selectedId === examId && assessmentContext.readinessChecked) return;
+    assessmentContext.selectedId = examId;
+    assessmentContext.ready = false;
+    assessmentContext.readinessChecked = false;
+    try { localStorage.setItem(assessmentContext.storageKey, examId); } catch (_) {}
+    renderAssessmentContext();
+    window.MisraAPI.setupReadiness(examId).then((readiness) => {
+      if (assessmentContext?.selectedId !== examId) return;
+      const exam = assessmentContext.exams.find((item) => item.id === examId);
+      if (exam && Number.isFinite(Number(readiness.question_count))) exam.question_count = Number(readiness.question_count);
+      if (exam && Number.isFinite(Number(readiness.approved_count))) exam.approved_question_count = Number(readiness.approved_count);
+      assessmentContext.ready = Boolean(readiness.ready);
+      assessmentContext.readinessChecked = true;
+      renderAssessmentContext();
+    }).catch(() => { if (assessmentContext?.selectedId === examId) renderAssessmentContext(); });
+  }
+
+  async function renderAssessmentContext() {
+    if (!assessmentContext) return;
+    const { exams, selectedId } = assessmentContext;
+    const exam = exams.find((item) => item.id === selectedId);
+    if (!exam) return;
+    const box = shell.querySelector('[data-assessment-context]');
+    const select = shell.querySelector('[data-assessment-select]');
+    const flow = shell.querySelector('[data-assessment-flow]');
+    const next = shell.querySelector('[data-assessment-next]');
+    box.hidden = false;
+    document.body.dataset.assessmentContextReady = 'true';
+    select.value = exam.id;
+    const href = (page) => `${page}?exam_id=${encodeURIComponent(exam.id)}`;
+    shell.querySelectorAll('.workspace-nav-link').forEach((link) => {
+      const page = link.getAttribute('href')?.split('?')[0];
+      if (['rubric-studio.html', 'upload.html', 'submissions.html', 'grades.html', 'reviews.html', 'evaluation.html'].includes(page)) link.href = href(page);
+    });
+    const questions = Number(exam.question_count || 0);
+    const approved = Number(exam.approved_question_count || 0);
+    const papers = Number(exam.submission_count || 0);
+    const reviews = Number(exam.review_count || 0);
+    const steps = [
+      ['Set up', href('rubric-studio.html'), questions ? `${approved}/${questions} rubrics` : assessmentContext.ready ? 'Checks passed' : 'Add questions'],
+      ['Upload', href('upload.html'), papers ? `${papers} paper${papers === 1 ? '' : 's'}` : 'No papers yet'],
+      ['Extraction', href('submissions.html'), 'Check mappings'],
+      ['Grade & review', href('reviews.html'), reviews ? `${reviews} to review` : 'Open queue'],
+      ['Export', href('grades.html'), 'Check eligibility'],
+    ];
+    flow.innerHTML = steps.map(([label, url, detail], index) => `<a href="${url}" ${index === 1 && !assessmentContext.ready ? 'data-locked="true" title="Finish assessment setup before uploading"' : ''}><strong>${escapeHTML(label)}</strong><span>${escapeHTML(detail)}</span></a>`).join('');
+    const nextPage = !assessmentContext.ready ? 'rubric-studio.html' : !papers ? 'upload.html' : reviews ? 'reviews.html' : 'grades.html';
+    next.href = href(nextPage);
+    next.firstChild.textContent = !assessmentContext.ready ? 'Finish setup ' : !papers ? 'Upload papers ' : reviews ? 'Review grades ' : 'Open grades ';
+  }
+
+  async function initializeAssessmentContext(user) {
+    try {
+      const exams = await window.MisraAPI.exams();
+      const storageKey = `misra-current-assessment:${user.id}`;
+      let stored = null;
+      try { stored = localStorage.getItem(storageKey); } catch (_) {}
+      const requested = getParam('exam_id');
+      const selectedId = [requested, stored, exams[0]?.id].find((id) => exams.some((exam) => exam.id === id));
+      assessmentContext = { exams, selectedId, storageKey, ready: false };
+      if (selectedId) {
+        rememberAssessment(selectedId);
+        const select = shell.querySelector('[data-assessment-select]');
+        select.innerHTML = exams.map((exam) => `<option value="${escapeHTML(exam.id)}">${escapeHTML([exam.course_code, exam.title].filter(Boolean).join(' · '))}</option>`).join('');
+        select.value = selectedId;
+        select.addEventListener('change', () => {
+          const target = select.value;
+          const destination = ['rubric', 'upload', 'submissions', 'grades', 'review', 'evaluation'].includes(activePage)
+            ? window.location.pathname.split('/').pop() : 'assessments.html';
+          window.location.assign(`${destination}?exam_id=${encodeURIComponent(target)}`);
+        });
+        document.addEventListener('change', (event) => {
+          if (event.target.matches('#rubric-exam, #upload-exam, #submission-exam, #grades-exam, #review-exam, #evaluation-exam')) rememberAssessment(event.target.value);
+        });
+        window.addEventListener('misra:assessment-readiness', (event) => {
+          if (event.detail?.examId !== assessmentContext?.selectedId) return;
+          assessmentContext.ready = Boolean(event.detail.ready);
+          assessmentContext.readinessChecked = true;
+          const exam = assessmentContext.exams.find((item) => item.id === event.detail.examId);
+          if (exam && Number.isFinite(Number(event.detail.questionCount))) exam.question_count = Number(event.detail.questionCount);
+          if (exam && Number.isFinite(Number(event.detail.approvedCount))) exam.approved_question_count = Number(event.detail.approvedCount);
+          renderAssessmentContext();
+        });
+        renderAssessmentContext();
+      }
+      resolveAssessmentReady({ exams, selectedId });
+    } catch (error) { resolveAssessmentReady({ exams: [], selectedId: null, error }); }
+  }
 
   function initializeJobCenter(user) {
     const center = shell.querySelector('[data-job-center]');
@@ -388,6 +490,7 @@
 
   window.MisraAPI.currentUser().then((user) => {
     if (user.must_change_password && activePage !== 'settings') {
+      resolveAssessmentReady({ exams: [], selectedId: null });
       window.location.replace('account.html?required=1');
       return;
     }
@@ -395,6 +498,7 @@
       shell.querySelectorAll('[data-admin-only]').forEach((link) => { link.hidden = false; });
     }
     initializeJobCenter(user);
+    initializeAssessmentContext(user);
     userPanel.innerHTML = `<strong>${escapeHTML(user.full_name || user.email)}</strong><br><span>${escapeHTML(user.email)}</span><button class="workspace-signout" type="button" data-signout>Sign out</button>`;
     userPanel.querySelector('[data-signout]').addEventListener('click', async () => {
       const button = userPanel.querySelector('[data-signout]');
@@ -405,6 +509,7 @@
         try {
           localStorage.removeItem(`misra-dismissed-jobs:${user.id}`);
           localStorage.removeItem(`misra-job-center-collapsed:${user.id}`);
+          localStorage.removeItem(`misra-current-assessment:${user.id}`);
         } catch (_) {}
         window.location.replace('login.html?v=2');
       } catch (error) {
@@ -414,6 +519,7 @@
       }
     });
   }).catch((error) => {
+    resolveAssessmentReady({ exams: [], selectedId: null });
     if (error.status === 401) return;
     userPanel.innerHTML = '<strong>Access unavailable</strong><br><span>Your account cannot open this instructor workspace.</span><button class="workspace-signout" type="button" data-return-login>Return to sign in</button>';
     userPanel.querySelector('[data-return-login]').addEventListener('click', async () => {
@@ -432,5 +538,5 @@
     apiStatus.lastElementChild.textContent = 'Engine offline';
   });
 
-  window.MisraUI = { icons, escapeHTML, formatDate, badge, emptyState, errorState, getParam, identityState, reveal };
+  window.MisraUI = { icons, escapeHTML, formatDate, badge, emptyState, errorState, getParam, identityState, reveal, assessmentReady, rememberAssessment };
 })();

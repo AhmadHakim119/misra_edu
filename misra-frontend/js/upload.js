@@ -9,6 +9,11 @@
   const pagesInput = document.getElementById('pages-per-student');
   const result = document.getElementById('upload-result');
   const button = document.getElementById('upload-button');
+  const gate = document.getElementById('upload-setup-gate');
+  const readyFields = document.getElementById('upload-ready-fields');
+  const readinessStatus = document.getElementById('upload-readiness');
+  const tips = document.getElementById('upload-tips');
+  const layout = form.closest('.dashboard-grid');
   const acceptedExtensions = ['.pdf', '.png', '.jpg', '.jpeg', '.webp'];
   const pollIntervalMs = 2500;
   const maxPollAttempts = 240;
@@ -18,11 +23,12 @@
   let sending = false;
   let uploaded = false;
   let selectedFiles = [];
+  let readinessRequest = 0;
   const clear = document.getElementById('clear-files');
   const another = document.getElementById('upload-another');
   function syncControls() {
     const locked = sending || uploaded;
-    input.disabled = locked || selectedFiles.length > 0;
+    input.disabled = !ready || locked || selectedFiles.length > 0;
     dropzone.classList.toggle('is-locked', input.disabled);
     if (input.disabled) dropzone.classList.remove('is-dragging');
     dropzone.setAttribute('aria-disabled', String(input.disabled));
@@ -32,23 +38,57 @@
     clear.textContent = selectedFiles.length > 1 ? 'Clear files' : 'Remove file';
     examSelect.disabled = locked;
     pagesInput.disabled = locked;
-    document.querySelectorAll('[data-mode]').forEach(control => { control.disabled = locked || selectedFiles.length > 0; });
+    document.querySelectorAll('[data-mode]').forEach(control => { control.disabled = !ready || locked || selectedFiles.length > 0; });
     button.disabled = !ready || locked;
     button.textContent = uploaded ? 'Upload received' : sending ? (mode === 'batch' ? 'Creating batch…' : 'Uploading paper…') : mode === 'batch' ? 'Upload batch' : 'Upload and start extraction';
     document.getElementById('dropzone-title').textContent = selectedFiles.length ? (selectedFiles.length === 1 ? 'File ready to upload' : 'Files ready to upload') : 'Choose or drop a PDF or image';
     document.getElementById('selection-hint').textContent = selectedFiles.length ? 'Remove or clear this selection to choose different files.' : 'PDF, PNG, JPEG, or WebP. In batch mode, select multiple files.';
   }
+  function renderGate(value, examId) {
+    readyFields.hidden = !value.ready;
+    gate.hidden = Boolean(value.ready);
+    tips.hidden = !value.ready;
+    layout.classList.toggle('is-setup-blocked', !value.ready);
+    if (value.ready) {
+      gate.innerHTML = '';
+      const count = Number(value.question_count);
+      readinessStatus.textContent = Number.isFinite(count) && count > 0
+        ? `${count} question${count === 1 ? '' : 's'} ready. Student papers can now be uploaded.`
+        : 'Assessment ready. Student papers can now be uploaded.';
+      if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) readyFields.animate([{ opacity: .92, transform: 'translateY(5px)' }, { opacity: 1, transform: 'translateY(0)' }], { duration: 220, easing: 'cubic-bezier(.16,1,.3,1)' });
+      return;
+    }
+    const blockers = (value.questions || []).filter((question) => question.errors?.length);
+    const setupHref = `rubric-studio.html?exam_id=${encodeURIComponent(examId)}`;
+    gate.innerHTML = `<div class="upload-gate-heading"><span class="upload-gate-symbol" aria-hidden="true">${MisraUI.icons.rubric}</span><div><h2>Finish assessment setup first</h2><p>Student papers stay separate from the blank exam and answer key. Approve the grading foundations before uploading.</p></div></div>
+      ${blockers.length ? `<ul class="upload-gate-list">${blockers.map((question) => `<li><div><strong>Question ${MisraUI.escapeHTML(question.question_number)}</strong><span>${MisraUI.escapeHTML(question.errors[0])}</span></div><a href="${setupHref}&question_id=${encodeURIComponent(question.question_id)}">Fix question</a></li>`).join('')}</ul>` : '<p class="upload-gate-empty">Add questions and approve their rubrics in Rubric Studio.</p>'}
+      <a class="btn btn-primary" href="${setupHref}">${blockers.length ? 'Open Rubric Studio' : 'Set up questions and rubrics'}</a>`;
+    readinessStatus.textContent = value.message || `${blockers.length || 'Assessment'} setup ${blockers.length === 1 ? 'check' : 'checks'} remaining before upload.`;
+  }
   async function checkReadiness() {
     const examId = examSelect.value;
-    ready = false; button.disabled = true;
+    const request = ++readinessRequest;
+    ready = false; readyFields.hidden = true; gate.hidden = true; tips.hidden = true; layout.classList.add('is-setup-blocked'); button.disabled = true; syncControls();
     document.getElementById('setup-link').href = `rubric-studio.html?exam_id=${encodeURIComponent(examId)}`;
-    if (!examId) return;
+    if (!examId) {
+      tips.hidden = true; layout.classList.add('is-setup-blocked');
+      readinessStatus.textContent = 'Create an assessment before uploading student papers.';
+      gate.hidden = false;
+      gate.innerHTML = '<div class="upload-gate-heading"><div><h2>No assessment selected</h2><p>Create an assessment, add its questions, and approve the rubrics first.</p></div></div><a class="btn btn-primary" href="assessments.html">Create an assessment</a>';
+      return;
+    }
+    readinessStatus.textContent = 'Checking questions and approved rubrics…';
     try {
       const value = await MisraAPI.setupReadiness(examId);
-      if (examSelect.value !== examId) return;
-      ready = value.ready; syncControls();
-      document.getElementById('upload-readiness').textContent = value.message;
-    } catch (_) { document.getElementById('upload-readiness').textContent = 'Could not check rubric readiness. Reload to reconnect before uploading.'; }
+      if (request !== readinessRequest || examSelect.value !== examId) return;
+      ready = Boolean(value.ready); renderGate(value, examId); syncControls();
+    } catch (_) {
+      if (request !== readinessRequest) return;
+      tips.hidden = true; layout.classList.add('is-setup-blocked');
+      gate.hidden = false;
+      gate.innerHTML = '<div class="upload-gate-heading"><div><h2>Setup check unavailable</h2><p>Upload stays closed until MISRA can verify the assessment. Check the connection and try again.</p></div></div><button class="btn btn-secondary" type="button" data-recheck-readiness>Try again</button>';
+      readinessStatus.textContent = 'Could not verify rubric readiness.';
+    }
   }
   function rememberJob(job, examId) {
     uploaded = true;
@@ -151,9 +191,11 @@
 
   async function loadExams() {
     try {
-      const exams = await MisraAPI.exams();
+      const context = await MisraUI.assessmentReady;
+      if (context.error) throw context.error;
+      const exams = context.exams;
       examSelect.innerHTML = exams.length ? exams.map((exam) => `<option value="${exam.id}">${MisraUI.escapeHTML(exam.course_code ? `${exam.course_code} · ${exam.title}` : exam.title)}</option>`).join('') : '<option value="">No assessments found</option>';
-      const requested = MisraUI.getParam('exam_id');
+      const requested = MisraUI.getParam('exam_id') || context.selectedId;
       if (exams.some((exam) => exam.id === requested)) examSelect.value = requested;
       await checkReadiness();
       const jobId = MisraUI.getParam('job_id');
@@ -227,7 +269,11 @@
     if (sending || uploaded) return;
     selectedFiles = []; input.value = ''; updateFiles(); input.focus();
   });
-  examSelect.addEventListener('change', checkReadiness);
+  examSelect.addEventListener('change', () => {
+    selectedFiles = []; input.value = ''; summary.textContent = 'No files selected'; result.innerHTML = '';
+    checkReadiness();
+  });
+  gate.addEventListener('click', (event) => { if (event.target.closest('[data-recheck-readiness]')) checkReadiness(); });
   another.addEventListener('click', () => {
     if (sending) return;
     uploaded = false; selectedFiles = [];

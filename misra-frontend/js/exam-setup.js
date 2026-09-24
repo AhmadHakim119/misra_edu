@@ -11,6 +11,7 @@
   const historyList = document.getElementById('setup-history-list');
   const examSelect = document.getElementById('rubric-exam');
   const studentLink = document.getElementById('upload-link');
+  const nextStep = document.getElementById('rubric-next-step');
   const esc = (value) => MisraUI.escapeHTML(String(value ?? ''));
   let examId = '', generation = 0, selected = null, dirty = false, busy = false;
 
@@ -25,6 +26,7 @@
     const checks = document.getElementById('rubric-setup-checks');
     if (checks) checks.textContent = 'Checking question setup…';
     studentLink.setAttribute('aria-disabled', 'true');
+    nextStep.hidden = true;
     if (!id) return;
     try {
       const value = await MisraAPI.setupReadiness(id);
@@ -32,7 +34,13 @@
       readiness.textContent = value.message;
       if (checks) checks.innerHTML = MisraAssessmentChecks.render(value, id);
       studentLink.setAttribute('aria-disabled', String(!value.ready));
-    } catch (_) { if (id === examId) { readiness.textContent = 'Could not check rubric readiness. Reload to retry.'; if (checks) checks.textContent = readiness.textContent; } }
+      const nextQuestion = (value.questions || []).find((question) => question.errors?.length);
+      const destination = value.ready ? `upload.html?exam_id=${encodeURIComponent(id)}` : nextQuestion ? `rubric-studio.html?exam_id=${encodeURIComponent(id)}&question_id=${encodeURIComponent(nextQuestion.question_id)}` : '#question-list';
+      const action = value.ready ? 'Continue to student uploads' : nextQuestion ? `Open question ${nextQuestion.question_number}` : 'Add a question';
+      nextStep.innerHTML = `<div><strong>${value.ready ? 'Assessment ready for student papers' : `${esc(value.pending_questions?.length || 0)} question${value.pending_questions?.length === 1 ? '' : 's'} still need setup`}</strong><p>${value.ready ? 'Every question passed the setup checks. The blank exam and key stay separate from student submissions.' : 'Review the remaining question checks, then approve the grading foundations.'}</p></div><a class="btn ${value.ready ? 'btn-primary' : 'btn-secondary'}" href="${destination}">${esc(action)}</a>`;
+      nextStep.hidden = false;
+      window.dispatchEvent(new CustomEvent('misra:assessment-readiness', { detail: { examId: id, ready: value.ready, questionCount: value.question_count, approvedCount: value.approved_count } }));
+    } catch (_) { if (id === examId) { readiness.textContent = 'Could not check rubric readiness. Reload to retry.'; if (checks) checks.textContent = readiness.textContent; nextStep.hidden = true; } }
   }
   studentLink.addEventListener('click', (event) => {
     if (studentLink.getAttribute('aria-disabled') === 'true') { event.preventDefault(); readiness.scrollIntoView({ block: 'center' }); }

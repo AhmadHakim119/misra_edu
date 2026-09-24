@@ -89,3 +89,30 @@ test('review queue exposes source evidence before decisions and keeps approval r
   expect(resolution.review_reason_note).toBeNull();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
 });
+
+test('review queue moves to the next answer without refetching and protects unsaved edits', async ({ page }) => {
+  const answers = [1, 2].map((number) => ({ id: `answer-${number}`, submission_id: `paper-${number}`, question_id: `q${number}`,
+    score: 1, max_score: 2, feedback: `Synthetic feedback ${number}`, review_status: 'pending' }));
+  let queueRequests = 0;
+  let saved = 0;
+  await page.route('**/api/**', async (route) => {
+    const pathname = new URL(route.request().url()).pathname.replace('/api', '');
+    if (pathname.endsWith('/resolve-review')) { saved += 1; return route.fulfill({ json: { ok: true } }); }
+    let body = commonBody(pathname);
+    if (pathname === '/exams') body = [{ id: 'exam', title: 'Synthetic assessment' }];
+    if (pathname === '/review-queue') { queueRequests += 1; body = answers; }
+    if (pathname === '/exams/exam/questions') body = [1, 2].map((number) => ({ id: `q${number}`, question_number: String(number), max_score: 2 }));
+    await route.fulfill({ json: body || {} });
+  });
+  await page.goto('/pages/reviews.html?exam_id=exam');
+  await expect(page.getByText('Answer 1 of 2')).toBeVisible();
+  await page.locator('#review-notes').fill('Unsaved note');
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.locator('#review-notes')).toHaveValue('Unsaved note');
+  await page.getByRole('button', { name: 'Approve AI score' }).click();
+  await expect(page.getByText('Answer 1 of 1')).toBeVisible();
+  await expect(page.locator('#review-detail')).toContainText('Synthetic feedback 2');
+  expect(saved).toBe(1);
+  expect(queueRequests).toBe(1);
+});
