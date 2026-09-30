@@ -122,6 +122,7 @@
     results: (submissionId) => request(`/results/${encodeURIComponent(submissionId)}`),
     gradingRuns: (answerId) => request(`/answers/${encodeURIComponent(answerId)}/grading-runs`),
     extractionReview: (submissionId) => request(`/submissions/${encodeURIComponent(submissionId)}/extraction-review`),
+    reprocessExtraction: (submissionId) => request(`/submissions/${encodeURIComponent(submissionId)}/reprocess-extraction`, { method: 'POST', body: '{}' }),
     updateSubmissionMetadata: (submissionId, body) => request(`/submissions/${encodeURIComponent(submissionId)}/metadata`, { method: 'PATCH', body: JSON.stringify(body) }),
     resolveUnmatchedSegment: (submissionId, index, body) => request(`/submissions/${encodeURIComponent(submissionId)}/unmatched-segments/${index}`, { method: 'PUT', body: JSON.stringify(body) }),
     bulkResolveSegments: (submissionId, body) => request(`/submissions/${encodeURIComponent(submissionId)}/segments/bulk-resolve`, { method: 'PUT', body: JSON.stringify(body) }),

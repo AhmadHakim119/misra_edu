@@ -94,6 +94,8 @@ body.workspace-body {
   -webkit-backdrop-filter: blur(12px) saturate(130%);
 }
 
+.workspace-nav-link[hidden] { display: none; }
+
 .workspace-topbar-title { min-width: 0; }
 .workspace-topbar-title strong { display: block; font-size: 14.5px; }
 .workspace-topbar-title span { display: block; color: var(--ink-soft); font-size: 12px; }
@@ -818,6 +820,14 @@ html[data-theme="dark"] .workspace-job-actions button { background: #0D120F; bor
 .readiness-metrics dd { margin-top: 2px; font-size: 18px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .missing-strip { grid-column: 1 / -1; padding-top: 14px; display: flex; align-items: center; flex-wrap: wrap; gap: 7px; border-top: 1px solid rgba(118,92,46,.18); color: #765c2e; font-size: 12.5px; }
 .missing-strip span { padding: 3px 9px; border-radius: var(--r-pill); background: var(--surface); font-family: var(--font-mono); font-size: 11.5px; }
+.reprocess-action { grid-column: 1 / -1; display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px; }
+.reprocess-action small { max-width: 58ch; color: var(--ink-soft); font-size: 12px; line-height: 1.45; }
+.mapping-issue-list { grid-column: 1 / -1; min-width: 0; display: grid; gap: 8px; border-top: 1px solid var(--line); padding-top: 14px; }
+.mapping-issue-list > p { margin: 0 0 4px; color: var(--ink-soft); font-size: 13px; }
+.mapping-issue-link { width: 100%; min-width: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); text-align: start; cursor: pointer; display: grid; gap: 4px; }
+.mapping-issue-link:hover, .mapping-issue-link:focus-visible { border-color: var(--celadon-600); outline-offset: 2px; }
+.mapping-issue-link span, .mapping-issue-link small { overflow-wrap: anywhere; }
+.mapping-issue-link small { color: var(--ink-soft); line-height: 1.4; }
 
 .extraction-layout { display: grid; grid-template-columns: minmax(310px, .72fr) minmax(560px, 1.28fr); gap: 20px; align-items: start; }
 .source-viewer { position: sticky; top: 88px; overflow: hidden; }
@@ -852,6 +862,10 @@ html[data-theme="dark"] .workspace-job-actions button { background: #0D120F; bor
 .page-stepper button:disabled { opacity: .35; cursor: not-allowed; }
 .paper-frame { min-height: 510px; max-height: calc(100dvh - 210px); padding: 16px; overflow: auto; display: grid; place-items: start center; background: #e9e8e2; }
 .paper-frame img { width: 100%; height: auto; background: white; box-shadow: 0 8px 24px rgba(46,44,51,.14); }
+.paper-image-wrap { position: relative; width: 100%; }
+.paper-image-wrap img { display: block; }
+.paper-answer-highlight { position: absolute; border: 3px solid #3d7551; border-radius: 5px; background: rgba(128, 193, 147, .16); box-shadow: 0 2px 12px rgba(25, 58, 38, .24); pointer-events: none; }
+.paper-answer-highlight[hidden] { display: none; }
 
 .extraction-list-panel { overflow: hidden; }
 .extraction-list-head { padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid var(--line); }
@@ -958,6 +972,11 @@ html[data-theme="dark"] .workspace-job-actions button { background: #0D120F; bor
 .unmatched-actions .select { width: 100%; min-width: 132px; }
 .unmatched-actions .btn { align-self: end; }
 .segment-organizer { margin-bottom: 18px; overflow: clip; }
+.segment-organizer > summary { list-style: none; cursor: pointer; }
+.segment-organizer > summary::-webkit-details-marker { display: none; }
+.segment-organizer > summary:hover { background: var(--surface-sunken); }
+.segment-organizer > summary:focus-visible, .excluded-segments > summary:focus-visible { outline: 2px solid var(--celadon-700); outline-offset: -2px; }
+.segment-organizer-body { border-top: 1px solid var(--line); }
 .segment-organizer-head {
   padding: 20px 22px 16px;
   display: flex;
@@ -1029,6 +1048,10 @@ html[data-theme="dark"] .workspace-job-actions button { background: #0D120F; bor
   -webkit-line-clamp: 2;
 }
 .segment-choice.is-unmatched { background: linear-gradient(90deg, rgba(248, 241, 227, .58), transparent 55%); }
+.excluded-segments { padding: 14px 22px; border-top: 1px solid var(--line); }
+.excluded-segments > summary { cursor: pointer; font-size: 12.5px; font-weight: 650; }
+.excluded-segments > p { margin-top: 8px; }
+.excluded-segments .segment-choice-list { padding-inline: 0; }
 .mapping-guide { margin: 0 24px 12px; padding: 13px 15px; border-radius: 12px; background: var(--celadon-50); color: var(--slate-700); }
 .mapping-guide strong { display: block; margin-bottom: 3px; color: var(--ink); font-size: 13px; }
 .mapping-guide p { max-width: 72ch; font-size: 12.5px; line-height: 1.5; }

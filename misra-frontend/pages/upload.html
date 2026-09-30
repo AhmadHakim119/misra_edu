@@ -6,11 +6,13 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=25">
+  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=26">
+  <link rel="stylesheet" href="../css/paper-workspace.css?v=1">
 </head>
 <body class="workspace-body" data-page="upload">
   <main class="workspace-content" id="workspace-content">
-    <header class="page-heading"><div><h1>Upload student answers</h1><p>Upload completed student papers for extraction and grading. Setting up a blank exam or answer key? Start in Rubric Studio.</p></div><a class="btn btn-secondary" id="setup-link" href="rubric-studio.html">Set up exam & rubrics</a></header>
+    <header class="page-heading"><div><h1>Upload student answers</h1><p>Upload completed student papers for extraction and grading. Setting up a blank exam or answer key? Start in Rubric Studio.</p></div><div class="job-actions"><a class="btn btn-secondary" id="upload-papers-link" href="submissions.html">View papers</a><a class="btn btn-secondary" id="setup-link" href="rubric-studio.html">Set up exam & rubrics</a></div></header>
+    <div id="recent-upload" class="upload-recent" hidden></div>
     <div class="dashboard-grid">
       <section class="workspace-card card-pad">
         <form id="upload-form" novalidate>
@@ -23,6 +25,7 @@
             <div><svg aria-hidden="true" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 16V4m0 0L7 9m5-5 5 5"/><path d="M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg><strong id="dropzone-title">Choose or drop a PDF or image</strong><p id="selection-hint">PDF, PNG, JPEG, or WebP. In batch mode, select multiple files.</p><div class="file-summary" id="file-summary" role="status">No files selected</div></div>
             <input class="visually-hidden" id="paper-files" name="files" type="file" accept="application/pdf,image/png,image/jpeg,image/webp" aria-labelledby="dropzone-title" aria-describedby="selection-hint file-summary upload-result">
           </label>
+          <ul class="upload-file-list" id="selected-file-list" aria-label="Selected papers" hidden></ul>
           <button class="btn btn-secondary upload-clear" id="clear-files" type="button" hidden>Remove file</button>
           <div class="field" id="pages-field" hidden style="margin-top:16px"><label for="pages-per-student">Pages per student (optional)</label><input class="input" id="pages-per-student" type="number" min="1" step="1" placeholder="Use only for one combined PDF"><span class="field-hint">Leave blank when each file is one student.</span></div>
           <button class="btn btn-primary btn-block" id="upload-button" type="submit" style="margin-top:18px" disabled>Upload and start extraction</button>
@@ -41,6 +44,6 @@
       </aside>
     </div>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=17"></script><script src="../js/upload.js?v=12"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=18"></script><script src="../js/upload.js?v=13"></script>
 </body>
 </html>

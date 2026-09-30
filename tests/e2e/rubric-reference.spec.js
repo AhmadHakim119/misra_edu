@@ -25,6 +25,7 @@ async function fixture(page, { approved = false, failSave = false } = {}) {
     return route.fulfill({ json: body });
   });
   await page.goto('/pages/rubric-studio.html?exam_id=e');
+  await page.locator('[data-rubric-panel="legacy"] > summary').click();
   await expect(page.locator('#rubric-reference')).toBeVisible();
   return writes;
 }
@@ -37,8 +38,24 @@ test('reference edits persist with draft and survive reload', async ({ page }, t
   await expect(page.getByRole('button', { name: 'Save draft', exact: true })).toBeEnabled();
   expect(writes[0].rubric).toMatchObject({ reference_context: 'Instructor reference: accept any valid equivalent method.', acceptable_answers: ['Method A', 'Method B'] });
   await page.reload();
+  await page.locator('[data-rubric-panel="legacy"] > summary').click();
   await expect(page.locator('#rubric-reference')).toHaveValue('Instructor reference: accept any valid equivalent method.');
   await page.locator('.rubric-reference').screenshot({ path: testInfo.outputPath('rubric-reference.png'), animations: 'disabled' });
+});
+
+test('rubric sections fold independently and approval stays accessible', async ({ page }) => {
+  await fixture(page);
+  await expect(page.locator('[data-rubric-panel="criteria"]')).toHaveAttribute('open', '');
+  await expect(page.locator('[data-rubric-panel="policy"]')).not.toHaveAttribute('open', '');
+  await page.locator('[data-rubric-panel="legacy"] > summary').click();
+  await page.locator('[data-rubric-panel="policy"] > summary').click();
+  await expect(page.locator('#rubric-reference')).toBeHidden();
+  await expect(page.locator('[data-policy="grading_approach"]')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Approve', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+  await expect(page.locator('[data-rubric-panel="policy"]')).toHaveAttribute('open', '');
+  await expect(page.locator('[data-rubric-panel="legacy"]')).not.toHaveAttribute('open', '');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
 });
 
 test('failed reference saves preserve writing; navigation requires consent', async ({ page }) => {

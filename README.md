@@ -292,6 +292,16 @@ requires coordination with every clone and remote.
 Seed scripts are development fixtures only. A normal assessment should not
 require a seed script.
 
+OCR mapping now reconciles the whole scanned paper before saving answers. It uses
+configured question labels, distinctive answer terms, and page continuity; cover
+marks remain outside student answers. Any unresolved region is shown with its page
+and available image highlight. For an additional Gemini visual check of unresolved
+regions, set `OCR_MAPPING_SECOND_PASS_ENABLED=true` in `misra_backend/.env` after
+quota is available and restart the worker. The check makes at most one extra
+request per paper and does not overwrite primary OCR when it fails. Existing
+ungraded papers need **Re-run automatic extraction** to use the new mapper;
+graded/reviewed papers are deliberately not rewritten.
+
 Exam/key uploads use separate `exam_setup` processing jobs and never create student
 submissions or answers. The worker must be restarted after upgrading. Setup drafts
 can be reopened from Rubric Studio after leaving the page; unsaved edits in the
@@ -352,6 +362,26 @@ suggestions are never applied automatically.
 
 Long-document semantic retrieval remains a future phase. No vector database is
 required for the current exact question-linked references.
+
+## Free-model research experiment
+
+An isolated OpenRouter smoke test uses invented SQL, mathematics, and ethics
+answers to check whether explicit free model endpoints return MISRA-compatible
+criterion scores and evidence references. It does not read uploaded papers,
+connect to MariaDB, or change official grades. Add `OPENROUTER_API_KEY` to the
+ignored `misra_backend/.env`, then run from the repository root:
+
+```powershell
+python .\misra_backend\scripts\experiment_free_models.py `
+  --model nvidia/nemotron-3-super-120b-a12b:free
+```
+
+Use `--model` more than once to compare available free endpoints. The printed
+illustrative error is based on three invented examples; it is not an academic
+accuracy estimate. Real evaluation requires instructor-labelled, de-identified
+answers, provider data-handling approval, and a separate held-out test set.
+The experiment deliberately does not fall back to a paid model or publish a
+grade when an endpoint is unavailable.
 
 The pinned Fuse.js browser bundle and its license are committed locally; runtime
 search does not contact a CDN or send assessment text to a search service. To

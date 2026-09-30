@@ -82,6 +82,16 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
     )
     answers_by_question = {answer.question_id: answer for answer in answers}
     answer_ids = [answer.id for answer in answers]
+    has_history = bool(answer_ids) and bool(
+        db.query(GradingRun).filter(GradingRun.answer_id.in_(answer_ids)).first()
+        or db.query(ReviewLabel).filter(ReviewLabel.answer_id.in_(answer_ids)).first()
+    )
+    can_reprocess = (
+        submission.status in {"extracted", "error"}
+        and not has_history
+        and not any(answer.score is not None or answer.teacher_override_score is not None
+                    for answer in answers)
+    )
     sources = []
     if answer_ids:
         sources = (
@@ -172,7 +182,31 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
                 }
             )
 
-    unmatched_count = len(submission.unmatched_segments or [])
+    all_unmatched = submission.unmatched_segments or []
+    active_unmatched = [
+        {**item, "unmatched_index": index}
+        for index, item in enumerate(all_unmatched)
+        if not item.get("excluded_reason")
+    ]
+    excluded_segments = [
+        {**item, "unmatched_index": index}
+        for index, item in enumerate(all_unmatched)
+        if item.get("excluded_reason")
+    ]
+    unmatched_count = len(active_unmatched)
+    mapping_issues = [
+        {
+            "unmatched_index": item["unmatched_index"],
+            "page_index": item.get("page_index"),
+            "page_number": item.get("page_number"),
+            "segment_index": item.get("segment_index"),
+            "text": item.get("text"),
+            "bounding_box": item.get("bounding_box"),
+            "candidate_questions": item.get("candidate_questions") or [],
+            "reason": item.get("mapping_reason") or "Question location was not confirmed.",
+        }
+        for item in active_unmatched
+    ]
     mapped_answer_count = len(questions) - len(missing_question_numbers)
     mapping_complete = bool(questions) and mapped_answer_count == len(questions)
     blocking_reasons = []
@@ -221,11 +255,14 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
             "unmatched_segment_count": unmatched_count,
             "mapping_complete": mapping_complete,
             "bulk_grading_allowed": bulk_grading_allowed,
+            "can_reprocess": can_reprocess,
             "blocking_reasons": blocking_reasons,
         },
         "suspicious_answers": suspicious_answers,
         "questions": rows,
-        "unmatched_segments": submission.unmatched_segments or [],
+        "unmatched_segments": active_unmatched,
+        "mapping_issues": mapping_issues,
+        "excluded_segments": excluded_segments,
     }
 
 
@@ -469,13 +506,25 @@ def bulk_resolve_segments(
             origins[origin.id] = origin
 
     if action == "ignore":
-        if unique_source_ids:
-            raise ValueError("Mapped fragments must be moved, not marked as noise")
-        submission.unmatched_segments = [
-            segment
-            for index, segment in enumerate(segments)
-            if index not in set(unique_unmatched_indices)
-        ] or None
+        for index in unique_unmatched_indices:
+            segments[index] = {**segments[index], "excluded_reason": "instructor_excluded"}
+        for source in selected_sources:
+            segments.append({
+                **dict(source.ocr_segment or {}),
+                "text": source.extracted_text,
+                "page_index": source.page_index,
+                "page_number": source.page_index + 1,
+                "segment_index": source.segment_index,
+                "question_number": source.question_number,
+                "has_math": source.has_math,
+                "former_source_id": source.id,
+                "excluded_reason": "instructor_excluded",
+            })
+            db.delete(source)
+        submission.unmatched_segments = segments or None
+        db.flush()
+        for origin in origins.values():
+            _rebuild_answer_from_sources(origin, db)
         db.commit()
         return build_extraction_review(submission.id, db)
 

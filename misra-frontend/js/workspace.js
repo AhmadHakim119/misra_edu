@@ -260,9 +260,9 @@
       ['Export', href('grades.html'), 'Check eligibility'],
     ];
     flow.innerHTML = steps.map(([label, url, detail], index) => `<a href="${url}" ${index === 1 && !assessmentContext.ready ? 'data-locked="true" title="Finish assessment setup before uploading"' : ''}><strong>${escapeHTML(label)}</strong><span>${escapeHTML(detail)}</span></a>`).join('');
-    const nextPage = !assessmentContext.ready ? 'rubric-studio.html' : !papers ? 'upload.html' : reviews ? 'reviews.html' : 'grades.html';
+    const nextPage = !assessmentContext.ready ? 'rubric-studio.html' : !papers ? 'upload.html' : reviews ? 'reviews.html' : 'submissions.html';
     next.href = href(nextPage);
-    next.firstChild.textContent = !assessmentContext.ready ? 'Finish setup ' : !papers ? 'Upload papers ' : reviews ? 'Review grades ' : 'Open grades ';
+    next.firstChild.textContent = !assessmentContext.ready ? 'Finish setup ' : !papers ? 'Upload papers ' : reviews ? 'Review grades ' : 'Open papers ';
   }
 
   async function initializeAssessmentContext(user) {
@@ -330,7 +330,7 @@
 
     function destination(job) {
       if (job.job_type === 'exam_setup' && job.exam_id) return `rubric-studio.html?exam_id=${encodeURIComponent(job.exam_id)}`;
-      if (job.job_type === 'ocr_batch' && job.exam_id) return `submissions.html?exam_id=${encodeURIComponent(job.exam_id)}`;
+      if (job.job_type === 'ocr_batch' && job.exam_id) return `submissions.html?exam_id=${encodeURIComponent(job.exam_id)}${job.batch_id ? `&batch_id=${encodeURIComponent(job.batch_id)}` : ''}`;
       if (job.job_type === 'ocr_submission' && job.submission_id) return `submission.html?id=${encodeURIComponent(job.submission_id)}`;
       if (job.job_type === 'grade_submission' && job.submission_id) return `grade-results.html?id=${encodeURIComponent(job.submission_id)}`;
       return job.exam_id ? `submissions.html?exam_id=${encodeURIComponent(job.exam_id)}` : 'admin-operations.html';

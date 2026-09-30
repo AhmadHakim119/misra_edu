@@ -6,7 +6,7 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=25">
+  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=27">
 </head>
 <body class="workspace-body" data-page="submissions">
   <main class="workspace-content" id="workspace-content">
@@ -37,18 +37,18 @@
         <div class="source-viewer-head"><div><h2 class="section-title">Original paper</h2><p class="section-copy" id="page-label">Page 1</p></div><div class="page-stepper"><button type="button" id="previous-page" aria-label="Previous page">←</button><button type="button" id="next-page" aria-label="Next page">→</button></div></div>
         <div class="page-recovery-toolbar" id="page-recovery-toolbar" hidden><div><strong>Missing an answer?</strong><span>Scan this page again for handwriting and selected choices.</span></div><button class="btn btn-secondary" id="reextract-page" type="button" disabled>Re-extract page</button></div>
         <div class="page-recovery-panel" id="page-recovery-panel" hidden aria-live="polite"></div>
-        <div class="paper-frame"><img id="page-image" src="../assets/logo.png" alt="Original submitted paper page"></div>
+        <div class="paper-frame"><div class="paper-image-wrap"><img id="page-image" src="../assets/logo.png" alt="Original submitted paper page"><span class="paper-answer-highlight" id="page-highlight" hidden aria-hidden="true"></span></div></div>
       </aside>
       <section class="workspace-card extraction-list-panel">
         <div class="extraction-list-head">
           <div><h2 class="section-title">Question mapping</h2><p class="section-copy" id="mapping-copy">Checking expected answers and source segments…</p></div>
           <div class="segmented" aria-label="Filter questions"><button type="button" aria-pressed="true" data-filter="all">All</button><button type="button" aria-pressed="false" data-filter="issues">Issues</button><button type="button" aria-pressed="false" data-filter="missing">Missing</button></div>
         </div>
-        <div class="mapping-guide"><strong>Question summary</strong><p>Use <b>Organize OCR by page</b> above to correct assignments in batches. These rows show the combined answer that will be sent for grading.</p></div>
+        <div class="mapping-guide"><strong>Answers and their locations</strong><p>Open a question to see its extracted answer. “Show on page” locates the original handwriting. Manual OCR details are available above only when needed.</p></div>
         <div id="question-mappings" aria-live="polite"><div class="loading-list card-pad"><div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
       </section>
     </div>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=17"></script><script src="../js/submission.js?v=14"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=22"></script><script src="../js/workspace.js?v=18"></script><script src="../js/submission.js?v=17"></script>
 </body>
 </html>

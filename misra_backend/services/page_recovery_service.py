@@ -159,7 +159,6 @@ def _sign_preview(
 ) -> str:
     signing_key = (
         os.getenv("RECOVERY_SIGNING_KEY")
-        or os.getenv("GOOGLE_API_KEY")
         or os.getenv("GEMINI_API_KEY")
     )
     if not signing_key:

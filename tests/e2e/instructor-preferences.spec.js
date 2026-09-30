@@ -136,6 +136,7 @@ test('Rubric Studio applies an approved profile only to an editable draft after 
   });
   await page.goto('/pages/rubric-studio.html?exam_id=e&question_id=q');
   await page.getByText('Ask AI for a granular draft', { exact: true }).click();
+  await page.locator('[data-rubric-panel="policy"] > summary').click();
   await expect(page.getByLabel('Additional context for this draft')).toBeVisible();
   await expect(page.locator('#suggestion-context-help')).toContainText('not an approved answer key');
   for (const id of ['criterion-0-title', 'criterion-0-points', 'criterion-0-description', 'criterion-0-scoring', 'criterion-0-evidence', 'suggestion-grading-approach', 'policy-grading-approach']) {

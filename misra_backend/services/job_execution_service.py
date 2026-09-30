@@ -111,7 +111,8 @@ def execute_processing_job(processing_job_id: str) -> None:
             from services.exam_setup_service import extract_setup_documents
             extract_setup_documents(job, db, progress)
         elif job.job_type == "ocr_submission":
-            process_submission(job.submission_id, db, progress_callback=progress)
+            options = {"reprocess": True} if (job.payload or {}).get("reprocess") else {}
+            process_submission(job.submission_id, db, progress_callback=progress, **options)
         elif job.job_type == "ocr_batch":
             payload = job.payload or {}
             process_batch(

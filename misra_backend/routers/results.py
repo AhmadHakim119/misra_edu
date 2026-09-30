@@ -43,7 +43,8 @@ from services.page_recovery_service import (
 )
 from services.auth_dependencies import require_instructor
 from services.audit_service import record_audit_event
-from services.job_queue_service import job_to_dict
+from services.job_queue_service import create_processing_job, job_to_dict
+from services.ocr_service import assert_reprocessing_allowed
 
 router = APIRouter(prefix="/api", tags=["results"])
 
@@ -66,6 +67,44 @@ def _owned_source(source_id: str, db: Session, user: User) -> AnswerSource | Non
         )
         .first()
     )
+
+
+@router.post("/submissions/{submission_id}/reprocess-extraction", status_code=202)
+def reprocess_extraction(
+    submission_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    submission = _owned_submission(submission_id, db, user)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    active_grading = db.query(ProcessingJob).filter(
+        ProcessingJob.submission_id == submission.id,
+        ProcessingJob.institution_id == user.institution_id,
+        ProcessingJob.job_type == "grade_submission",
+        ProcessingJob.status.in_(("queued", "processing", "retrying")),
+    ).first()
+    if active_grading:
+        raise HTTPException(status_code=409, detail="Wait for the active grading job to finish first")
+    try:
+        assert_reprocessing_allowed(submission, db)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if not _stored_submission_path(submission.original_file_path).is_file():
+        raise HTTPException(status_code=404, detail="Original paper is no longer available")
+    job, created = create_processing_job(
+        db, institution_id=user.institution_id, requested_by=user.id,
+        job_type="ocr_submission", submission_id=submission.id,
+        progress_total=submission.page_count, payload={"reprocess": True},
+    )
+    if created:
+        record_audit_event(
+            db, institution_id=user.institution_id, actor_id=user.id,
+            action="extraction_reprocess_requested", entity_type="submission",
+            entity_id=submission.id, details={"job_id": job.id},
+        )
+        db.commit()
+    return {"job": job_to_dict(job), "created": created}
 
 @router.get("/results/{submission_id}")
 async def get_results(
@@ -108,29 +147,34 @@ def list_submissions(
 
     submissions = query.order_by(Submission.uploaded_at.desc()).all()
     latest_ocr_jobs = {}
+    latest_grading_jobs = {}
     submission_ids = [submission.id for submission in submissions]
     if submission_ids:
         jobs = (
             db.query(ProcessingJob)
             .filter(
                 ProcessingJob.submission_id.in_(submission_ids),
-                ProcessingJob.job_type == "ocr_submission",
+                ProcessingJob.institution_id == user.institution_id,
+                ProcessingJob.job_type.in_(("ocr_submission", "grade_submission")),
             )
-            .order_by(ProcessingJob.created_at.desc())
+            .order_by(ProcessingJob.created_at.desc(), ProcessingJob.id.desc())
             .all()
         )
         for job in jobs:
-            latest_ocr_jobs.setdefault(job.submission_id, job)
+            target = latest_ocr_jobs if job.job_type == "ocr_submission" else latest_grading_jobs
+            target.setdefault(job.submission_id, job)
 
     items = []
     for submission in submissions:
         report = build_extraction_review(submission.id, db)
         latest_job = latest_ocr_jobs.get(submission.id)
+        grading_job = latest_grading_jobs.get(submission.id)
         items.append(
             {
                 **report["submission"],
                 "readiness": report["readiness"],
                 "latest_ocr_job": job_to_dict(latest_job) if latest_job else None,
+                "latest_grading_job": job_to_dict(grading_job) if grading_job else None,
             }
         )
     return items

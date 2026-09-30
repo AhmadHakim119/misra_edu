@@ -12,6 +12,11 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY environment variable is not set.")
 
+# The Google SDK otherwise prefers GOOGLE_API_KEY whenever both variables are
+# present in the parent shell. MISRA intentionally has one Gemini credential
+# source so billing, quotas, and key rotation remain unambiguous.
+os.environ.pop("GOOGLE_API_KEY", None)
+
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def _is_transient_error(retry_state):

@@ -5,6 +5,8 @@
   const input = document.getElementById('paper-files');
   const dropzone = document.getElementById('dropzone');
   const summary = document.getElementById('file-summary');
+  const fileList = document.getElementById('selected-file-list');
+  const recent = document.getElementById('recent-upload');
   const pagesField = document.getElementById('pages-field');
   const pagesInput = document.getElementById('pages-per-student');
   const result = document.getElementById('upload-result');
@@ -30,6 +32,7 @@
     const locked = sending || uploaded;
     input.disabled = !ready || locked || selectedFiles.length > 0;
     dropzone.classList.toggle('is-locked', input.disabled);
+    dropzone.classList.toggle('has-files', selectedFiles.length > 0);
     if (input.disabled) dropzone.classList.remove('is-dragging');
     dropzone.setAttribute('aria-disabled', String(input.disabled));
     form.setAttribute('aria-busy', String(sending));
@@ -37,7 +40,11 @@
     clear.disabled = locked;
     clear.textContent = selectedFiles.length > 1 ? 'Clear files' : 'Remove file';
     examSelect.disabled = locked;
-    pagesInput.disabled = locked;
+    const canSplit = mode === 'batch' && (selectedFiles.length === 0 || (selectedFiles.length === 1 && selectedFiles[0].name.toLowerCase().endsWith('.pdf')));
+    pagesField.hidden = !canSplit;
+    pagesInput.disabled = locked || !canSplit;
+    if (!canSplit) pagesInput.value = '';
+    fileList.querySelectorAll('button').forEach(control => { control.disabled = locked; });
     document.querySelectorAll('[data-mode]').forEach(control => { control.disabled = !ready || locked || selectedFiles.length > 0; });
     button.disabled = !ready || locked;
     button.textContent = uploaded ? 'Upload received' : sending ? (mode === 'batch' ? 'Creating batch…' : 'Uploading paper…') : mode === 'batch' ? 'Upload batch' : 'Upload and start extraction';
@@ -70,6 +77,8 @@
     const request = ++readinessRequest;
     ready = false; readyFields.hidden = true; gate.hidden = true; tips.hidden = true; layout.classList.add('is-setup-blocked'); button.disabled = true; syncControls();
     document.getElementById('setup-link').href = `rubric-studio.html?exam_id=${encodeURIComponent(examId)}`;
+    document.getElementById('upload-papers-link').href = `submissions.html${examId ? '?exam_id=' + encodeURIComponent(examId) : ''}`;
+    loadRecent(examId);
     if (!examId) {
       tips.hidden = true; layout.classList.add('is-setup-blocked');
       readinessStatus.textContent = 'Create an assessment before uploading student papers.';
@@ -92,6 +101,7 @@
   }
   function rememberJob(job, examId) {
     uploaded = true;
+    recent.hidden = true;
     syncControls();
     window.dispatchEvent(new CustomEvent('misra:job-started', { detail: { jobId: job.id } }));
     history.replaceState(null, '', `?exam_id=${encodeURIComponent(examId)}&job_id=${encodeURIComponent(job.id)}`);
@@ -106,6 +116,24 @@
     return `submission.html?id=${encodeURIComponent(submissionId)}`;
   }
 
+  function batchLink(job) {
+    return `submissions.html?exam_id=${encodeURIComponent(examSelect.value)}${job.batch_id ? '&batch_id=' + encodeURIComponent(job.batch_id) : ''}`;
+  }
+
+  async function loadRecent(examId) {
+    recent.hidden = true;
+    if (!examId || uploaded || MisraUI.getParam('job_id')) return;
+    try {
+      const response = await MisraAPI.workspaceJobs();
+      if (examSelect.value !== examId || uploaded || MisraUI.getParam('job_id')) return;
+      const job = (response.items || []).find(item => item.exam_id === examId && ['ocr_submission', 'ocr_batch'].includes(item.job_type));
+      if (!job) return;
+      const label = { queued: 'Queued', processing: 'Processing', retrying: 'Retrying', completed: 'Finished — review results', failed: 'Needs attention' }[job.status] || 'View status';
+      recent.innerHTML = `<div><strong>Your latest upload</strong><span>${job.job_type === 'ocr_batch' ? 'Batch' : 'Student paper'} · ${MisraUI.escapeHTML(label)}</span></div><a class="btn btn-secondary" href="upload.html?exam_id=${encodeURIComponent(examId)}&job_id=${encodeURIComponent(job.id)}">View upload progress</a>`;
+      recent.hidden = false;
+    } catch (_) { /* The shared background-activity panel remains available. */ }
+  }
+
   function renderJobProgress(job, context) {
     const current = Number(job.progress_current || 0);
     const total = Number(job.progress_total || 0);
@@ -115,6 +143,7 @@
       <div class="upload-status-line"><span class="upload-status-pulse" aria-hidden="true"></span><strong>${statusLabel}</strong><span class="job-progress-count">${total ? `${current} / ${total}` : 'Queued'}</span></div>
       <div class="job-progress-track" aria-label="Extraction progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${percent}"><span style="width:${percent}%"></span></div>
       <p class="section-copy">${MisraUI.escapeHTML(job.progress_message || 'Processing continues in the background. You may safely leave this page.')}</p>
+      <p class="field-hint">You can switch pages. Reopen this job from background activity or Your latest upload.</p>
       ${context.submissionId ? `<a class="btn btn-secondary" href="${submissionLink(context.submissionId)}">Open extraction result</a>` : `<a class="btn btn-secondary" href="${context.destination}">View batch submissions</a>`}
     </div>`;
   }
@@ -122,7 +151,7 @@
   function renderExtractionComplete(report) {
     const readiness = report.readiness;
     const mapped = `${readiness.mapped_answer_count}/${readiness.expected_question_count}`;
-    const needsAttention = !readiness.mapping_complete;
+    const needsAttention = !(readiness.bulk_grading_allowed ?? readiness.mapping_complete);
     result.innerHTML = `<div class="workspace-card card-pad upload-status-card is-complete" role="status">
       <strong>${needsAttention ? 'Extraction ready for review' : 'Extraction complete'}</strong>
       <p class="section-copy">${mapped} expected answers mapped. Review the source pages before grading.</p>
@@ -155,8 +184,9 @@
       window.showToast(`${failed} papers need extraction attention.`, 'warning');
       return;
     }
-    result.innerHTML = `<div class="workspace-card card-pad upload-status-card is-complete"><strong>Batch extraction complete</strong><p class="section-copy">${completed || total} submissions processed. Open the batch to review mappings before grading.</p><a class="btn btn-secondary" href="${context.destination}">View submissions</a></div>`;
-    window.showToast('Batch extraction complete.', 'success');
+    const settled = total > 0 && completed === total;
+    result.innerHTML = `<div class="workspace-card card-pad upload-status-card ${settled ? 'is-complete' : ''}" role="status"><strong>${settled ? 'Batch extraction complete' : 'Batch needs a status check'}</strong><p class="section-copy">${completed} of ${total} papers recorded as extracted. ${settled ? 'Review mappings before grading.' : 'Open the batch to check the remaining papers; do not upload them again.'}</p><a class="btn btn-secondary" href="${context.destination}">View submissions</a></div>`;
+    window.showToast(settled ? 'Batch extraction complete.' : 'Check the remaining batch papers.', settled ? 'success' : 'warning');
   }
 
   async function pollJob(jobId, context, pollId) {
@@ -185,7 +215,7 @@
       await wait(pollIntervalMs);
     }
     if (pollId === activePoll) {
-      result.innerHTML = `<div class="workspace-card card-pad upload-status-card"><strong>Extraction is still running</strong><p class="section-copy">You can safely leave this page and return later.</p>${context.submissionId ? `<a class="btn btn-secondary" href="${submissionLink(context.submissionId)}">Open extraction result</a>` : `<a class="btn btn-secondary" href="${context.destination}">View submissions</a>`}</div>`;
+      result.innerHTML = `<div class="workspace-card card-pad upload-status-card"><strong>Live updates paused</strong><p class="section-copy">The job may still be running. Refresh this page to check its latest status; do not upload the same paper again.</p>${context.submissionId ? `<a class="btn btn-secondary" href="${submissionLink(context.submissionId)}">Open extraction result</a>` : `<a class="btn btn-secondary" href="${context.destination}">View submissions</a>`}</div>`;
     }
   }
 
@@ -203,7 +233,7 @@
         const job = await MisraAPI.job(jobId);
         if (!['ocr_submission', 'ocr_batch'].includes(job.job_type)) throw new Error('This is not a student extraction job. Open Rubric Studio for exam setup.');
         rememberJob(job, examSelect.value);
-        const context = job.submission_id ? { submissionId: job.submission_id } : { destination: `submissions.html?exam_id=${encodeURIComponent(examSelect.value)}` };
+        const context = job.submission_id ? { submissionId: job.submission_id } : { destination: batchLink(job) };
         pollJob(job.id, context, ++activePoll);
       }
     } catch (error) { examSelect.innerHTML = '<option value="">Engine unavailable</option>'; result.innerHTML = MisraUI.errorState(error.message); }
@@ -212,7 +242,10 @@
   function updateFiles() {
     activePoll += 1;
     const files = selectedFiles;
-    summary.textContent = files.length ? `${files.length} file${files.length === 1 ? '' : 's'} · ${files.map((file) => file.name).join(', ')}` : 'No files selected';
+    const size = bytes => bytes < 1048576 ? `${Math.max(1, Math.ceil(bytes / 1024))} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
+    summary.textContent = files.length ? `${files.length} file${files.length === 1 ? '' : 's'} · ${files.length === 1 ? files[0].name + ' · ' : ''}${size(files.reduce((total, file) => total + file.size, 0))}` : 'No files selected';
+    fileList.hidden = files.length < 2;
+    fileList.innerHTML = files.length < 2 ? '' : files.map((file, index) => `<li><span><strong>${MisraUI.escapeHTML(file.name)}</strong><small>${size(file.size)}</small></span><button class="link-button" type="button" data-remove-file="${index}" aria-label="Remove ${MisraUI.escapeHTML(file.name)}">Remove</button></li>`).join('');
     result.innerHTML = '';
     syncControls();
   }
@@ -267,16 +300,28 @@
   dropzone.addEventListener('click', event => { if (input.disabled) event.preventDefault(); });
   clear.addEventListener('click', () => {
     if (sending || uploaded) return;
-    selectedFiles = []; input.value = ''; updateFiles(); input.focus();
+    selectedFiles = []; input.value = ''; pagesInput.value = ''; updateFiles(); input.focus();
+  });
+  fileList.addEventListener('click', event => {
+    const remove = event.target.closest('[data-remove-file]');
+    if (!remove || sending || uploaded) return;
+    const index = Number(remove.dataset.removeFile);
+    selectedFiles.splice(index, 1);
+    const transfer = new DataTransfer();
+    selectedFiles.forEach(file => transfer.items.add(file));
+    input.files = transfer.files;
+    updateFiles();
+    const next = fileList.querySelectorAll('button');
+    (next[Math.min(index, next.length - 1)] || clear).focus();
   });
   examSelect.addEventListener('change', () => {
-    selectedFiles = []; input.value = ''; summary.textContent = 'No files selected'; result.innerHTML = '';
+    selectedFiles = []; input.value = ''; pagesInput.value = ''; updateFiles();
     checkReadiness();
   });
   gate.addEventListener('click', (event) => { if (event.target.closest('[data-recheck-readiness]')) checkReadiness(); });
   another.addEventListener('click', () => {
     if (sending) return;
-    uploaded = false; selectedFiles = [];
+    uploaded = false; selectedFiles = []; pagesInput.value = '';
     activePoll++; form.hidden = false; another.hidden = true; input.value = ''; updateFiles();
     history.replaceState(null, '', `?exam_id=${encodeURIComponent(examSelect.value)}`);
     checkReadiness(); input.focus();
@@ -298,6 +343,9 @@
     if (!examSelect.value) { showError('Choose an assessment before uploading.'); return; }
     if (!files.length) { showError('Choose or drop at least one PDF, PNG, JPEG, or WebP file.'); return; }
     if (mode === 'single' && files.length !== 1) { showError('Single mode accepts one file.'); return; }
+    if (mode === 'batch' && pagesInput.value && (!Number.isSafeInteger(Number(pagesInput.value)) || Number(pagesInput.value) < 1 || files.length !== 1 || !files[0].name.toLowerCase().endsWith('.pdf'))) {
+      showError('Pages per student must be a whole number greater than zero, for one combined PDF only.'); pagesInput.focus(); return;
+    }
     const body = new FormData(); body.append('exam_id', examSelect.value);
     if (mode === 'batch') files.forEach((file) => body.append('files', file)); else body.append('file', files[0]);
     if (mode === 'batch' && pagesInput.value) body.append('pages_per_student', pagesInput.value);
@@ -309,7 +357,7 @@
       const response = mode === 'batch' ? await MisraAPI.uploadBatch(body) : await MisraAPI.uploadExam(body);
       rememberJob(response.job, examSelect.value);
       if (mode === 'batch') {
-        const destination = `submissions.html?exam_id=${encodeURIComponent(examSelect.value)}`;
+        const destination = batchLink(response.job);
         const pollId = ++activePoll;
         renderJobProgress(response.job, { destination });
         window.showToast('Batch queued for extraction.', 'success');
@@ -336,9 +384,9 @@
           retryBatch.textContent = 'No failed papers to retry';
           return;
         }
-        const context = { destination: `submissions.html?exam_id=${encodeURIComponent(examSelect.value)}` };
+        const context = { destination: batchLink(response.job) };
         const pollId = ++activePoll;
-        window.dispatchEvent(new CustomEvent('misra:job-started', { detail: { jobId: response.job.id } }));
+        rememberJob(response.job, examSelect.value);
         renderJobProgress(response.job, context);
         window.showToast(`${response.retry_count} failed papers queued again.`, 'success');
         pollJob(response.job.id, context, pollId).catch((error) => showError(error.message));
@@ -358,7 +406,8 @@
       const pollId = ++activePoll;
       const context = job.submission_id
         ? { submissionId: job.submission_id }
-        : { destination: `submissions.html?exam_id=${encodeURIComponent(examSelect.value)}` };
+        : { destination: batchLink(job) };
+      rememberJob(job, examSelect.value);
       renderJobProgress(job, context);
       pollJob(job.id, context, pollId).catch((error) => showError(error.message));
     } catch (error) { showError(error.message); }

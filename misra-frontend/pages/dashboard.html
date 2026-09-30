@@ -10,13 +10,13 @@
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/tokens.css?v=4">
   <link rel="stylesheet" href="../css/base.css?v=3">
-  <link rel="stylesheet" href="../css/workspace.css?v=25">
+  <link rel="stylesheet" href="../css/workspace.css?v=26">
+  <link rel="stylesheet" href="../css/paper-workspace.css?v=1">
 </head>
 <body class="workspace-body" data-page="dashboard">
   <main class="workspace-content dashboard-page" id="workspace-content">
     <section class="dashboard-command" aria-labelledby="dashboard-title">
       <div class="dashboard-command-copy">
-        <span class="dashboard-eyebrow">Instructor workspace</span>
         <h1 id="dashboard-title">Keep every assessment moving.</h1>
         <p id="dashboard-lead">Review what needs attention, continue assessment setup, or start grading the next set of papers.</p>
       </div>
@@ -27,9 +27,10 @@
       </div>
     </section>
 
+    <div class="dashboard-refresh-line"><span id="dashboard-sync" role="status">Reading saved records…</span><button id="dashboard-refresh" class="link-button" type="button">Refresh overview</button></div>
+    <div id="dashboard-connection" class="paper-connection" role="alert" hidden></div>
     <section class="dashboard-focus" aria-labelledby="focus-title">
       <div class="dashboard-focus-heading">
-        <span class="focus-kicker">Priority</span>
         <div>
           <h2 id="focus-title">What needs you now</h2>
           <p id="focus-copy">Checking your live workspace…</p>
@@ -53,12 +54,12 @@
       <section class="workspace-card dashboard-assessments-card">
         <div class="dashboard-section-head">
           <div>
-            <span class="dashboard-section-kicker">Assessment workspace</span>
             <h2>Continue where you left off</h2>
-            <p>Readiness and next actions are calculated from saved questions, approved rubrics, papers, and reviews.</p>
+            <p>Choose an assessment. Your next step is already here.</p>
           </div>
           <a class="link-button" href="assessments.html">All assessments</a>
         </div>
+        <div class="dashboard-search field"><label for="assessment-search">Find an assessment</label><input class="input" id="assessment-search" type="search" placeholder="Search course or assessment" autocomplete="off"></div>
         <div id="recent-assessments" class="dashboard-assessment-list" aria-live="polite">
           <div class="skel loading-row"></div>
           <div class="skel loading-row"></div>
@@ -70,8 +71,7 @@
         <section class="workspace-card dashboard-pipeline-card">
           <div class="dashboard-section-head compact">
             <div>
-              <span class="dashboard-section-kicker">Live pipeline</span>
-              <h2>From setup to release</h2>
+              <h2>Your workflow</h2>
             </div>
           </div>
           <ol id="dashboard-pipeline" class="pipeline-list" aria-live="polite">
@@ -80,7 +80,6 @@
         </section>
 
         <section class="workspace-card dashboard-guidance-card">
-          <span class="dashboard-section-kicker">Grading safeguard</span>
           <h2>Approve before you grade</h2>
           <p>MISRA snapshots the approved question, answer key, rubric, and policy used for each grading run.</p>
           <a class="dashboard-text-link" href="rubric-studio.html">Review grading foundations <span aria-hidden="true">→</span></a>
@@ -90,7 +89,8 @@
   </main>
   <script src="../js/app.js?v=3"></script>
   <script src="../js/api.js?v=21"></script>
-  <script src="../js/workspace.js?v=17"></script>
-<script src="../js/dashboard.js?v=4"></script>
+  <script src="../js/workspace.js?v=18"></script>
+  <script src="../js/paper-flow.js?v=1"></script>
+  <script src="../js/dashboard.js?v=5"></script>
 </body>
 </html>

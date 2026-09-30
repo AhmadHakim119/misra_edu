@@ -6,8 +6,8 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=25">
-  <link rel="stylesheet" href="../css/assessment-workspace.css?v=25">
+  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=26">
+  <link rel="stylesheet" href="../css/assessment-workspace.css?v=26">
 </head>
 <body class="workspace-body" data-page="rubric">
   <main class="workspace-content" id="workspace-content">
@@ -18,6 +18,7 @@
     <section class="workspace-card card-pad" style="margin-bottom:20px">
       <div class="control-row">
         <div class="field"><label for="rubric-exam">Assessment</label><select class="input select" id="rubric-exam"><option value="">Loading assessments…</option></select></div>
+        <a class="btn btn-secondary" href="#rubric-workspace">Jump to rubric</a>
         <a class="btn btn-secondary" id="upload-link" href="upload.html" aria-disabled="true">Upload student answers</a>
       </div>
     </section>
@@ -28,6 +29,7 @@
       <ol class="setup-steps" aria-label="Assessment setup"><li>Upload exam</li><li>Review questions</li><li>Approve rubrics</li><li>Upload student answers</li></ol>
       <p id="setup-readiness" class="field-hint" role="status">Choose an assessment to check its setup.</p>
       <details class="setup-check-details"><summary>Question-by-question setup checks</summary><div id="rubric-setup-checks"><p>Choose an assessment first.</p></div></details>
+      <details class="setup-upload-details" id="setup-upload-details"><summary>Upload a blank exam or answer key</summary>
       <form id="setup-upload-form">
         <div class="setup-file-grid">
           <div class="field"><label for="setup-exam-file">Blank exam</label><input class="input" id="setup-exam-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" required><span class="field-hint">Questions and printed maximum marks, not a student’s answers.</span></div>
@@ -35,6 +37,7 @@
         </div>
         <div class="setup-actions"><button class="btn btn-primary" id="setup-upload-button" disabled>Read exam & suggest questions</button><span class="field-hint">PDF or image · files are securely validated on upload.</span></div>
       </form>
+      </details>
       <div id="setup-status" role="status" aria-live="polite" tabindex="-1"></div>
       <button type="button" class="btn btn-secondary" id="setup-new-upload" hidden>Upload another setup document</button>
       <details id="setup-history" hidden><summary>Previous setup uploads</summary><div id="setup-history-list" class="setup-actions"></div></details>
@@ -83,6 +86,6 @@
       </div>
     </div>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=17"></script><script src="../js/assessment-checks.js?v=1"></script><script src="../js/exam-setup.js?v=3"></script><script src="../js/answer-keys.js?v=2"></script><script src="../js/rubric-studio.js?v=10"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=18"></script><script src="../js/assessment-checks.js?v=1"></script><script src="../js/exam-setup.js?v=4"></script><script src="../js/answer-keys.js?v=2"></script><script src="../js/rubric-studio.js?v=11"></script>
 </body>
 </html>

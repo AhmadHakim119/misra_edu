@@ -490,6 +490,9 @@ def promote_unmatched_segments(
     promoted_count = 0
 
     for segment in submission.unmatched_segments:
+        if segment.get("excluded_reason"):
+            still_unmatched.append(segment)
+            continue
         question_id = exact_lookup.get(segment.get("question_number"))
         if not question_id:
             still_unmatched.append(segment)

@@ -1,5 +1,6 @@
 /* Operate: extend MISRA's existing celadon workspace, keeping work grouped by assessment. */
 .assessment-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, 250px) auto; align-items: end; gap: 16px; margin-bottom: 28px; }
+body[data-page="rubric"] .control-row { grid-template-columns: minmax(220px, 1fr) auto auto; }
 .assessment-toolbar .field { margin: 0; }
 body[data-page="assessments"] .setup-stack { margin-top: 32px; }
 .assessment-course-group { margin: 0 0 32px; }
@@ -35,9 +36,31 @@ body[data-page="assessments"] .setup-stack { margin-top: 32px; }
 .assessment-workspace-footer { display: flex; gap: 12px 24px; align-items: center; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 18px; }
 .assessment-workspace-footer p { flex-basis: 100%; }
 .setup-check-details { margin-top: 16px; }
+.setup-upload-details { margin-top: 12px; }
+.setup-upload-details > summary { cursor: pointer; color: var(--celadon-800); padding: 10px 0; font-weight: 600; }
+.setup-upload-details > summary:hover { text-decoration: underline; text-underline-offset: 3px; }
+.setup-upload-details > summary:focus-visible { outline: 2px solid var(--celadon-600); outline-offset: 3px; }
+.setup-upload-details[open] > summary { margin-bottom: 12px; }
 .setup-check-details > summary { cursor: pointer; color: var(--celadon-800); padding: 10px 0; font-weight: 600; }
 .setup-check-details .assessment-checks { margin-top: 16px; }
 .rubric-reference .field + .field { margin-top: 18px; }
+.rubric-editor .rubric-toolbar { position: sticky; top: 78px; z-index: 25; background: var(--surface); }
+.rubric-editor { scroll-margin-top: 160px; }
+.rubric-editor .rubric-toolbar > div:first-child { min-width: 0; }
+.rubric-editor .rubric-toolbar .section-copy { max-width: 62ch; max-height: 2.9em; overflow: hidden; }
+.rubric-editor .rubric-toolbar-actions { flex-shrink: 0; }
+.rubric-section > .rubric-section-summary { list-style: none; display: flex; align-items: center; gap: 12px; cursor: pointer; min-height: 44px; }
+.rubric-section > .rubric-section-summary::-webkit-details-marker { display: none; }
+.rubric-section > .rubric-section-summary > span:first-child { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.rubric-section-summary strong { font-size: 16px; font-weight: 650; color: var(--ink); }
+.rubric-section-summary small { color: var(--ink-soft); font-size: 13px; line-height: 1.45; }
+.rubric-section-summary::after { content: ''; width: 8px; height: 8px; flex: 0 0 8px; margin-inline: 5px; border-inline-end: 2px solid var(--ink-soft); border-block-end: 2px solid var(--ink-soft); transform: rotate(45deg); transition: transform 180ms var(--ease-out); }
+.rubric-section[open] > .rubric-section-summary::after { transform: rotate(225deg); }
+.rubric-section > .rubric-section-summary:hover strong { color: var(--celadon-800); }
+.rubric-section > .rubric-section-summary:focus-visible { outline: 2px solid var(--celadon-600); outline-offset: 4px; border-radius: 4px; }
+.rubric-section[open] > .rubric-section-summary { padding-bottom: 15px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.rubric-section-actions { display: flex; justify-content: flex-end; margin-bottom: 14px; }
+.rubric-section .section-copy { margin-bottom: 16px; }
 .rubric-reference textarea { line-height: 1.6; resize: vertical; }
 .rubric-reference textarea:disabled { opacity: 1; color: var(--ink-soft); }
 .answer-key-fields { border: 0; padding: 0; margin: 22px 0; min-width: 0; display: grid; gap: 18px; }
@@ -51,7 +74,20 @@ body[data-page="assessments"] .setup-stack { margin-top: 32px; }
 .key-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
 .key-history { margin-top: 24px; }
 .key-history summary { cursor: pointer; padding-block: 10px; font-weight: 600; }
+@media (max-width: 680px) {
+  .rubric-editor .rubric-toolbar { top: 66px; padding: 12px 16px; gap: 10px; }
+  .rubric-editor .rubric-toolbar .section-copy { display: none; }
+  .rubric-editor .rubric-toolbar-actions .btn { padding: 9px 12px; }
+  .rubric-section > .rubric-section-summary { flex-wrap: wrap; }
+  .rubric-section > .rubric-section-summary .badge { font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rubric-section-summary::after { transition: none; }
+}
 @media (max-width: 800px) {
+  body[data-page="rubric"] .control-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  body[data-page="rubric"] .control-row .field { grid-column: 1 / -1; }
+  body[data-page="rubric"] .control-row .btn { text-align: center; }
   .assessment-item-header { flex-wrap: wrap; padding: 20px; }
   .assessment-item-name { flex-basis: 100%; }
   .assessment-item-header > .btn { margin-inline-start: auto; }
@@ -60,6 +96,7 @@ body[data-page="assessments"] .setup-stack { margin-top: 32px; }
   .readiness-detail { grid-column: 1 / -1; grid-row: 2; }
 }
 @media (max-width: 560px) {
+  body[data-page="rubric"] .control-row { grid-template-columns: 1fr; }
   .assessment-toolbar { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
   .assessment-toolbar > .field:first-child { grid-column: 1 / -1; }
   .assessment-workflow { grid-template-columns: 1fr; }

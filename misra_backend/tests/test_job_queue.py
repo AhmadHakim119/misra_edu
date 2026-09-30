@@ -212,6 +212,17 @@ class ProcessingJobTests(unittest.TestCase):
         self.assertEqual(saved.progress_current, 2)
         self.assertEqual(saved.attempt_count, 1)
 
+    def test_worker_passes_explicit_reprocess_intent_to_ocr(self):
+        job = self._job()
+        job.payload = {"reprocess": True}
+        self.db.commit()
+        with (
+            patch("services.job_execution_service.SessionLocal", self.Session),
+            patch("services.job_execution_service.process_submission") as process,
+        ):
+            execute_processing_job(job.id)
+        self.assertEqual(process.call_args.kwargs["reprocess"], True)
+
     def test_worker_marks_retrying_then_failed_at_limit(self):
         job = self._job()
         with (

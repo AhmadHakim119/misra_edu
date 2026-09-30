@@ -27,6 +27,7 @@ async function fixture(page, { fail = false } = {}) {
     await route.fulfill({ json: body });
   });
   await page.goto('/pages/rubric-studio.html?exam_id=e');
+  await page.locator('[data-rubric-panel="answer-key"] > summary').click();
   await expect(page.locator('#key-mode')).toBeVisible();
   return writes;
 }

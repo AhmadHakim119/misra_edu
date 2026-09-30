@@ -23,7 +23,7 @@ class MetadataResolutionTests(unittest.TestCase):
         engine = create_engine("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(engine)
         self.db = sessionmaker(bind=engine)()
-        institution = Institution(id="institution-1", name="Effat University")
+        institution = Institution(id="institution-1", name="Example University")
         teacher = User(
             id="teacher-1",
             institution_id=institution.id,
@@ -66,7 +66,7 @@ class MetadataResolutionTests(unittest.TestCase):
             page_count=6,
             status="extracted",
             identity_status="unmatched_extracted",
-            extracted_student_name="Zan Bataga",
+            extracted_student_name="Misread Instructor",
             unmatched_segments=[{
                 "question_number": "4",
                 "text": "SELECT SectionNo FROM SECTION;",
@@ -85,36 +85,36 @@ class MetadataResolutionTests(unittest.TestCase):
         report = update_submission_metadata(
             "submission-1",
             SubmissionMetadataUpdate(
-                student_name="Leen Sharab",
-                student_number="S21107195",
-                instructor_name="Zain Balfagih",
+                student_name="Example Student",
+                student_number="TEST-1001",
+                instructor_name="Example Instructor",
             ),
             self.db,
             self.teacher,
         )
 
-        self.assertEqual(report["submission"]["extracted_student_name"], "Leen Sharab")
-        self.assertEqual(report["submission"]["extracted_student_number"], "S21107195")
+        self.assertEqual(report["submission"]["extracted_student_name"], "Example Student")
+        self.assertEqual(report["submission"]["extracted_student_number"], "TEST-1001")
         self.assertEqual(report["submission"]["identity_status"], "matched")
-        self.assertEqual(report["submission"]["instructor_name"], "Zain Balfagih")
+        self.assertEqual(report["submission"]["instructor_name"], "Example Instructor")
         student = self.db.query(Student).one()
-        self.assertEqual(student.full_name, "Leen Sharab")
-        self.assertEqual(student.student_number, "S21107195")
+        self.assertEqual(student.full_name, "Example Student")
+        self.assertEqual(student.student_number, "TEST-1001")
 
     def test_partial_identity_stays_unmatched_and_does_not_create_student(self):
         report = update_submission_metadata(
             "submission-1",
             SubmissionMetadataUpdate(
                 student_name=None,
-                student_number="S23108524",
-                instructor_name="Zain Balfagih",
+                student_number="TEST-1002",
+                instructor_name="Example Instructor",
             ),
             self.db,
             self.teacher,
         )
 
         self.assertIsNone(report["submission"]["extracted_student_name"])
-        self.assertEqual(report["submission"]["extracted_student_number"], "S23108524")
+        self.assertEqual(report["submission"]["extracted_student_number"], "TEST-1002")
         self.assertEqual(report["submission"]["identity_status"], "unmatched_extracted")
         self.assertEqual(self.db.query(Student).count(), 0)
 

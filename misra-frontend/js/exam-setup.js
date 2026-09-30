@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   const form = document.getElementById('setup-upload-form');
+  const uploadDetails = document.getElementById('setup-upload-details');
   const status = document.getElementById('setup-status');
   const review = document.getElementById('setup-review');
   const readiness = document.getElementById('setup-readiness');
@@ -51,7 +52,7 @@
   }
   function showReview(data) {
     selected = data; dirty = false;
-    form.hidden = true; another.hidden = false;
+    form.hidden = true; uploadDetails.hidden = true; another.hidden = false;
     if (data.imported_question_ids?.length) {
       document.getElementById('workspace-content').dataset.setupReview = 'false';
       review.hidden = true;
@@ -100,7 +101,7 @@
     });
   }
   async function watch(data, token) {
-    selected = data; form.hidden = true; another.hidden = false; review.hidden = true;
+    selected = data; form.hidden = true; uploadDetails.hidden = true; another.hidden = false; review.hidden = true;
     while (token === generation) {
       if (data.job.status === 'completed') { showReview(data); return; }
       if (data.job.status === 'failed') {
@@ -126,7 +127,7 @@
     if (id === examId && dirty) return;
     document.getElementById('workspace-content').dataset.setupReview = 'false';
     examId = id; const token = ++generation;
-    button.disabled = !id; selected = null; dirty = false; form.hidden = false; another.hidden = true; review.hidden = true; status.innerHTML = ''; history.hidden = true;
+    button.disabled = !id; selected = null; dirty = false; form.hidden = false; uploadDetails.hidden = false; another.hidden = true; review.hidden = true; status.innerHTML = ''; history.hidden = true;
     checkReadiness();
     if (!id) return;
     try {
@@ -145,7 +146,7 @@
   window.addEventListener('beforeunload', (event) => { if (dirty || busy) { event.preventDefault(); event.returnValue = ''; } });
   window.addEventListener('misra:assessment-loaded', event => load(event.detail.examId));
   window.addEventListener('misra:rubric-approved', checkReadiness);
-  another.addEventListener('click', () => { if (busy || (dirty && !confirm('Discard your unsaved question edits?'))) return; generation++; dirty = false; document.getElementById('workspace-content').dataset.setupReview = 'false'; form.hidden = false; review.hidden = true; status.innerHTML = ''; another.hidden = true; form.reset(); document.getElementById('setup-exam-file').focus(); });
+  another.addEventListener('click', () => { if (busy || (dirty && !confirm('Discard your unsaved question edits?'))) return; generation++; dirty = false; document.getElementById('workspace-content').dataset.setupReview = 'false'; form.hidden = false; uploadDetails.hidden = false; uploadDetails.open = true; review.hidden = true; status.innerHTML = ''; another.hidden = true; form.reset(); document.getElementById('setup-exam-file').focus(); });
   form.addEventListener('submit', async event => {
     event.preventDefault(); if (busy || !examId) return;
     const body = new FormData(); body.append('exam_file', document.getElementById('setup-exam-file').files[0]);

@@ -1,6 +1,7 @@
 import asyncio
 import os
 import unittest
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.testclient import TestClient
@@ -12,13 +13,13 @@ os.environ.setdefault("GEMINI_API_KEY", "test-key-not-used")
 
 from database import Base, get_db  # noqa: E402
 import models  # noqa: E402,F401
-from models import Batch, Course, Exam, Institution, Submission, User  # noqa: E402
+from models import Batch, Course, Exam, Institution, ProcessingJob, Submission, User  # noqa: E402
 from routers.batches import get_batch_status  # noqa: E402
 from routers.exams import promote_unmatched_segments  # noqa: E402
 from routers.identity_routes import list_unresolved_identities  # noqa: E402
 from routers.ocr import router as ocr_router  # noqa: E402
 from routers.questions import list_exam_questions  # noqa: E402
-from routers.results import get_extraction_review, get_results, get_submission_page  # noqa: E402
+from routers.results import get_extraction_review, get_results, get_submission_page, list_submissions, reprocess_extraction  # noqa: E402
 
 
 class ExtractionAuthorizationTests(unittest.TestCase):
@@ -114,6 +115,38 @@ class ExtractionAuthorizationTests(unittest.TestCase):
             lambda: asyncio.run(get_batch_status("batch-b", self.db, self.teacher_a))
         )
 
+    def test_paper_list_exposes_latest_ocr_and_grading_jobs_separately(self):
+        owner = self.db.get(User, "teacher-b")
+        now = datetime(2026, 9, 28, 12, 0)
+        for id_, kind, status, offset in [
+            ("ocr-complete", "ocr_submission", "completed", 0),
+            ("old-grade", "grade_submission", "failed", 1),
+            ("new-grade", "grade_submission", "queued", 2),
+        ]:
+            self.db.add(ProcessingJob(
+                id=id_, institution_id=owner.institution_id,
+                submission_id="submission-b", job_type=kind, status=status,
+                created_at=now + timedelta(minutes=offset),
+            ))
+        # Even an inconsistent foreign-tenant job cannot leak into the response.
+        self.db.add(ProcessingJob(
+            id="foreign-job", institution_id=self.teacher_a.institution_id,
+            submission_id="submission-b", job_type="grade_submission", status="failed",
+            created_at=now + timedelta(minutes=3),
+        ))
+        self.db.commit()
+        rows = list_submissions(None, self.db, owner)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["latest_ocr_job"]["id"], "ocr-complete")
+        self.assertEqual(rows[0]["latest_grading_job"]["id"], "new-grade")
+        self.assertEqual(rows[0]["latest_grading_job"]["status"], "queued")
+        self.assertEqual(list_submissions(None, self.db, self.teacher_a), [])
+
+    def test_legacy_paper_list_has_explicit_null_job_states(self):
+        rows = list_submissions(None, self.db, self.db.get(User, "teacher-b"))
+        self.assertIsNone(rows[0]["latest_ocr_job"])
+        self.assertIsNone(rows[0]["latest_grading_job"])
+
     def test_other_institution_cannot_list_exam_questions_or_identities(self):
         self._assert_not_found(
             lambda: list_exam_questions("exam-b", self.db, self.teacher_a)
@@ -125,6 +158,11 @@ class ExtractionAuthorizationTests(unittest.TestCase):
     def test_other_institution_cannot_promote_unmatched_segments(self):
         self._assert_not_found(
             lambda: promote_unmatched_segments("submission-b", self.db, self.teacher_a)
+        )
+
+    def test_other_institution_cannot_reprocess_a_paper(self):
+        self._assert_not_found(
+            lambda: reprocess_extraction("submission-b", self.db, self.teacher_a)
         )
 
     def test_raw_ocr_endpoint_requires_authentication_even_when_mounted_alone(self):
