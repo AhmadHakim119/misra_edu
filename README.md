@@ -33,7 +33,7 @@ public internet deployment or use as an official institutional gradebook.
   authentication, exports, background jobs, and evaluation
 - `misra-frontend/` - static HTML, CSS, and JavaScript instructor workspace
 - `database/schema.sql` - complete database schema for fresh installations
-- `docs/` - detailed system and architecture documentation
+- `docs/` - public technical notes; private student-work reports are excluded
 
 `misra_ui/` is legacy reference material and is not part of the active
 application.
@@ -252,8 +252,13 @@ mocked API responses.
 
 ## Documentation
 
-- [Complete MISRA-EDU System Guide](docs/MISRA_EDU_Complete_System_Guide.docx)
-- [Redis, RQ, and Admin Operations Explained](docs/MISRA_EDU_Redis_RQ_Admin_Operations_Explained.docx)
+Locally generated Word guides and evaluation/research reports are private and
+are not distributed with the repository: they may include student identities,
+paper images or individual grades. Papers and exported gradebooks are ignored
+by default. Use synthetic records in public tests and screenshots.
+
+Ignore rules do not remove previously committed content from Git history.
+Any historical exposure requires a separate, coordinated history-cleanup step.
 
 ## Privacy and repository safety
 
