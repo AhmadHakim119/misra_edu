@@ -154,8 +154,8 @@
     const needsAttention = !(readiness.bulk_grading_allowed ?? readiness.mapping_complete);
     result.innerHTML = `<div class="workspace-card card-pad upload-status-card is-complete" role="status">
       <strong>${needsAttention ? 'Extraction ready for review' : 'Extraction complete'}</strong>
-      <p class="section-copy">${mapped} expected answers mapped. Review the source pages before grading.</p>
-      <a class="btn btn-secondary" href="${submissionLink(report.submission.id)}">Review extraction</a>
+      <p class="section-copy">${mapped} answers found. ${needsAttention ? 'Next: check the answer locations MISRA could not verify. Your paper is saved; do not upload it again.' : 'Next: open your paper and start grading. You can inspect the original answers there first.'}</p>
+      <a class="btn btn-primary" href="${submissionLink(report.submission.id)}">${needsAttention ? 'Check answers' : 'Continue to grading'}</a>
     </div>`;
     window.showToast(needsAttention ? 'Extraction needs mapping review.' : 'Paper extracted.', needsAttention ? 'warning' : 'success');
   }

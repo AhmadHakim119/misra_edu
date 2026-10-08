@@ -42,6 +42,8 @@ def build_grading_package(answer, question, db, mode, routing_context=None):
     ):
         raise ValueError("Answer evidence does not belong to this assessment.")
     rubric, rubric_id = get_effective_rubric(question, db)
+    if (rubric.get("policy") or {}).get("assessment_scope") == "external":
+        raise ValueError("This question is assessed outside MISRA. No AI grade may be generated.")
     key = resolve_answer_key(question, db, rubric)
     policy = db.query(QuestionGradingPolicy).filter(QuestionGradingPolicy.question_id == question.id).first()
     consistency = definition_consistency(question, rubric, key, policy)

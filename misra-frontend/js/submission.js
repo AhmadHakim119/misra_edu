@@ -29,8 +29,45 @@
   const requestedPage = Number.parseInt(MisraUI.getParam('page'), 10);
   let pageIndex = Number.isInteger(requestedPage) && requestedPage >= 0 ? requestedPage : 0;
   let filter = 'all';
+  let lastIssueQuestion = '';
+  const questionJump = document.getElementById('extraction-question-jump');
+  const nextIssue = document.getElementById('next-extraction-issue');
+  function focusQuestion(id) {
+    filter = 'all';
+    document.querySelectorAll('[data-filter]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.filter === 'all')));
+    renderMappings();
+    const row = [...mappingList.querySelectorAll('[data-question-id]')].find(item => item.dataset.questionId === id);
+    if (!row) return;
+    row.open = true;
+    const source = report.questions.find(item => item.question.id === id)?.sources?.[0];
+    if (source && Number.isInteger(source.page_index)) setPage(source.page_index);
+    row.scrollIntoView({ block: 'start', behavior: 'auto' });
+    row.querySelector('summary').focus({ preventScroll: true });
+    questionJump.value = id;
+  }
+  questionJump.addEventListener('change', () => focusQuestion(questionJump.value));
+  nextIssue.addEventListener('click', () => {
+    const issues = report.questions.filter(row => !row.answer || row.mapping_flags.length);
+    if (!issues.length) return;
+    const index = (issues.findIndex(row => row.question.id === lastIssueQuestion) + 1) % issues.length;
+    lastIssueQuestion = issues[index].question.id;
+    focusQuestion(lastIssueQuestion);
+  });
   let recoveryPreview = null;
   let activeOcrPoll = 0;
+  let metadataDirty = false;
+  let metadataSaving = false;
+  const metadataStatus = document.createElement('p');
+  metadataStatus.setAttribute('role', 'status');
+  metadataForm.appendChild(metadataStatus);
+  metadataForm.addEventListener('input', () => {
+    metadataDirty = true;
+    metadataStatus.textContent = 'Unsaved changes';
+  });
+  window.addEventListener('beforeunload', event => {
+    if (!metadataDirty && !metadataSaving) return;
+    event.preventDefault(); event.returnValue = '';
+  });
 
   function wait(milliseconds) {
     return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -60,7 +97,13 @@
   async function watchOcrJob(jobId) {
     const pollId = ++activeOcrPoll;
     for (let attempt = 0; attempt < 240 && pollId === activeOcrPoll; attempt += 1) {
-      const job = await MisraAPI.job(jobId);
+      let job;
+      try { job = await MisraAPI.job(jobId); } catch (_) {
+        if (pollId !== activeOcrPoll) return;
+        errorRegion.innerHTML = `<div class="workspace-card card-pad" role="status"><strong>Progress connection interrupted</strong><p>The background job may still be running. Reconnect to check it; do not upload the paper again.</p><button type="button" class="btn btn-secondary" data-reconnect-ocr="${MisraUI.escapeHTML(jobId)}">Reconnect</button></div>`;
+        return;
+      }
+      if (pollId !== activeOcrPoll) return;
       if (job.status === 'completed') {
         activeOcrPoll += 1;
         window.showToast('Extraction complete. Review the mapped answers.', 'success');
@@ -88,6 +131,9 @@
     const resolvedIndex = Math.max(0, Math.min(report.submission.page_count - 1, nextIndex));
     if (resolvedIndex !== pageIndex) clearRecoveryPreview();
     pageIndex = resolvedIndex;
+    const pageUrl = new URL(location.href);
+    pageUrl.searchParams.set('page', String(pageIndex));
+    history.replaceState(null, '', pageUrl);
     pageLabel.textContent = `Page ${pageIndex + 1} of ${report.submission.page_count}`;
     pageImage.src = MisraAPI.submissionPageUrl(report.submission.id, pageIndex);
     pageImage.alt = `Original submitted paper, page ${pageIndex + 1}`;
@@ -112,6 +158,9 @@
       ${!ready && report.readiness.can_reprocess ? '<div class="reprocess-action"><button class="btn btn-secondary" type="button" data-reprocess-extraction>Re-run automatic extraction</button><small>Uses AI quota. Your current ungraded mapping stays in place if the new scan fails.</small></div>' : ''}
     </div>`;
     gradeAll.disabled = !ready;
+    if (report.grading_scope?.kind === 'paper_only') {
+      readinessPanel.insertAdjacentHTML('beforeend', `<p class="section-copy">Paper component only: questions ${MisraUI.escapeHTML(report.grading_scope.external_question_numbers.join(', '))} are assessed outside MISRA and are not missing paper answers. They will not be AI-graded.</p>`);
+    }
     gradeAll.title = ready ? '' : 'Resolve all missing and suspicious mappings first.';
   }
 
@@ -136,9 +185,13 @@
     const identity = MisraUI.identityState(report.submission);
     title.textContent = identity.displayName;
     meta.textContent = `${identity.displayNumber} · ${report.submission.page_count} pages · uploaded ${MisraUI.formatDate(report.submission.uploaded_at)}`;
-    studentName.value = report.submission.extracted_student_name || '';
-    studentNumber.value = report.submission.extracted_student_number || '';
-    instructorName.value = report.submission.instructor_name || '';
+    if (!metadataDirty) {
+      studentName.value = report.submission.extracted_student_name || '';
+      studentNumber.value = report.submission.extracted_student_number || '';
+      instructorName.value = report.submission.instructor_name || '';
+    }
+    if (location.hash === '#metadata-editor') metadataEditor.open = true;
+    document.querySelector('.back-link').href = `submissions.html?exam_id=${encodeURIComponent(report.submission.exam_id)}`;
     identityGuidance.innerHTML = `<div class="identity-guidance-state ${identity.needsAttention ? 'needs-action' : 'is-ready'}">
       <span class="readiness-mark">${identity.needsAttention ? '!' : '✓'}</span>
       <div><strong>${MisraUI.escapeHTML(identity.label)}</strong><p>${MisraUI.escapeHTML(identity.message)}</p></div>
@@ -229,7 +282,7 @@
       const stateLabel = state === 'mapped' ? 'Mapped' : state === 'missing' ? 'Missing' : 'Verify';
       const pages = row.sources.length ? [...new Set(row.sources.map((source) => source.page_number))].join(', ') : '—';
       const sourcePageAttribute = row.sources.length ? ` data-source-page="${row.sources[0].page_index}"` : '';
-      return `<details class="extraction-row is-${state}" ${state !== 'mapped' ? 'open' : ''}>
+      return `<details class="extraction-row is-${state}" data-question-id="${MisraUI.escapeHTML(row.question.id)}" ${state !== 'mapped' ? 'open' : ''}>
         <summary${sourcePageAttribute}><span class="mapping-number">${MisraUI.escapeHTML(row.question.question_number)}</span><span class="mapping-question"><strong>${MisraUI.escapeHTML(row.question.question_text || `Question ${row.question.question_number}`)}</strong><small>${row.question.max_score} points · source page${pages.includes(',') ? 's' : ''} ${pages}</small></span>${MisraUI.badge(stateLabel, state === 'mapped' ? 'success' : state === 'missing' ? 'danger' : 'warning')}<span class="disclosure" aria-hidden="true">⌄</span></summary>
         <div class="mapping-body">
           ${row.mapping_flags.map((flag) => `<div class="mapping-warning"><strong>Location needs checking</strong><span>${MisraUI.escapeHTML(flag.message)} Use “Show on page” below to inspect the answer. Only open OCR details above if it belongs to a different question.</span></div>`).join('')}
@@ -250,6 +303,8 @@
         MisraAPI.submissionJobs(submissionId, 'ocr_submission'),
       ]);
       report = nextReport;
+      questionJump.innerHTML = '<option value="">Choose a question…</option>' + report.questions.map(row => `<option value="${MisraUI.escapeHTML(row.question.id)}">Question ${MisraUI.escapeHTML(row.question.question_number)} · ${!row.answer ? 'Answer missing' : row.mapping_flags.length ? 'Check location' : 'Answer found'}</option>`).join('');
+      nextIssue.hidden = !report.questions.some(row => !row.answer || row.mapping_flags.length);
       renderIdentity();
       renderReadiness();
       renderSegmentOrganizer();
@@ -288,6 +343,12 @@
     }
   });
   errorRegion.addEventListener('click', async (event) => {
+    const reconnect = event.target.closest('[data-reconnect-ocr]');
+    if (reconnect) {
+      reconnect.disabled = true;
+      await watchOcrJob(reconnect.dataset.reconnectOcr);
+      return;
+    }
     const retry = event.target.closest('[data-retry-ocr]');
     if (!retry) return;
     retry.disabled = true;
@@ -304,6 +365,10 @@
   });
   metadataForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (metadataSaving) return;
+    metadataSaving = true;
+    metadataStatus.textContent = 'Saving…';
+    [studentName, studentNumber, instructorName].forEach(input => { input.disabled = true; });
     const button = metadataForm.querySelector('[type="submit"]');
     button.disabled = true; button.textContent = 'Saving…';
     try {
@@ -312,12 +377,17 @@
         student_number: studentNumber.value.trim() || null,
         instructor_name: instructorName.value.trim() || null,
       });
+      metadataDirty = false;
       renderIdentity();
+      metadataStatus.textContent = 'Saved';
       const identity = MisraUI.identityState(report.submission);
       window.showToast(identity.complete ? 'Student identity saved and linked to the roster.' : 'Details saved. Student identity is still incomplete.', identity.complete ? 'success' : 'warning');
     } catch (error) {
+      metadataStatus.textContent = `Not saved: ${error.message}. Your edits are still here; try saving again.`;
       window.showToast(error.message, 'error');
     } finally {
+      metadataSaving = false;
+      [studentName, studentNumber, instructorName].forEach(input => { input.disabled = false; });
       button.disabled = false; button.textContent = 'Save paper details';
     }
   });
@@ -350,7 +420,7 @@
     const viewPage = event.target.closest('[data-view-segment-page]');
     if (viewPage) {
       setPage(Number(viewPage.dataset.viewSegmentPage));
-      document.getElementById('source-viewer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (!pageTarget.matches('summary')) document.getElementById('source-viewer').scrollIntoView({ behavior: 'auto', block: 'start' });
       return;
     }
 

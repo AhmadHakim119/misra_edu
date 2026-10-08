@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from models import Answer, GradingRun, Question, ReviewLabel, Submission
 from schemas.review_input import PREFERENCE_REASON_VALUES
+from services.grading_scope_service import is_external_question
 
 
 EPSILON = 0.001
@@ -60,6 +61,7 @@ def build_evaluation_report(
         query = query.filter(Submission.exam_id == exam_id)
 
     records: list[dict[str, Any]] = []
+    excluded_external_labels = []
     criterion_records: list[dict[str, Any]] = []
     review_snapshot_records: list[dict[str, bool]] = []
 
@@ -82,6 +84,11 @@ def build_evaluation_report(
         if label_key in latest_label_keys:
             continue
         latest_label_keys.add(label_key)
+        if is_external_question(question):
+            excluded_external_labels.append({"review_label_id": label.id, "grading_run_id": label.grading_run_id,
+                "question_id": question.id, "question_number": question.question_number,
+                "reason": "Currently approved as assessed outside MISRA; historical record retained."})
+            continue
         ai_score = float(label.ai_score_snapshot)
         human_score = float(label.human_score)
         absolute_error = abs(ai_score - human_score)
@@ -124,7 +131,8 @@ def build_evaluation_report(
         })
 
         ai_criteria = _criteria_by_id(
-            label.ai_criteria_scores_snapshot or answer.criteria_scores
+            label.ai_criteria_scores_snapshot if label.ai_criteria_scores_snapshot is not None
+            else grading_run.criteria_scores if grading_run else None
         )
         human_criteria = _criteria_by_id(label.human_criteria_scores)
         for criterion_id in sorted(set(ai_criteria) & set(human_criteria)):
@@ -142,7 +150,7 @@ def build_evaluation_report(
     overall = _summary(records)
     per_question_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
-        per_question_rows[record["question_number"]].append(record)
+        per_question_rows[record["question_number"] if exam_id else record["question_id"]].append(record)
 
     criterion_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in criterion_records:
@@ -187,8 +195,15 @@ def build_evaluation_report(
             "false_negative": false_negative,
         }
 
+    latest_answers = {}
+    for record in records:
+        latest_answers.setdefault(record["answer_id"], record)
     return {
-        "scope": {"exam_id": exam_id, "high_confidence_threshold": HIGH_CONFIDENCE_THRESHOLD},
+        "scope": {"exam_id": exam_id, "high_confidence_threshold": HIGH_CONFIDENCE_THRESHOLD,
+                  "assessment_scope": "currently_approved_paper_questions"},
+        "excluded_external_labels": excluded_external_labels,
+        "latest_per_answer": _summary(list(latest_answers.values())),
+        "unique_answer_count": len(latest_answers),
         "overall": overall,
         "review_warranted_rate": _rate(review_warranted_count, len(records)),
         "review_flag_metrics": review_metrics,
@@ -225,5 +240,8 @@ def build_evaluation_report(
             "Criterion-level metrics include only criteria with both AI and human criterion scores.",
             "Multiple labels for one answer represent separate grading-run/rubric-version observations.",
             "Historical confidence is never inferred from the answer's current mutable state.",
+            "Externally assessed questions are excluded under the current approved scope; excluded label IDs remain listed for audit.",
+            "Overall counts run observations, not independent answers. Latest-per-answer counts each answer once by its most recent instructor label.",
+            "Historical criterion scores come only from label/run snapshots, never from mutable current answers.",
         ],
     }

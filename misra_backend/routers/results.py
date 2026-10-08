@@ -117,6 +117,11 @@ async def get_results(
         raise HTTPException(status_code=404, detail=f"Submission {submission_id} not found")
 
     answers = db.query(Answer).filter(Answer.submission_id == submission_id).all()
+    from models import Question
+    from services.grading_scope_service import scope_summary
+    grading_scope = scope_summary(db.query(Question).filter(Question.exam_id == submission.exam_id).all())
+    external_answers = [a for a in answers if a.question_id in grading_scope["external_question_ids"]]
+    answers = [a for a in answers if a.question_id not in grading_scope["external_question_ids"]]
     latest_review_labels = []
     for answer in answers:
         label = (
@@ -132,6 +137,8 @@ async def get_results(
         "submission": submission,
         "answers": answers,
         "latest_review_labels": latest_review_labels,
+        "grading_scope": grading_scope,
+        "external_answers": external_answers,
     }
 
 
@@ -572,4 +579,7 @@ async def get_review_queue(
         query = query.filter(Submission.exam_id == exam_id)
 
     answers = query.all()
-    return answers
+    from models import Question
+    from services.grading_scope_service import is_external_question
+    questions = {q.id: q for q in db.query(Question).filter(Question.id.in_([a.question_id for a in answers])).all()}
+    return [a for a in answers if a.question_id in questions and not is_external_question(questions[a.question_id])]

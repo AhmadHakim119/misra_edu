@@ -16,6 +16,7 @@ from models import (
 )
 from services.auth_dependencies import require_instructor
 from services.audit_service import record_audit_event
+from services.grading_scope_service import is_external_question
 from services.ocr_service import create_submissions_from_stored_upload
 from services.job_queue_service import create_processing_job, job_to_dict
 from services.upload_security_service import (
@@ -167,11 +168,14 @@ def list_exams(db: Session = Depends(get_db), user: User = Depends(require_instr
         submission_count = (
             db.query(Submission).filter(Submission.exam_id == exam.id).count()
         )
-        question_count = db.query(Question).filter(Question.exam_id == exam.id).count()
+        questions = db.query(Question).filter(Question.exam_id == exam.id).all()
+        question_count = len(questions)
+        paper_question_ids = [question.id for question in questions if not is_external_question(question)]
         review_count = (
             db.query(Answer)
             .join(Submission, Answer.submission_id == Submission.id)
-            .filter(Submission.exam_id == exam.id, Answer.needs_review.is_(True))
+            .filter(Submission.exam_id == exam.id, Answer.needs_review.is_(True),
+                    Answer.question_id.in_(paper_question_ids))
             .count()
         )
         catalog.append(

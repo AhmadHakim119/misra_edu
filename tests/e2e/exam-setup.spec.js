@@ -116,7 +116,9 @@ test('student upload becomes a progress view, then a review action', async ({ pa
   await page.locator('#paper-files').setInputFiles(file);
   await page.locator('#upload-button').click();
   await expect(page.locator('#upload-form')).toBeHidden();
-  await expect(page.getByRole('link', { name: 'Review extraction', exact: true })).toBeVisible({ timeout: 8000 });
+  const nextStep = page.getByRole('link', { name: 'Continue to grading', exact: true });
+  await expect(nextStep).toBeVisible({ timeout: 8000 });
+  await expect(nextStep).toHaveAttribute('href', 'submission.html?id=student1');
   await page.screenshot({ path: testInfo.outputPath('upload-complete.png'), fullPage: true });
   await page.locator('#upload-another').click();
   await expect(page.locator('#upload-form')).toBeVisible();

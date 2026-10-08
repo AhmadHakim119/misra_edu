@@ -124,7 +124,11 @@
     if (formDirty || editorDirty || savingQuestion || savingRubric || window.MisraAnswerKeys.hasUnsaved()) { event.preventDefault(); event.returnValue = ''; }
   });
   workspace.addEventListener('input', event => {
-    if (event.target.matches('[data-reference], [data-policy], [data-key]')) editorDirty = true;
+    if (event.target.matches('[data-reference], [data-policy], [data-key]')) {
+      editorDirty = true;
+      const status = workspace.querySelector('[data-rubric-save-state]');
+      if (status) status.textContent = 'Unsaved changes · save a draft or approve when ready';
+    }
   });
   examSelect.addEventListener('change', event => {
     if (savingRubric || !window.MisraAnswerKeys.canLeave() || (editorDirty && !window.confirm('Discard unsaved rubric edits and switch assessments?'))) {
@@ -165,6 +169,7 @@
       alternative_methods: criterion.alternative_methods || [],
     }));
     rubric.policy = {
+      assessment_scope: rubric.policy?.assessment_scope || 'paper',
       grading_approach: rubric.policy?.grading_approach || rubric.grading_approach || 'balanced',
       method_credit: rubric.policy?.method_credit || 'partial',
       arithmetic_error_policy: rubric.policy?.arithmetic_error_policy || 'single_penalty',
@@ -219,10 +224,11 @@
     workspace.innerHTML = `
       <div class="workspace-card rubric-toolbar">
         <div><div class="rubric-toolbar-meta"><strong>Question ${MisraUI.escapeHTML(state.question.question_number)}</strong>${MisraUI.badge(state.version ? `Version ${state.version.version_number}` : 'Legacy rubric', draft ? 'draft' : 'success')}${MisraUI.badge(state.rubric.policy.grading_approach, 'slate')}</div><p class="section-copy">${MisraUI.escapeHTML(state.question.question_text || 'Question text is not available.')}</p></div>
-        <div class="rubric-toolbar-actions">
+        <div><div class="rubric-toolbar-actions">
           ${draft ? '<button class="btn btn-secondary" type="button" data-save-rubric>Save draft</button><button class="btn btn-primary" type="button" data-approve-rubric>Approve</button>' : '<button class="btn btn-secondary" type="button" data-create-draft>Create editable draft</button>'}
-        </div>
+        </div><p class="rubric-edit-state" data-rubric-save-state role="status">${editorDirty ? 'Unsaved changes' : draft ? 'Saved draft · not used for grading yet' : 'Approved · create a draft to change the marking guide'}</p></div>
       </div>
+      <nav class="rubric-shortcuts" aria-label="Rubric sections">${[['criteria', 'Marking criteria'], ['answer-key', 'Answer key'], ['policy', 'Scoring policy'], ['suggestion', 'AI draft'], ['input', 'Grading input']].map(([target, label]) => `<button class="btn btn-secondary" type="button" data-rubric-jump="${target}">${label}</button>`).join('')}<button class="btn btn-ghost" type="button" data-fold-rubric>Collapse sections</button></nav>
 
       <details class="workspace-card card-pad rubric-section answer-key-section" data-rubric-panel="answer-key"${expanded('answer-key')}>
         <summary class="rubric-section-summary"><span><strong>Answer key</strong><small>Reference solution and accepted alternatives</small></span></summary>
@@ -271,6 +277,7 @@
         ${draft && state.instructorProfile ? `<button class="btn btn-secondary" type="button" data-apply-instructor-profile>Use my profile v${state.instructorProfile.version_number}</button>` : ''}
         ${state.instructorProfile ? `<p class="field-hint">Your approved profile is only a starting point. Applying it changes this draft in the browser; review and save the rubric to keep it.</p>` : '<p class="field-hint">Optional marking preferences can be set in Settings. They are never applied automatically.</p>'}
         <div class="policy-grid">
+          ${field('Assessment scope', `<select class="input select" id="policy-assessment-scope" data-policy="assessment_scope"><option value="paper" ${state.rubric.policy.assessment_scope === 'paper' ? 'selected' : ''}>Grade from this paper</option><option value="external" ${state.rubric.policy.assessment_scope === 'external' ? 'selected' : ''}>Assessed outside MISRA (computer / practical)</option></select><small>External work is not an AI zero. Approval excludes this question from paper totals, paper exports and evaluation. Historical runs remain available.</small>`, '', 'policy-assessment-scope')}
           ${[['language_quality_policy', 'Language quality', [['criterion_specific', 'Follow each criterion'], ['ignore_unless_assessed', 'Ignore unless assessed'], ['assess', 'Assess language quality']]], ['error_carried_forward', 'Carried-forward errors', [['criterion_specific', 'Follow each criterion'], ['single_penalty', 'Penalize the original error once'], ['penalize_each', 'Penalize each affected step']]], ['handwritten_syntax_policy', 'Handwritten syntax', [['criterion_specific', 'Follow each criterion'], ['accept_unambiguous', 'Accept unambiguous intent'], ['require_correct', 'Require correct syntax']]]].map(([key, label, options]) => `<div class="field"><label for="policy-${key}">${label}</label><select id="policy-${key}" class="input select" data-policy="${key}">${options.map(([value, text]) => `<option value="${value}" ${state.rubric.policy[key] === value ? 'selected' : ''}>${text}</option>`).join('')}</select></div>`).join('')}
           ${field('Approach', `<select class="input select" id="policy-grading-approach" data-policy="grading_approach"><option value="lenient" ${state.rubric.policy.grading_approach === 'lenient' ? 'selected' : ''}>Lenient</option><option value="balanced" ${state.rubric.policy.grading_approach === 'balanced' ? 'selected' : ''}>Balanced</option><option value="strict" ${state.rubric.policy.grading_approach === 'strict' ? 'selected' : ''}>Strict</option><option value="custom" ${state.rubric.policy.grading_approach === 'custom' ? 'selected' : ''}>Custom</option></select>`, '', 'policy-grading-approach')}
           ${field('Method credit', `<select class="input select" id="policy-method-credit" data-policy="method_credit"><option value="none" ${state.rubric.policy.method_credit === 'none' ? 'selected' : ''}>None</option><option value="partial" ${state.rubric.policy.method_credit === 'partial' ? 'selected' : ''}>Partial</option><option value="full_if_valid" ${state.rubric.policy.method_credit === 'full_if_valid' ? 'selected' : ''}>Full if valid</option></select>`, '', 'policy-method-credit')}
@@ -289,6 +296,8 @@
       <details class="workspace-card card-pad rubric-section" data-rubric-panel="history"${expanded('history')}><summary class="rubric-section-summary"><span><strong>Version history</strong><small>${state.versions.length} version${state.versions.length === 1 ? '' : 's'} · approved versions stay immutable</small></span></summary><div class="version-list">${state.versions.map((version) => `<div class="version-row"><div><strong>Version ${version.version_number}</strong><small>${MisraUI.escapeHTML(version.change_summary || `${version.source} rubric`)}</small></div>${MisraUI.badge(version.status, version.status === 'approved' ? 'success' : 'draft')}</div>`).join('')}</div></details>`;
     bindEditor();
     window.MisraAnswerKeys.mount(document.getElementById('answer-key-panel'));
+    const criteriaPanel = workspace.querySelector('[data-rubric-panel="criteria"]');
+    workspace.querySelector('.rubric-shortcuts').after(criteriaPanel);
     if (!draft) workspace.querySelectorAll('[data-key], [data-policy], [data-reference], [data-remove-criterion]').forEach((control) => { control.disabled = true; });
   }
 
@@ -337,6 +346,15 @@
   }
 
   function bindEditor() {
+    workspace.querySelectorAll('[data-rubric-jump]').forEach(button => button.addEventListener('click', () => {
+      const panel = workspace.querySelector(`[data-rubric-panel="${button.dataset.rubricJump}"]`);
+      panel.open = true;
+      panel.scrollIntoView({ block: 'start', behavior: 'auto' });
+      panel.querySelector('summary').focus({ preventScroll: true });
+    }));
+    workspace.querySelector('[data-fold-rubric]')?.addEventListener('click', () => {
+      workspace.querySelectorAll('[data-rubric-panel]').forEach(panel => { panel.open = false; });
+    });
     workspace.querySelector('[data-apply-instructor-profile]')?.addEventListener('click', () => {
       if (savingRubric || state.version?.status !== 'draft') return;
       if (!window.confirm('Apply your approved preference profile to this rubric draft? Existing draft policy values will be replaced, but nothing is saved until you choose Save draft or Approve.')) return;

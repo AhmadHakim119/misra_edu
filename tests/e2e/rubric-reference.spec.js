@@ -43,6 +43,19 @@ test('reference edits persist with draft and survive reload', async ({ page }, t
   await page.locator('.rubric-reference').screenshot({ path: testInfo.outputPath('rubric-reference.png'), animations: 'disabled' });
 });
 
+test('external practical scope is explicit and persists as a rubric draft', async ({ page }, testInfo) => {
+  const writes = await fixture(page);
+  await page.locator('[data-rubric-panel="policy"] > summary').click();
+  await page.getByLabel('Assessment scope', { exact: true }).selectOption('external');
+  await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Save draft', exact: true })).toBeEnabled();
+  expect(writes[0].rubric.policy.assessment_scope).toBe('external');
+  await page.reload();
+  await page.locator('[data-rubric-panel="policy"] > summary').click();
+  await expect(page.getByLabel('Assessment scope', { exact: true })).toHaveValue('external');
+  await page.locator('[data-rubric-panel="policy"]').screenshot({ path: testInfo.outputPath('scope-control.png') });
+});
+
 test('rubric sections fold independently and approval stays accessible', async ({ page }) => {
   await fixture(page);
   await expect(page.locator('[data-rubric-panel="criteria"]')).toHaveAttribute('open', '');
@@ -56,6 +69,22 @@ test('rubric sections fold independently and approval stays accessible', async (
   await expect(page.locator('[data-rubric-panel="policy"]')).toHaveAttribute('open', '');
   await expect(page.locator('[data-rubric-panel="legacy"]')).not.toHaveAttribute('open', '');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+});
+
+test('rubric shortcuts expose the requested section and retain unsaved criteria', async ({ page }, testInfo) => {
+  await fixture(page);
+  await page.getByRole('button', { name: 'Marking criteria', exact: true }).click();
+  const title = page.locator('[data-criterion-index="0"] [data-key="title"]');
+  await title.fill('My unsaved criterion');
+  await expect(page.locator('[data-rubric-save-state]')).toContainText('Unsaved changes');
+  await page.getByRole('button', { name: 'Collapse sections', exact: true }).click();
+  await expect(title).toBeHidden();
+  await page.getByRole('button', { name: 'Scoring policy', exact: true }).click();
+  await expect(page.getByLabel('Assessment scope', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Marking criteria', exact: true }).click();
+  await expect(title).toHaveValue('My unsaved criterion');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await page.screenshot({ path: testInfo.outputPath('guided-rubric.png'), fullPage: true });
 });
 
 test('failed reference saves preserve writing; navigation requires consent', async ({ page }) => {

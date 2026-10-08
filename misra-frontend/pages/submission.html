@@ -7,16 +7,18 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=27">
+  <link rel="stylesheet" href="../css/workflow-ease.css?v=1">
 </head>
 <body class="workspace-body" data-page="submissions">
   <main class="workspace-content" id="workspace-content">
     <header class="page-heading">
       <div><a class="back-link" href="submissions.html">← Extraction results</a><h1 id="submission-title">Review extraction</h1><p id="submission-meta">Loading persisted OCR results…</p></div>
       <div class="page-actions">
-        <select class="input select compact-select" id="grade-mode" aria-label="Grading mode"><option value="auto">Adaptive mode</option><option value="text_only">Text only</option><option value="image_text">Image + text</option></select>
+        <details class="task-mode"><summary>Grading options · automatic by default</summary><select class="input select compact-select" id="grade-mode" aria-label="Grading mode"><option value="auto">Adaptive mode</option><option value="text_only">Text only</option><option value="image_text">Image + text</option></select></details>
         <button class="btn btn-primary" id="grade-all" type="button" disabled>Grade all answers</button>
       </div>
     </header>
+    <ol class="paper-steps" aria-label="Paper workflow"><li>1. Upload received</li><li aria-current="step">2. Check answers</li><li>3. Grade &amp; review</li><li>4. Export</li></ol>
     <div id="submission-error" aria-live="assertive"></div>
     <section id="identity-guidance" class="identity-guidance" aria-live="polite"></section>
     <details class="workspace-card metadata-editor" id="metadata-editor">
@@ -31,7 +33,6 @@
       </form>
     </details>
     <section id="readiness-panel" aria-live="polite"><div class="skel" style="height:118px"></div></section>
-    <section id="unmatched-panel" aria-live="polite"></section>
     <div class="extraction-layout">
       <aside class="source-viewer workspace-card" id="source-viewer">
         <div class="source-viewer-head"><div><h2 class="section-title">Original paper</h2><p class="section-copy" id="page-label">Page 1</p></div><div class="page-stepper"><button type="button" id="previous-page" aria-label="Previous page">←</button><button type="button" id="next-page" aria-label="Next page">→</button></div></div>
@@ -41,14 +42,16 @@
       </aside>
       <section class="workspace-card extraction-list-panel">
         <div class="extraction-list-head">
-          <div><h2 class="section-title">Question mapping</h2><p class="section-copy" id="mapping-copy">Checking expected answers and source segments…</p></div>
+          <div><h2 class="section-title">Answers found on this paper</h2><p class="section-copy" id="mapping-copy">Checking answer locations…</p></div>
           <div class="segmented" aria-label="Filter questions"><button type="button" aria-pressed="true" data-filter="all">All</button><button type="button" aria-pressed="false" data-filter="issues">Issues</button><button type="button" aria-pressed="false" data-filter="missing">Missing</button></div>
         </div>
-        <div class="mapping-guide"><strong>Answers and their locations</strong><p>Open a question to see its extracted answer. “Show on page” locates the original handwriting. Manual OCR details are available above only when needed.</p></div>
+        <div class="task-tools"><div class="field"><label for="extraction-question-jump">Go to a question</label><select class="input select" id="extraction-question-jump"><option value="">Choose a question…</option></select></div><button class="btn btn-secondary" type="button" id="next-extraction-issue" hidden>Show next issue</button></div>
+        <div class="mapping-guide"><strong>Answers and their locations</strong><p>Open a question to see its extracted answer. “Show on page” locates the original handwriting. <a href="#unmatched-panel">Advanced OCR tools</a> are below the questions if a correction is needed.</p></div>
         <div id="question-mappings" aria-live="polite"><div class="loading-list card-pad"><div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
       </section>
     </div>
+    <section id="unmatched-panel" aria-live="polite"></section>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=22"></script><script src="../js/workspace.js?v=18"></script><script src="../js/submission.js?v=17"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=22"></script><script src="../js/workspace.js?v=18"></script><script src="../js/submission.js?v=20"></script>
 </body>
 </html>

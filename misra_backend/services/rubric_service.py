@@ -150,6 +150,14 @@ INSTRUCTIONS
 12. When a current rubric is provided, treat it as a starting point. Preserve useful
     criterion ids when their meaning is unchanged, but split coarse criteria and revise
     unclear scoring guidance when needed. Do not preserve a flaw merely for compatibility.
+13. For handwritten code, assess the requested concept and approved syntax tolerance.
+    Do not require runnable boilerplate, real filenames, example output, multiple examples,
+    or a particular library unless the question or instructor explicitly requires them.
+    Do not turn 'external corpus' into 'built-in corpus'. A reference is one valid solution,
+    not a source of additional hidden requirements.
+14. Distinguish unavailable external artifacts (notebooks, LMS submissions, executed programs)
+    from blank student answers. Explain this evidence boundary in notes for instructor review;
+    never silently assume missing external evidence earns zero on a paper assessment.
 
 Return only valid JSON matching this structure:
 {{

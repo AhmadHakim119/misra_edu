@@ -75,6 +75,10 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
         .order_by(Question.order_index.asc(), Question.question_number.asc())
         .all()
     )
+    from services.grading_scope_service import is_external_question, scope_summary
+    grading_scope = scope_summary(questions)
+    external_questions = [q for q in questions if is_external_question(q)]
+    questions = [q for q in questions if not is_external_question(q)]
     answers = (
         db.query(Answer)
         .filter(Answer.submission_id == submission.id)
@@ -260,6 +264,10 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
         },
         "suspicious_answers": suspicious_answers,
         "questions": rows,
+        "grading_scope": grading_scope,
+        "external_questions": [{"id": q.id, "question_number": q.question_number,
+                                "question_text": q.question_text, "max_score": _number(q.max_score)}
+                               for q in external_questions],
         "unmatched_segments": active_unmatched,
         "mapping_issues": mapping_issues,
         "excluded_segments": excluded_segments,

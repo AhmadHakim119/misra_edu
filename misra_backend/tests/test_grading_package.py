@@ -161,7 +161,7 @@ class GradingPackageTests(unittest.TestCase):
             process_grading("a", self.db)
         run = self.db.query(GradingRun).one()
         original = deepcopy(run.response_json["grading_package"])
-        self.assertEqual(run.prompt_version, "v3-evidence-package")
+        self.assertEqual(run.prompt_version, "v4-paper-boundaries")
         self.assertIn("GRADING PACKAGE JSON", generate.call_args.kwargs["contents"])
         self.q.question_text = "Changed question"
         self.db.query(RubricVersion).first().rubric_json = {**self.rubric, "reference_context": "Changed reference"}

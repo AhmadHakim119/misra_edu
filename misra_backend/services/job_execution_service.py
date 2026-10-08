@@ -9,6 +9,7 @@ from models import Answer, GradingRun, ProcessingJob, Question, Submission
 from services.grading_service import process_grading, process_grading_with_policy
 from services.ocr_service import process_batch, process_submission
 from services.audit_service import safe_error_message
+from services.grading_scope_service import is_external_question
 
 
 def _progress_callback(job: ProcessingJob, db: Session):
@@ -35,6 +36,11 @@ def _grade_submission(job: ProcessingJob, db: Session) -> None:
     )
     if not answers:
         raise ValueError("This submission has no mapped answers to grade")
+
+    scoped_questions = {q.id: q for q in db.query(Question).filter(Question.exam_id == submission.exam_id).all()}
+    answers = [a for a in answers if not is_external_question(scoped_questions[a.question_id])]
+    if not answers:
+        raise ValueError("No paper-assessed answers are available to grade.")
 
     payload = dict(job.payload or {})
     mode = payload.get("mode", "auto")
@@ -81,7 +87,8 @@ def _grade_submission(job: ProcessingJob, db: Session) -> None:
     graded_answers = db.query(Answer).filter(Answer.submission_id == submission.id).all()
     submission.status = (
         "needs_review"
-        if any(answer.needs_review for answer in graded_answers)
+        if any(answer.needs_review for answer in graded_answers
+               if not is_external_question(scoped_questions[answer.question_id]))
         else "graded"
     )
     db.commit()

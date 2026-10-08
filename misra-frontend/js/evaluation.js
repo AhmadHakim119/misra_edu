@@ -4,15 +4,19 @@
   const content = document.getElementById('evaluation-content');
   const pct = (value) => value == null ? '—' : `${Math.round(Number(value) * 100)}%`;
   const num = (value, digits = 2) => value == null ? '—' : Number(value).toFixed(digits);
+  let requestId = 0;
 
   async function loadEvaluation() {
     if (!examSelect.value) return;
+    const currentRequest = ++requestId;
     content.innerHTML = '<div class="workspace-card card-pad"><div class="skel" style="height:180px"></div></div>';
     try {
       const report = await MisraAPI.evaluation(examSelect.value);
+      if (currentRequest !== requestId) return;
       const overall = report.overall || {};
       const questions = Object.entries(report.per_question || {});
       content.innerHTML = `
+        <section class="workspace-card card-pad"><h2 class="section-title">Paper grading agreement</h2><p class="section-copy">Metrics use instructor-labelled answers, not the student’s exam percentage. ${report.unique_answer_count ?? overall.label_count ?? 0} distinct answers; ${overall.label_count ?? 0} grading-run observations. Regrading the same paper does not create an independent test sample.</p>${report.latest_per_answer ? `<p>Latest instructor-labelled observation per answer: MAE ${num(report.latest_per_answer.mae)} · exact agreement ${pct(report.latest_per_answer.exact_agreement)}.</p>` : ''}${report.excluded_external_labels?.length ? `<details><summary>${report.excluded_external_labels.length} historical labels excluded: assessed outside MISRA</summary><p>These are excluded under the current approved assessment scope, not deleted or counted as improved AI predictions.</p><ul>${report.excluded_external_labels.map(row => `<li>Question ${MisraUI.escapeHTML(row.question_number)} · historical label ${MisraUI.escapeHTML(row.review_label_id)}</li>`).join('')}</ul></details>` : ''}</section>
         <section class="metric-grid">
           <article class="workspace-card metric"><span>Instructor labels</span><strong>${overall.label_count ?? 0}</strong></article>
           <article class="workspace-card metric"><span>Mean absolute error</span><strong>${num(overall.mae)}</strong></article>
@@ -27,7 +31,7 @@
         </section>
         ${report.high_confidence_errors?.length ? `<section class="workspace-card card-pad"><div class="section-head"><div><h2 class="section-title">High-confidence errors</h2><p class="section-copy">These are the most important calibration failures to investigate.</p></div></div><div class="data-list">${report.high_confidence_errors.map((item) => `<div class="data-row"><div><div class="data-row-title">Question ${MisraUI.escapeHTML(item.question_number)}</div><div class="data-row-meta">AI ${item.ai_score} · Human ${item.human_score} · ${item.final_confidence}% confidence</div></div>${MisraUI.badge(`${item.absolute_error} pt error`, 'danger')}</div>`).join('')}</div></section>` : ''}
         <section class="workspace-card card-pad"><h2 class="section-title">Interpretation note</h2><p class="section-copy">${MisraUI.escapeHTML((report.notes || [])[0] || 'Metrics become meaningful as instructor labels accumulate across subjects and answer types.')}</p></section>`;
-    } catch (error) { content.innerHTML = `<div class="workspace-card card-pad">${MisraUI.errorState(error.message)}</div>`; }
+    } catch (error) { if (currentRequest === requestId) content.innerHTML = `<div class="workspace-card card-pad">${MisraUI.errorState(error.message)}</div>`; }
   }
 
   async function init() {

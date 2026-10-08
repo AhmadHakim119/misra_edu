@@ -27,6 +27,11 @@ test('verified extraction stays concise and locates the source on the paper', as
   await page.goto('/pages/submission.html?id=paper');
   await expect(page.getByText('Ready to grade')).toBeVisible();
   await expect(page.getByText('9/10')).toBeHidden();
+  await expect(page.locator('#grade-mode')).toBeHidden();
+  await expect(page.locator('#next-extraction-issue')).toBeHidden();
+  await page.getByLabel('Go to a question', { exact: true }).selectOption('q1');
+  await expect(page.locator('.extraction-row')).toHaveAttribute('open', '');
+  await page.locator('.extraction-row > summary').click();
   await page.locator('.extraction-row > summary').click();
   await page.getByRole('button', { name: 'Show on page 1 · highlighted' }).click();
   await expect(page.locator('#page-highlight')).toBeVisible();

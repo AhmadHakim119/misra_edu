@@ -13,6 +13,7 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 
 from models import Answer, Course, Exam, Question, Student, Submission
+from services.grading_scope_service import is_external_question, scope_summary
 
 
 FORMULA_PREFIXES = ("=", "+", "-", "@")
@@ -24,6 +25,7 @@ class GradeExport:
     course: Course | None
     rows: list[dict]
     question_rows: list[dict]
+    grading_scope: dict | None = None
 
 
 def _safe_text(value: object | None) -> str:
@@ -57,6 +59,9 @@ def build_grade_export(exam_id: str, institution_id: str, db: Session) -> GradeE
         .order_by(Question.order_index.asc(), Question.question_number.asc())
         .all()
     )
+    grading_scope = scope_summary(questions)
+    questions = [q for q in questions if not is_external_question(q)]
+    paper_ids = {q.id for q in questions}
     submissions = (
         db.query(Submission)
         .filter(Submission.exam_id == exam.id)
@@ -88,7 +93,7 @@ def build_grade_export(exam_id: str, institution_id: str, db: Session) -> GradeE
         complete = bool(questions) and graded_count == len(questions)
         needs_review = any(
             answer.needs_review or answer.review_status == "pending"
-            for answer in submission_answers.values()
+            for answer in submission_answers.values() if answer.question_id in paper_ids
         )
         score = sum(score or 0 for score in scores) if complete else None
         student_number = student.student_number if student else submission.extracted_student_number
@@ -124,11 +129,13 @@ def build_grade_export(exam_id: str, institution_id: str, db: Session) -> GradeE
                 }
             )
 
-    return GradeExport(exam=exam, course=course, rows=rows, question_rows=question_rows)
+    return GradeExport(exam=exam, course=course, rows=rows, question_rows=question_rows, grading_scope=grading_scope)
 
 
 def _grade_column_title(export: GradeExport) -> str:
     title = export.exam.title.strip()
+    if (export.grading_scope or {}).get("kind") == "paper_only":
+        title += " — Paper component only"
     return f"{title} [Total Pts: {sum(row['max_score'] for row in export.rows[:1]):g}]"
 
 
@@ -156,6 +163,7 @@ def build_csv(export: GradeExport, profile: str, identifier: str) -> tuple[bytes
                 "Ready for LMS",
                 "Review Status",
                 "Submission ID",
+                "Grading Scope",
             ]
         )
         for row in export.rows:
@@ -170,6 +178,7 @@ def build_csv(export: GradeExport, profile: str, identifier: str) -> tuple[bytes
                     "Yes" if row["ready_for_lms"] else "No",
                     "Needs review" if row["needs_review"] else "Clear",
                     row["submission_id"],
+                    (export.grading_scope or {}).get("kind", "full_assessment"),
                 ]
             )
     return ("\ufeff" + buffer.getvalue()).encode("utf-8"), omitted
@@ -240,6 +249,7 @@ def build_export_preflight(export: GradeExport, identifier: str) -> dict:
         "assessment": export.exam.title,
         "identifier": identifier,
         "grade_column": _grade_column_title(export),
+        "grading_scope": export.grading_scope,
         "counts": counts,
         "rows": rows,
     }
@@ -272,6 +282,7 @@ def build_xlsx(export: GradeExport) -> bytes:
             "Ready for LMS",
             "Review Status",
             "Submission ID",
+            "Grading Scope",
         ]
     )
     for row in export.rows:
@@ -286,11 +297,12 @@ def build_xlsx(export: GradeExport) -> bytes:
                 "Yes" if row["ready_for_lms"] else "No",
                 "Needs review" if row["needs_review"] else "Clear",
                 row["submission_id"],
+                (export.grading_scope or {}).get("kind", "full_assessment"),
             ]
         )
     for cell in gradebook["F"][1:]:
         cell.number_format = "0.00%"
-    _style_sheet(gradebook, [18, 26, 30, 12, 12, 14, 16, 16, 38])
+    _style_sheet(gradebook, [18, 26, 30, 12, 12, 14, 16, 16, 38, 24])
 
     breakdown = workbook.create_sheet("Question breakdown")
     breakdown.append(
@@ -313,6 +325,9 @@ def build_xlsx(export: GradeExport) -> bytes:
     metadata = workbook.create_sheet("Export notes")
     metadata.append(["Field", "Value"])
     metadata.append(["Assessment", export.exam.title])
+    if (export.grading_scope or {}).get("kind") == "paper_only":
+        metadata.append(["Scope", "Paper component only; external practical marks are not included."])
+        metadata.append(["Externally assessed questions", ", ".join(export.grading_scope["external_question_numbers"])])
     metadata.append(["Course", export.course.title if export.course else ""])
     metadata.append(["Course code", export.course.course_code if export.course else ""])
     metadata.append(["Term", export.course.term if export.course else ""])

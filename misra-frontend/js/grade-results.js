@@ -11,9 +11,80 @@
   const questionsHost = document.getElementById('grade-questions');
   const questionsCopy = document.getElementById('question-results-copy');
   const toggleResults = document.getElementById('toggle-results');
+  const gradeNavigation = document.getElementById('grade-navigation');
+  const questionJump = document.getElementById('grade-question-jump');
+  const nextReview = document.getElementById('next-grade-review');
+  let gradeFilter = 'all';
+  let lastFocusedQuestion = '';
+  function applyGradeFilter() {
+    const rows = [...questionsHost.querySelectorAll('[data-grade-question]')];
+    rows.forEach(row => { row.hidden = gradeFilter === 'review' && row.dataset.needsReview !== 'true'; });
+    document.getElementById('grade-filter-empty').hidden = rows.some(row => !row.hidden);
+    document.querySelectorAll('[data-grade-filter]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.gradeFilter === gradeFilter)));
+    toggleResults.textContent = rows.filter(row => !row.hidden).some(row => !row.open) ? 'Expand all' : 'Collapse all';
+  }
+  function focusGradeQuestion(id) {
+    const row = [...questionsHost.querySelectorAll('[data-grade-question]')].find(item => item.dataset.gradeQuestion === id);
+    if (!row) return;
+    if (row.hidden) { gradeFilter = 'all'; applyGradeFilter(); }
+    row.open = true;
+    row.scrollIntoView({ block: 'start', behavior: 'auto' });
+    row.querySelector('summary').focus({ preventScroll: true });
+    questionJump.value = id;
+    lastFocusedQuestion = id;
+  }
+  questionJump.addEventListener('change', () => focusGradeQuestion(questionJump.value));
+  document.querySelectorAll('[data-grade-filter]').forEach(button => button.addEventListener('click', () => {
+    gradeFilter = button.dataset.gradeFilter;
+    applyGradeFilter(); // Hide, do not rebuild: unsaved grades stay in their forms.
+  }));
+  nextReview.addEventListener('click', () => {
+    const rows = [...questionsHost.querySelectorAll('[data-needs-review="true"]')];
+    if (!rows.length) return;
+    const index = (rows.findIndex(row => row.dataset.gradeQuestion === lastFocusedQuestion) + 1) % rows.length;
+    focusGradeQuestion(rows[index].dataset.gradeQuestion);
+  });
 
   let report = null;
   let activeJobId = MisraUI.getParam('job_id');
+  // Keep drafts in memory only: private marks must not persist in browser storage.
+  const drafts = new Map();
+  const savingAnswers = new Set();
+  window.addEventListener('beforeunload', event => {
+    if (!drafts.size && !savingAnswers.size) return;
+    event.preventDefault(); event.returnValue = '';
+  });
+  function rememberDraft(form) {
+    drafts.set(form.dataset.answerId, {
+      fields: [...form.querySelectorAll('input, textarea, select')].map(input => ({ value: input.value, checked: input.checked })),
+      criteriaDirty: form.dataset.criteriaDirty,
+    });
+    form.querySelector('[data-grade-form-status]').textContent = 'Unsaved changes';
+    if (form.dataset.criteriaDirty === 'true' || Math.abs(Number(form.elements.human_score.value) - Number(form.dataset.aiScore)) > 0.001) {
+      form.querySelector('[data-decision-reasons]').open = true;
+    }
+  }
+  function restoreDrafts() {
+    questionsHost.querySelectorAll('[data-instructor-grade-form]').forEach(form => {
+      const draft = drafts.get(form.dataset.answerId);
+      if (draft) {
+        [...form.querySelectorAll('input, textarea, select')].forEach((input, index) => {
+          const field = draft.fields[index];
+          if (!field) return;
+          input.value = field.value;
+          if (input.type === 'checkbox' || input.type === 'radio') input.checked = field.checked;
+        });
+        form.dataset.criteriaDirty = draft.criteriaDirty || '';
+        form.closest('details').open = true;
+        form.querySelector('[data-decision-reasons]').open = true;
+        form.querySelector('[data-grade-form-status]').textContent = 'Unsaved changes — retained while other grades updated';
+      }
+      if (savingAnswers.has(form.dataset.answerId)) {
+        [...form.elements].forEach(control => { control.disabled = true; });
+        form.querySelector('[data-grade-form-status]').textContent = 'Saving…';
+      }
+    });
+  }
 
   function wait(milliseconds) {
     return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -34,7 +105,11 @@
   async function watchJob(jobId) {
     activeJobId = jobId;
     for (;;) {
-      const job = await MisraAPI.job(jobId);
+      let job;
+      try { job = await MisraAPI.job(jobId); } catch (_) {
+        jobRegion.innerHTML = '<div class="workspace-card card-pad" role="status"><strong>Progress connection interrupted</strong><p>Grading may still be running. Reconnect to check the same job; do not start grading again.</p><button class="btn btn-secondary" type="button" data-reconnect-grading>Reconnect</button></div>';
+        return;
+      }
       if (job.status === 'completed') {
         jobRegion.innerHTML = '';
         await load();
@@ -81,16 +156,15 @@
 
     title.textContent = identity.displayName;
     meta.textContent = `${identity.displayNumber} · ${exam?.course_code ? `${exam.course_code} · ` : ''}${exam?.title || 'Assessment'} · graded ${gradedCount} of ${rows.length}`;
-    actions.innerHTML = `<a class="btn btn-secondary" href="submission.html?id=${encodeURIComponent(submission.id)}">${identity.needsAttention ? 'Complete identity' : 'View extraction'}</a>${reviewCount ? `<a class="btn btn-primary" href="reviews.html?exam_id=${encodeURIComponent(submission.exam_id)}">Review ${reviewCount} flagged</a>` : ''}`;
+    actions.innerHTML = `<a class="btn btn-secondary" href="submission.html?id=${encodeURIComponent(submission.id)}${identity.needsAttention ? '#metadata-editor' : ''}">${identity.needsAttention ? 'Complete identity' : 'View extraction'}</a>${reviewCount ? `<button class="btn btn-primary" type="button" data-start-review>Review ${reviewCount} flagged</button>` : complete ? `<a class="btn btn-primary" href="grades.html?exam_id=${encodeURIComponent(submission.exam_id)}">Check export eligibility</a>` : ''}`;
 
-    const calibrationReady = calibration.labelCount >= calibration.minimumLabels;
+    // A label count alone is not evidence of probability calibration.
+    const calibrationReady = false;
     const note = reviewCount
       ? 'Some answers require instructor review before the result should be finalized.'
-      : calibrationReady
-        ? `No answer was flagged. Confidence is supported by ${calibration.labelCount} instructor labels for this assessment.`
-        : `No answer was flagged, but confidence is not calibrated for this assessment (${calibration.labelCount} of ${calibration.minimumLabels} instructor labels). Treat it as a model estimate, not a probability that the grade is correct.`;
+      : `No answer was flagged, but confidence is not calibrated for this assessment (${calibration.labelCount} distinct labelled answers). Labels alone do not calibrate confidence. Treat it as a model estimate, not a probability that the grade is correct.`;
     summary.innerHTML = `${identity.needsAttention ? `<div class="identity-guidance-state needs-action grade-identity-warning"><span class="readiness-mark">!</span><div><strong>${MisraUI.escapeHTML(identity.label)}</strong><p>${MisraUI.escapeHTML(identity.message)} Blackboard export may be blocked until this is corrected.</p></div><a class="btn btn-secondary" href="submission.html?id=${encodeURIComponent(submission.id)}">Check identity</a></div>` : ''}<div class="grade-summary ${reviewCount || !calibrationReady ? 'needs-review' : ''}">
-      <div class="grade-total"><span>${complete ? 'Final recorded score' : 'Current recorded score'}</span><div><strong>${number(totalScore)}</strong><small>/ ${number(totalMax)}</small></div><p>${number(percentage)}%</p></div>
+      <div class="grade-total"><span>${report?.grading_scope?.kind === 'paper_only' ? 'Paper-only recorded score' : complete && !reviewCount ? 'Recorded score' : 'Current recorded score'}</span><div><strong>${number(totalScore)}</strong><small>/ ${number(totalMax)}</small></div><p>${number(percentage)}%</p></div>
       <div class="grade-summary-detail"><div><span>Status</span><strong>${complete ? 'Grading complete' : 'Incomplete grading'}</strong></div><div><span>Questions graded</span><strong>${gradedCount} of ${rows.length}</strong></div><div><span>Instructor review</span><strong>${reviewCount ? `${reviewCount} waiting` : 'Not flagged'}</strong></div></div>
       <div class="grade-summary-note"><span class="readiness-mark">${reviewCount || !calibrationReady ? '!' : '✓'}</span><p>${note}</p></div>
     </div>`;
@@ -198,13 +272,13 @@
       ['ocr_or_mapping_error', 'OCR or mapping error', 'The extracted evidence is wrong. This is never treated as a marking preference.'],
       ['other', 'Other', 'Record a different reason in the detail field.'],
     ];
-    const reasonEditor = `<fieldset class="review-reason-fieldset">
+    const reasonEditor = `<details class="grade-criterion-editor" data-decision-reasons${selectedReasons.size ? ' open' : ''}><summary>Decision reasons <span>Required for a changed grade</span></summary><fieldset class="review-reason-fieldset">
       <legend>Reason for this decision <span>Required when changing the grade</span></legend>
       <p>Select every reason that influenced the decision. Extraction errors are kept separate from marking preferences.</p>
       <div class="review-reason-options">${reasonOptions.map(([value, label, description]) => `<label><input type="checkbox" name="review_reason_codes" value="${value}"${selectedReasons.has(value) ? ' checked' : ''}><span><strong>${label}</strong><small>${description}</small></span></label>`).join('')}</div>
       <label class="field review-reason-note"><span>Reason detail <small>Optional</small></span><textarea class="input" name="review_reason_note" rows="2" maxlength="1000" placeholder="Add context that will help interpret this decision later.">${MisraUI.escapeHTML(latestLabel?.review_reason_note || '')}</textarea></label>
       <p class="field-error" data-review-reason-error role="alert" hidden>Select at least one reason before saving a changed grade.</p>
-    </fieldset>`;
+    </fieldset></details>`;
     const criterionEditor = criteria.length ? `<details class="grade-criterion-editor">
       <summary>Adjust criterion scores <span>Optional</span></summary>
       <div class="grade-criterion-inputs">${criteria.map((criterion) => {
@@ -239,11 +313,9 @@
     const reviewNeeded = Boolean(answer?.needs_review || answer?.review_status === 'pending');
     const sourceLinks = pages.length ? pages.map((page) => `<a href="submission.html?id=${encodeURIComponent(report.submission.id)}&page=${page - 1}">Page ${page}</a>`).join('') : '<span>No tracked page</span>';
 
-    const calibrationReady = calibration.labelCount >= calibration.minimumLabels;
-    const confidenceLabel = calibrationReady
-      ? `${number(confidence)}% calibrated confidence`
-      : `Model estimate ${number(confidence)}% · uncalibrated`;
-    return `<details class="grade-question" ${totalRows <= 5 || index === 0 || reviewNeeded ? 'open' : ''}>
+    const calibrationReady = false;
+    const confidenceLabel = confidence == null ? 'Confidence not recorded' : `Model estimate ${number(confidence)}% · uncalibrated`;
+    return `<details class="grade-question task-focus" data-grade-question="${MisraUI.escapeHTML(row.question.id)}" data-needs-review="${reviewNeeded}" ${index === 0 ? 'open' : ''}>
       <summary><span class="mapping-number">${MisraUI.escapeHTML(row.question.question_number)}</span><span class="grade-question-title"><strong>${MisraUI.escapeHTML(row.question.question_text || `Question ${row.question.question_number}`)}</strong><small>${sourceLinks}</small></span><span class="grade-question-score"><strong>${score === null ? 'Not graded' : number(score)}</strong>${score === null ? '' : `<small>/ ${number(row.question.max_score)}</small>`}</span><span class="grade-question-action">Review &amp; edit</span><span class="disclosure" aria-hidden="true">⌄</span></summary>
       <div class="grade-question-body">
         ${reviewNeeded ? '<div class="mapping-warning"><strong>Instructor review required</strong><span>This answer was flagged by the grading policy or confidence checks.</span></div>' : ''}
@@ -269,6 +341,13 @@
   function renderQuestions(rows, answers, reviewLabels, calibration) {
     questionsCopy.textContent = `${rows.length} question${rows.length === 1 ? '' : 's'} · every question can be reviewed and edited here`;
     toggleResults.hidden = rows.length < 2;
+    gradeNavigation.hidden = !rows.length;
+    questionJump.innerHTML = '<option value="">Choose a question…</option>' + rows.map(row => {
+      const answer = answers.get(row.question.id);
+      const score = effectiveScore(answer);
+      return `<option value="${MisraUI.escapeHTML(row.question.id)}">Question ${MisraUI.escapeHTML(row.question.question_number)} · ${score === null ? 'Not graded' : `${number(score)} / ${number(row.question.max_score)}`}${answer?.needs_review || answer?.review_status === 'pending' ? ' · Needs review' : ''}</option>`;
+    }).join('');
+    nextReview.hidden = ![...answers.values()].some(answer => answer.needs_review || answer.review_status === 'pending');
     if (!rows.length) {
       questionsHost.innerHTML = MisraUI.emptyState('No configured questions', 'Return to the assessment and add questions before grading.');
       return;
@@ -277,6 +356,7 @@
       const answer = answers.get(row.question.id);
       return renderQuestion(row, answer, answer ? reviewLabels.get(answer.id) : null, index, rows.length, calibration);
     }).join('');
+    applyGradeFilter();
   }
 
   async function load() {
@@ -296,24 +376,38 @@
       const exam = exams.find((item) => item.id === results.submission.exam_id);
       let evaluation = null;
       try { evaluation = await MisraAPI.evaluation(results.submission.exam_id); } catch (_) { evaluation = null; }
-      const calibration = { labelCount: Number(evaluation?.overall?.label_count || 0), minimumLabels: 10 };
+      const calibration = { labelCount: Number(evaluation?.unique_answer_count ?? evaluation?.overall?.label_count ?? 0) };
       const answers = new Map(results.answers.map((answer) => [answer.question_id, answer]));
       const reviewLabels = new Map((results.latest_review_labels || []).map((label) => [label.answer_id, label]));
       renderSummary(results.submission, exam, answers, extraction.questions, calibration);
       renderQuestions(extraction.questions, answers, reviewLabels, calibration);
+      if (extraction.grading_scope?.kind === 'paper_only') {
+        summary.insertAdjacentHTML('afterbegin', `<div class="workspace-card card-pad" role="note"><strong>Paper component only — not the full exam grade</strong><p>Questions ${MisraUI.escapeHTML(extraction.grading_scope.external_question_numbers.join(', '))} are assessed outside MISRA. Their ${number(extraction.grading_scope.external_max_score)} possible marks and any historical AI scores are excluded here. No zero has been substituted.</p></div>`);
+        questionsHost.insertAdjacentHTML('beforeend', (extraction.external_questions || []).map(question => {
+          const previous = (results.external_answers || []).find(answer => answer.question_id === question.id);
+          return `<details class="grade-question"><summary><span class="question-number">${MisraUI.escapeHTML(question.question_number)}</span><span class="grade-question-title"><strong>Assessed outside MISRA</strong><small>Not included in paper total</small></span><span></span><span class="grade-question-action">Details</span><span aria-hidden="true">⌄</span></summary><div class="card-pad"><p>${MisraUI.escapeHTML(question.question_text || '')}</p><p>This practical is assessed separately. MISRA does not evaluate a notebook it cannot access.</p>${previous ? `<button type="button" class="btn btn-secondary" data-load-history="${MisraUI.escapeHTML(previous.id)}">View historical AI runs (excluded)</button><div data-run-history></div>` : ''}</div></details>`;
+        }).join(''));
+      }
+      restoreDrafts();
+      errorRegion.innerHTML = '';
       MisraUI.reveal(questionsHost.querySelectorAll('.grade-question'));
     } catch (error) {
       errorRegion.innerHTML = MisraUI.errorState(error.message);
-      summary.innerHTML = '';
-      questionsHost.innerHTML = '';
+      // A transient refresh failure must not destroy instructor edits.
     }
   }
 
   toggleResults.addEventListener('click', () => {
-    const rows = [...questionsHost.querySelectorAll('.grade-question')];
+    const rows = [...questionsHost.querySelectorAll('[data-grade-question]')].filter(row => !row.hidden);
     const expand = rows.some((row) => !row.open);
     rows.forEach((row) => { row.open = expand; });
     toggleResults.textContent = expand ? 'Collapse all' : 'Expand all';
+  });
+  actions.addEventListener('click', event => {
+    if (!event.target.closest('[data-start-review]')) return;
+    gradeFilter = 'review'; applyGradeFilter();
+    const first = questionsHost.querySelector('[data-needs-review="true"]');
+    if (first) focusGradeQuestion(first.dataset.gradeQuestion);
   });
 
   questionsHost.addEventListener('click', async event => {
@@ -334,6 +428,12 @@
   });
 
   jobRegion.addEventListener('click', async (event) => {
+    const reconnect = event.target.closest('[data-reconnect-grading]');
+    if (reconnect) {
+      reconnect.disabled = true;
+      await watchJob(activeJobId);
+      return;
+    }
     const retry = event.target.closest('[data-retry-grading]');
     if (!retry) return;
     retry.disabled = true;
@@ -347,19 +447,25 @@
   });
 
   questionsHost.addEventListener('input', (event) => {
-    if (!event.target.matches('[data-criterion-score]')) return;
     const form = event.target.closest('[data-instructor-grade-form]');
     if (!form) return;
-    form.dataset.criteriaDirty = 'true';
-    const inputs = [...form.querySelectorAll('[data-criterion-score]')];
-    const score = inputs.reduce((total, input) => total + (Number(input.value) || 0), 0);
-    form.querySelector('[name="human_score"]').value = String(Math.round(score * 100) / 100);
+    if (event.target.matches('[data-criterion-score]')) {
+      form.dataset.criteriaDirty = 'true';
+      const inputs = [...form.querySelectorAll('[data-criterion-score]')];
+      const score = inputs.reduce((total, input) => total + (Number(input.value) || 0), 0);
+      form.querySelector('[name="human_score"]').value = String(Math.round(score * 100) / 100);
+    }
+    rememberDraft(form);
   });
 
   questionsHost.addEventListener('submit', async (event) => {
     const form = event.target.closest('[data-instructor-grade-form]');
     if (!form) return;
     event.preventDefault();
+    if (savingAnswers.size) {
+      window.showToast('Wait for the current grade to finish saving. Your edits are kept.', 'warning');
+      return;
+    }
     if (!form.reportValidity()) return;
 
     const submit = form.querySelector('[type="submit"]');
@@ -381,6 +487,7 @@
     const isOverride = criteriaDirty || Math.abs(humanScore - aiScore) > 0.001;
     const reasonError = form.querySelector('[data-review-reason-error]');
     if (isOverride && !reasonCodes.length) {
+      form.querySelector('[data-decision-reasons]').open = true;
       reasonError.hidden = false;
       form.querySelector('[name="review_reason_codes"]').focus();
       return;
@@ -389,7 +496,9 @@
 
     submit.disabled = true;
     submit.textContent = 'Saving grade…';
-    status.textContent = '';
+    status.textContent = 'Saving…';
+    savingAnswers.add(form.dataset.answerId);
+    [...form.elements].forEach(control => { control.disabled = true; });
     try {
       await MisraAPI.resolveReview(form.dataset.answerId, {
         action: isOverride ? 'override' : 'approve',
@@ -401,13 +510,26 @@
         review_reason_note: reasonNote || null,
         reviewer_notes: notes || null,
       });
+      drafts.delete(form.dataset.answerId);
+      savingAnswers.delete(form.dataset.answerId);
       await load();
+      const savedForm = [...questionsHost.querySelectorAll('[data-instructor-grade-form]')].find(item => item.dataset.answerId === form.dataset.answerId);
+      if (savedForm) {
+        [...savedForm.elements].forEach(control => { control.disabled = false; });
+        savedForm.querySelector('[data-grade-form-status]').textContent = 'Saved';
+        savedForm.querySelector('[type="submit"]').textContent = 'Save instructor grade';
+      }
       window.showToast('Instructor grade saved. Totals and exports are updated.', 'success');
     } catch (error) {
-      status.textContent = error.message;
+      status.textContent = `Not saved: ${error.message}. Your edits are still here; try again.`;
       status.dataset.tone = 'error';
       submit.disabled = false;
       submit.textContent = 'Save instructor grade';
+    } finally {
+      savingAnswers.delete(form.dataset.answerId);
+      [...questionsHost.querySelectorAll('[data-instructor-grade-form]')].filter(item => item.dataset.answerId === form.dataset.answerId).forEach(item => {
+        [...item.elements].forEach(control => { control.disabled = false; });
+      });
     }
   });
 
@@ -428,6 +550,11 @@
     const restore = event.target.closest('[data-restore-ai]');
     const grade = event.target.closest('[data-grade-answer]');
     if (!restore && !grade) return;
+    if (savingAnswers.size) {
+      window.showToast('Wait for the current grade to finish saving.', 'warning');
+      return;
+    }
+    if (restore && drafts.has(restore.dataset.restoreAi) && !window.confirm('Discard your unsaved changes for this question and restore the AI score?')) return;
     const button = restore || grade;
     button.disabled = true;
     const previousText = button.textContent;
@@ -441,6 +568,7 @@
           reviewer_notes: 'Instructor restored the current AI grade from the grade editor.',
         });
         window.showToast('AI score restored.', 'success');
+        drafts.delete(restore.dataset.restoreAi);
       } else {
         await MisraAPI.gradeAnswer(grade.dataset.gradeAnswer, 'auto');
         window.showToast('Question graded.', 'success');
