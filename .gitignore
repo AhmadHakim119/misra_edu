@@ -47,3 +47,20 @@ node_modules/
 playwright-report/
 test-results/
 .local/
+
+# Private student-work findings and locally generated guides (may embed identities).
+misra_backend/EVALUATION_LOG.md
+docs/MISRA_EDU_Complete_System_Guide.docx
+docs/MISRA_EDU_Redis_RQ_Admin_Operations_Explained.docx
+docs/research/
+private/
+evaluation-artifacts/
+# Database backups contain records; only the schema belongs in Git.
+database/*.sql
+!database/schema.sql
+# Papers, reports and exported gradebooks are private by default.
+*.pdf
+*.docx
+*.xlsx
+*.csv
+codex-clipboard-*.png
