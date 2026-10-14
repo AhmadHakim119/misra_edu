@@ -329,6 +329,7 @@
     }
 
     function destination(job) {
+      if (job.job_type === 'material_ingestion') return `rubric-studio.html${job.course_id ? `?course_id=${encodeURIComponent(job.course_id)}` : ''}`;
       if (job.job_type === 'exam_setup' && job.exam_id) return `rubric-studio.html?exam_id=${encodeURIComponent(job.exam_id)}`;
       if (job.job_type === 'ocr_batch' && job.exam_id) return `submissions.html?exam_id=${encodeURIComponent(job.exam_id)}${job.batch_id ? `&batch_id=${encodeURIComponent(job.batch_id)}` : ''}`;
       if (job.job_type === 'ocr_submission' && job.submission_id) return `submission.html?id=${encodeURIComponent(job.submission_id)}`;
@@ -339,6 +340,7 @@
     function jobLabel(job) {
       const labels = {
         exam_setup: 'Reading assessment setup',
+        material_ingestion: 'Reading course material',
         ocr_batch: 'Extracting uploaded batch',
         ocr_submission: 'Extracting student paper',
         grade_submission: 'Grading submission',
@@ -531,7 +533,7 @@
     const queueOnline = health.queue !== 'unavailable';
     apiStatus.dataset.state = queueOnline ? 'online' : 'degraded';
     apiStatus.lastElementChild.textContent = queueOnline
-      ? (health.model ? `Engine online · ${health.model}` : 'Engine online')
+      ? (health.grading_provider === 'openrouter_free' ? `API online · free grading · OCR ${health.ocr_provider || 'Gemini'}` : health.model ? `Engine online · ${health.model}` : 'Engine online')
       : 'Engine online · worker queue offline';
   }).catch(() => {
     apiStatus.dataset.state = 'offline';

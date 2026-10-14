@@ -1,5 +1,6 @@
 from collections import defaultdict
 from typing import Any
+import math
 
 from sqlalchemy.orm import Session
 
@@ -27,15 +28,25 @@ def _criteria_by_id(items: list[dict] | None) -> dict[str, float]:
 def _summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     count = len(rows)
     if not count:
-        return {"label_count": 0, "mae": None, "exact_agreement": None, "plus_minus_one_agreement": None}
+        return {"label_count": 0, "mae": None, "rmse": None, "mean_signed_error": None,
+                "normalized_mae": None, "normalized_label_count": 0,
+                "exact_agreement": None, "plus_minus_one_agreement": None}
 
     errors = [row["absolute_error"] for row in rows]
     return {
         "label_count": count,
         "mae": round(sum(errors) / count, 4),
+        "rmse": round(math.sqrt(sum(error * error for error in errors) / count), 4),
+        "mean_signed_error": _mean([row["signed_error"] for row in rows if row.get("signed_error") is not None]),
+        "normalized_mae": _mean([row["absolute_error"] / row["max_score"] for row in rows if row.get("max_score", 0) > 0]),
+        "normalized_label_count": sum(row.get("max_score", 0) > 0 for row in rows),
         "exact_agreement": _rate(sum(error < EPSILON for error in errors), count),
         "plus_minus_one_agreement": _rate(sum(error <= 1.0 + EPSILON for error in errors), count),
     }
+
+
+def _mean(values):
+    return round(sum(values) / len(values), 4) if values else None
 
 
 def build_evaluation_report(
@@ -119,6 +130,10 @@ def build_evaluation_report(
             "ai_score": ai_score,
             "human_score": human_score,
             "absolute_error": absolute_error,
+            "signed_error": ai_score - human_score,
+            # Historical denominators only. A later rubric edit cannot rescale an old result.
+            "max_score": float(grading_run.max_score) if grading_run else 0,
+            "model_name": grading_run.model_name if grading_run else None,
             "final_confidence": confidence,
             "was_review_warranted": bool(label.was_review_warranted),
             "review_reason_codes": list(label.review_reason_codes or []),
@@ -130,15 +145,22 @@ def build_evaluation_report(
             ],
         })
 
-        ai_criteria = _criteria_by_id(
+        ai_criteria_items = (
             label.ai_criteria_scores_snapshot if label.ai_criteria_scores_snapshot is not None
             else grading_run.criteria_scores if grading_run else None
         )
+        ai_criteria = _criteria_by_id(ai_criteria_items)
+        historical_criterion_maxima = {item["criterion_id"]:float(item["max_points"]) for item in (ai_criteria_items or [])
+            if item.get("criterion_id") is not None and item.get("max_points") is not None}
         human_criteria = _criteria_by_id(label.human_criteria_scores)
         for criterion_id in sorted(set(ai_criteria) & set(human_criteria)):
             criterion_records.append({
                 "criterion_id": criterion_id,
+                "question_id": question.id,
+                "rubric_version_id": label.rubric_version_id,
                 "absolute_error": abs(ai_criteria[criterion_id] - human_criteria[criterion_id]),
+                "signed_error": ai_criteria[criterion_id] - human_criteria[criterion_id],
+                "max_score": historical_criterion_maxima.get(criterion_id,0),
             })
 
         if label.ai_needs_review_snapshot is not None:
@@ -153,8 +175,10 @@ def build_evaluation_report(
         per_question_rows[record["question_number"] if exam_id else record["question_id"]].append(record)
 
     criterion_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    definition_criterion_rows: dict[tuple, list[dict[str, Any]]] = defaultdict(list)
     for record in criterion_records:
         criterion_rows[record["criterion_id"]].append(record)
+        definition_criterion_rows[(record["question_id"],record["rubric_version_id"],record["criterion_id"])].append(record)
 
     rubric_schema_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
     prompt_version_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -198,6 +222,7 @@ def build_evaluation_report(
     latest_answers = {}
     for record in records:
         latest_answers.setdefault(record["answer_id"], record)
+    from services.evidence_evaluation_service import saved_run_diagnostics
     return {
         "scope": {"exam_id": exam_id, "high_confidence_threshold": HIGH_CONFIDENCE_THRESHOLD,
                   "assessment_scope": "currently_approved_paper_questions"},
@@ -233,6 +258,16 @@ def build_evaluation_report(
             criterion_id: _summary(rows)
             for criterion_id, rows in sorted(criterion_rows.items())
         },
+        "criterion_by_definition": [{"question_id":qid,"rubric_version_id":rid,"criterion_id":cid,
+            **_summary(rows)} for (qid,rid,cid),rows in definition_criterion_rows.items()],
+        "instructor_error_annotations": {
+            "label_count": len(records),
+            "unsupported_deduction_count": sum("unsupported_deduction" in row["review_reason_codes"] for row in records),
+            "evidence_citation_error_count": sum("evidence_citation_error" in row["review_reason_codes"] for row in records),
+            "annotation_count": sum(bool(row["review_reason_codes"]) for row in records),
+            "interpretation": "Instructor-reported errors, not automatic semantic verification. Unannotated labels are not proof of correctness.",
+        },
+        "saved_run_diagnostics": saved_run_diagnostics(db,institution_id=institution_id,exam_id=exam_id),
         "labels": records,
         "notes": [
             "Metrics are descriptive until the labelled sample is sufficiently large and representative.",
@@ -243,5 +278,8 @@ def build_evaluation_report(
             "Externally assessed questions are excluded under the current approved scope; excluded label IDs remain listed for audit.",
             "Overall counts run observations, not independent answers. Latest-per-answer counts each answer once by its most recent instructor label.",
             "Historical criterion scores come only from label/run snapshots, never from mutable current answers.",
+            "Normalized MAE divides each error by that run's saved maximum score. Missing historical maxima are excluded, never inferred from current questions.",
+            "Mean signed error is AI minus instructor: negative means under-marking. Mixed score scales require normalized MAE too.",
+            "Criterion-by-definition avoids pooling identical criterion names from unrelated questions/rubric versions; criterion_level remains a legacy pooled view.",
         ],
     }

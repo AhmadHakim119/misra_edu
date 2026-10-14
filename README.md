@@ -26,8 +26,35 @@ public internet deployment or use as an official institutional gradebook.
 - Redis-backed jobs, progress, retries, and orphan recovery
 - Responsive instructor workspace with keyboard support and light/dark themes
 - Assessment duplication with rubric and grading-policy reuse
+- Approved course-material versions, selected-page review, and question-scoped
+  BM25 retrieval with saved passage provenance
+- Versioned assessment-wide source defaults with approved question exceptions
+- Optional explicit free-only OpenRouter grading (no paid/model fallback)
+- Source-grounded question, solution and criterion proposals with quoted approved
+  passages, saved setup jobs and separate instructor approval of all foundations
+- Normalized score error, marking bias, citation coverage and observed model timing
 
 ## Active application
+
+See [Questions from approved sources](docs/SOURCE_QUESTION_DRAFTS.md) for the
+Rubric Studio generation workflow and its validation/approval boundaries.
+See [Assessment source defaults](docs/ASSESSMENT_SOURCE_DEFAULTS.md) for choosing
+references once per assessment and the additive database upgrade.
+The [parallel marking workspace](docs/NEXT_WORKSPACE.md) is available at
+`/app/next/index.html`; the original workspace remains the full-feature fallback.
+Its [source-led marking guide](docs/ASSESSMENT_GUIDE.md) reviews all questions
+together and publishes saved rubric, answer-key and source-choice drafts with one
+assessment-wide approval. Source-page checking and historical run snapshots remain
+separate safeguards.
+The [connected teaching cycle](docs/TEACHING_CYCLE.md) adds multi-chapter upload,
+optional lecture-grounded quiz drafting or existing-exam import, mandatory course
+citations for required-source grading, and descriptive class feedback.
+The preview now includes focused paper review, student uploads, assessment source
+defaults, versioned rubric/answer-key editors, course-library page review, identity
+correction, export checks/downloads, assessment creation and account pages.
+Exam-document import, source-question generation, advanced extraction, expanded
+history and evaluation/admin tools still have labeled links to the original
+workspace while parity is verified.
 
 - `misra_backend/` - FastAPI, SQLAlchemy, MariaDB/MySQL, OCR, Gemini grading,
   authentication, exports, background jobs, and evaluation
@@ -70,6 +97,10 @@ authoritative assessment results.
 - Redis 5+ (or a Redis-compatible Windows service such as Memurai)
 - Poppler available on `PATH` (`pdftoppm -v` must work)
 - A Gemini API key
+
+Gemini is still used for the existing OCR/setup workflow. The optional
+OpenRouter grading adapter is not a validated replacement for OCR or proof of
+better grading accuracy.
 
 On Windows, install a maintained Poppler build and add its `Library/bin` or
 `bin` directory to the system `PATH`. Restart PowerShell after changing `PATH`.
@@ -141,12 +172,22 @@ Set-Location .\misra_backend
 python .\scripts\upgrade_account_management.py
 python .\scripts\upgrade_processing_jobs.py
 python .\scripts\upgrade_grading_foundations.py
+python .\scripts\upgrade_course_materials.py
+python .\scripts\upgrade_extraction_coverage.py
 ```
 
 The grading-foundation coordinator adds exam-setup jobs, versioned answer keys,
 instructor preference versions, structured review reasons, and immutable review
 revision links. It is idempotent and does not regrade or rewrite existing answers. Restart both
 Uvicorn and the RQ worker after upgrading.
+
+The extraction-coverage upgrade adds an optional, versioned page-region inventory.
+New extractions record detected answer areas and their transcription links. Known
+unaccounted areas pause grading and can be located on the original page; uncertain
+inventories route the result to review. This is OCR-provider reporting, not proof
+that every handwritten mark was read. Older submissions continue working without
+re-uploading, but do not acquire coverage evidence retrospectively. See
+[Extraction coverage](docs/EXTRACTION_COVERAGE.md).
 
 ## Run the application
 
@@ -365,8 +406,85 @@ one kind, MISRA may suggest a new profile rule. OCR/mapping failures, rubric
 problems, and miscellaneous reasons are excluded from preference evidence, and
 suggestions are never applied automatically.
 
-Long-document semantic retrieval remains a future phase. No vector database is
-required for the current exact question-linked references.
+Semantic/vector retrieval remains a future phase. The course library now
+supports bounded BM25 (keyword) retrieval from explicitly approved pages.
+
+## Approved course sources and grounded grading
+
+After backing up an existing database, run `upgrade_course_materials.py` above,
+then restart Uvicorn and the worker. Do not re-import `database/schema.sql`
+into an existing database; it is a fresh-install schema, not a migration.
+
+In **Rubric Studio → choose a question → Course sources**:
+
+1. Expand **Course library** and add a PDF chapter, slides, or typed notes.
+2. Wait for local native-text ingestion. This job does not call an AI provider
+   and does not create student submissions.
+3. Review text beside the original document. Correct missing symbols or
+   equations in the draft. Scanned pages without readable text require
+   instructor-verified transcription; they are not automatically trusted.
+4. Confirm review and approve the selected document pages. Document page
+   positions start at 1 in the UI, independently of printed page labels.
+5. Link approved pages to the question or a particular rubric criterion.
+   Save a draft, then approve the source scope separately.
+6. Preview active retrieval before grading. Optional exact passage links can
+   replace keyword matching for formulas or difficult terminology.
+
+Retrieval uses the approved question and criteria, never student answers, as
+the search query. It is restricted to the same course and institution and
+selects up to two passages per criterion, eight passages/12,000 characters
+overall. It does not truncate passages to fit the budget. Required retrieval
+stops when configured context cannot be found. Optional missing context and
+required sources not cited by the grader are routed to instructor review.
+
+Each run saves the selected passage text, page/character positions, source and
+scope versions, hashes, and retrieval query. The grade view shows cited source
+passages beside criterion feedback. Later approvals do not change old runs.
+The rubric and policy still determine credit; a textbook cannot silently add
+grading rules. Valid citations are traceability, not proof of correct reasoning.
+
+### Optional free-only grading
+
+In the ignored `misra_backend/.env`, keep your key private and explicitly set:
+
+```dotenv
+GRADING_PROVIDER=openrouter_free
+OPENROUTER_API_KEY=your-private-key
+OPENROUTER_GRADING_MODEL=your-selected-model:free
+```
+
+Only an explicit `:free` model with current zero-priced catalog metadata is
+accepted. Paid routing, automatic model fallback, and text-only fallback for
+image requests are prohibited. Choose a free model that actually supports the
+required image inputs; availability and rate limits vary. A rejected response
+does not save a grade. Token usage, reported cost, and timing are stored when
+the provider returns them. Setting `GRADING_PROVIDER=gemini` preserves the
+existing grading adapter. OCR, exam setup and rubric suggestions still use
+Gemini; this setting changes grading only. No private-paper benchmark has yet
+validated the free model as a replacement.
+
+### Evaluation boundaries
+
+Evaluation includes normalized MAE using saved run maxima, RMSE, signed marking
+bias (AI minus instructor), definition-scoped criterion agreement, structural
+citation coverage, instructor-reported unsupported deductions/citation errors,
+and observed timing/cost buckets. Missing historical cost is unknown, not zero.
+The existing pooled criterion view is retained for compatibility; use
+`criterion_by_definition` to avoid pooling unrelated rubrics.
+
+Offline transcription comparisons can use a private JSON array containing
+`reference` (manual transcription) and `candidate` (OCR transcription):
+
+```powershell
+python .\scripts\compare_transcriptions.py ..\private\transcription-pairs.json
+```
+
+The report excludes input text and returns CER, WER, ROUGE-1/2/L, normalization
+and an input fingerprint. Compare aligned answer/page segments, not entire
+books. Whitespace normalization is opt-in. CER/WER measure transcription;
+ROUGE measures text overlap, **not correctness of marks**. Real grading
+improvement still requires independently labelled held-out answers; observed
+production runs are not a controlled old-versus-new benchmark.
 
 ## Free-model research experiment
 

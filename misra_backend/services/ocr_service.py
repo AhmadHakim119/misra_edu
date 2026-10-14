@@ -4,7 +4,7 @@ from PIL import Image
 import io
 import json
 from typing import Callable, Optional, Literal
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, Field, StrictInt
 from pdf2image import convert_from_bytes, convert_from_path
 from sqlalchemy.orm import Session
 import logging
@@ -21,6 +21,7 @@ from models import (
 import os
 import uuid
 import re
+import unicodedata
 from services.upload_security_service import StoredUpload
 from services.whole_paper_mapping_service import MappingDecision, reconcile_paper
 from schemas.ocr_evidence import NormalizedBoundingBox
@@ -36,6 +37,14 @@ class OCRSegment(BaseModel):
     math_notation: Optional[str] = None
     bounding_box: Optional[NormalizedBoundingBox] = None
     content_role: Literal["answer", "marking", "identity_or_header", "printed_prompt"] = "answer"
+    printed_question_number: Optional[str] = Field(default=None, max_length=100)
+
+
+class OCRAnswerRegion(BaseModel):
+    """Visible answer-region inventory, distinct from transcription segments."""
+    bounding_box: NormalizedBoundingBox
+    segment_indices: list[StrictInt] = Field(default_factory=list, max_length=1000)
+    note: Optional[str] = Field(default=None, max_length=500)
 
 
 class OCRPageResult(BaseModel):
@@ -45,6 +54,9 @@ class OCRPageResult(BaseModel):
     student_id: Optional[str] = None
     identity_legibility: Literal["clear", "partial", "illegible", "not_found"]
     page_role: Literal["cover", "answers", "mixed"] = "answers"
+    answer_regions: list[OCRAnswerRegion] = Field(default_factory=list, max_length=1000)
+    coverage_reported_complete: Optional[bool] = None
+    coverage_notes: Optional[str] = Field(default=None, max_length=1000)
 
 
 # ---------- Prompt ----------
@@ -86,6 +98,19 @@ Rules:
   and height describe the rectangle. Every value must be between 0 and 1.
 - If no student name or ID is visible anywhere on the page, set student_name and student_id to null and identity_legibility to "not_found".
 - If a name/ID area exists but cannot be read clearly, set identity_legibility to "illegible".
+- Return printed_question_number on each segment when its printed question heading
+  is visible. Keep it separate from a student's handwritten label; never fabricate
+  a printed anchor from an earlier page or from answer content.
+- Inventory every visible student-answer region in answer_regions, including
+  selected/highlighted printed options, short numerical answers, work in margins,
+  diagrams and crossed-out work. Reference its segment_indices (zero based).
+  If visible student work could not be transcribed, retain a region with an empty
+  segment_indices list and a short uncertainty note. Never drop a region to make
+  coverage look complete. Exclude instructor annotations and printed prompts
+  from this answer-region inventory.
+- coverage_reported_complete is true only if you inspected the full page and
+  inventoried every visible student-answer region; false if uncertain. This is a
+  coverage report, not a guarantee that the OCR or mapping is correct.
 
 IMPORTANT — WHAT TO EXTRACT:
 - Do NOT create a segment for the printed question prompt text itself (the question as originally written on the exam, e.g. "Q3. Early one October, you go to a pumpkin patch...").
@@ -136,13 +161,17 @@ number merely because that later label also exists in the assessment.
         "width": 0.80,
         "height": 0.18
       },
-      "content_role": "answer | marking | identity_or_header | printed_prompt"
+      "content_role": "answer | marking | identity_or_header | printed_prompt",
+      "printed_question_number": "visible printed heading label or null"
     }
   ],
   "student_name": "string or null",
   "student_id": "string or null",
   "identity_legibility": "clear | partial | illegible | not_found",
-  "page_role": "cover | answers | mixed"
+  "page_role": "cover | answers | mixed",
+  "answer_regions": [{"bounding_box":{"x":0.1,"y":0.25,"width":0.8,"height":0.18},"segment_indices":[0],"note":null}],
+  "coverage_reported_complete": true,
+  "coverage_notes": null
 }
 """
 
@@ -281,10 +310,10 @@ def _normalize_question_number(
     if not raw_question_number:
         return None, previous_base_number
 
-    normalized = raw_question_number.strip().lower()
-    normalized = normalized.replace("question", "").replace("q", "")
-    normalized = normalized.replace(".", "").replace("(", "").replace(")", "")
-    normalized = normalized.strip()
+    normalized = unicodedata.normalize("NFKC",raw_question_number).strip().lower()
+    normalized = "".join(str(unicodedata.digit(char)) if char.isdecimal() else char for char in normalized)
+    normalized = re.sub(r"^(?:question|السؤال|سؤال|q)\s*[.:：]?\s*", "", normalized)
+    normalized = re.sub(r"[\s():：]", "", normalized).rstrip(".")
 
     # A continuation page may show only "(b)" or "(c)".
     # Attach it to the most recently seen parent question number.
@@ -293,7 +322,7 @@ def _normalize_question_number(
             return f"{previous_base_number}{normalized}", previous_base_number
         return normalized, previous_base_number
 
-    match = re.fullmatch(r"(\d+)([a-z]?)", normalized)
+    match = re.fullmatch(r"(\d+(?:[.-]\d+)*)([a-z]?)", normalized)
     if match:
         base_number = match.group(1)
         return normalized, base_number
@@ -350,13 +379,20 @@ def _question_for_segment(
         return None, None
     if label in question_lookup:
         return label, question_lookup[label]
-    match = re.fullmatch(r"(\d+)[a-z]", label)
+    # Preserve configured spelling while accepting equivalent printed label forms.
+    equivalent = [number for number in question_lookup if _normalize_question_number(number,None)[0] == label]
+    if len(equivalent) == 1:
+        number = equivalent[0]
+        return number,question_lookup[number]
+    match = re.fullmatch(r"(\d+(?:[.-]\d+)*)[a-z]", label)
     if match and match.group(1) in question_lookup:
         parent = match.group(1)
         return parent, question_lookup[parent]
-    if re.fullmatch(r"\d+", label) and f"{label}a" in question_lookup:
-        child = f"{label}a"
-        return child, question_lookup[child]
+    if re.fullmatch(r"\d+(?:[.-]\d+)*", label):
+        children = [number for number in question_lookup if re.fullmatch(re.escape(label) + "[a-z]",number)]
+        if len(children) == 1:
+            child = children[0]
+            return child,question_lookup[child]
     return None, None
 
 
@@ -373,12 +409,13 @@ def _is_cover_mark(
         bool(page.student_name and page.student_id)
         and len(answer_segments) >= 3
         and score_only
+        and "page_role" not in page.model_fields_set
     )
     return (
         page_count > 1
         and page_index == 0
         and ((page.page_role == "cover" and score_only) or numeric_only_cover)
-        and bool(page.student_name or page.student_id)
+        and (page.page_role == "cover" or bool(page.student_name or page.student_id))
         and bool(re.fullmatch(r"\s*\d+(?:\s*/\s*\d+)?\s*", segment.text))
     )
 
@@ -394,7 +431,7 @@ def _visual_mapping_second_pass(
     Off by default while OCR quota is constrained. Never use a failed visual
     check to discard the primary OCR or fabricate a question assignment.
     """
-    unresolved = [key for key, decision in decisions.items() if decision.method == "unresolved"]
+    unresolved = [key for key, decision in decisions.items() if decision.method in {"unresolved","anchor_conflict"}]
     if not unresolved or os.getenv("OCR_MAPPING_SECOND_PASS_ENABLED", "false").lower() not in {"1", "true", "yes"}:
         return decisions, False
     page_indices = sorted({page for page, _ in unresolved})
@@ -440,15 +477,23 @@ def _visual_mapping_second_pass(
     assignments = response.get("assignments", []) if isinstance(response, dict) else []
     if not isinstance(assignments, list):
         return decisions, True
+    proposals: dict[tuple[int, int], list[str | None]] = {}
     for item in assignments:
         if not isinstance(item, dict):
             continue
         page, index, number = item.get("page_index"), item.get("segment_index"), item.get("question_number")
-        if not isinstance(page, int) or not isinstance(index, int) or not isinstance(number, str):
+        if type(page) is not int or type(index) is not int:
             continue
         key = (page, index)
-        if key not in decisions or decisions[key].method != "unresolved" or number not in lookup:
+        if key not in unresolved:
             continue
+        proposals.setdefault(key, []).append(number if isinstance(number, str) and number in lookup else None)
+    for key, numbers in proposals.items():
+        # Conflicting/duplicate entries are not an authoritative visual decision.
+        # Neither the first nor the last response entry wins silently.
+        if len(numbers) != 1 or numbers[0] is None:
+            continue
+        number = numbers[0]
         decisions[key] = MappingDecision(
             number, lookup[number], "visual_check",
             original_label=decisions[key].original_label,
@@ -580,6 +625,8 @@ def process_submission(
         )
         _clear_incomplete_extraction(submission, db)
         submission.page_count = len(page_images)
+        from services.extraction_coverage_service import save_inventory
+        inventory = save_inventory(db,submission,extracted_pages,mapping,file_bytes,_is_cover_mark)
         if not preserve_verified_identity:
             submission.extracted_student_name = None
             submission.extracted_student_number = None
@@ -607,6 +654,7 @@ def process_submission(
                     submission.identity_status = "unmatched_extracted"
 
             for segment_index, segment in enumerate(page_result.segments):
+                origin = {"inventory_id":inventory.id,"page_index":page_index,"segment_index":segment_index} if inventory else None
                 decision = mapping[(page_index, segment_index)]
                 cover_mark = _is_cover_mark(
                     segment, page_result, len(page_images), page_index
@@ -622,6 +670,7 @@ def process_submission(
                                 "cover_page_mark" if cover_mark else segment.content_role
                             ),
                             "mapping_method": decision.method,
+                            "ocr_origin": origin,
                         }
                     )
                     continue
@@ -629,6 +678,7 @@ def process_submission(
                     **segment.model_dump(),
                     "original_question_number": decision.original_label,
                     "mapping_method": decision.method,
+                    "ocr_origin": origin,
                 }
                 if not decision.question_id:
                     unmatched_segments.append(
@@ -654,7 +704,8 @@ def process_submission(
                 if existing:
                     answer = existing
                     answer.raw_ocr_text = f"{existing.raw_ocr_text}\n{segment.text}"
-                    answer.ocr_legibility = segment.legibility
+                    rank = {"clear":0,"partial":1,"illegible":2}
+                    answer.ocr_legibility = max([existing.ocr_legibility or "partial",segment.legibility],key=lambda value:rank[value])
                     answer.ocr_raw_response = evidence
                 else:
                     answer = Answer(

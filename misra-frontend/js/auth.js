@@ -45,6 +45,7 @@
   function setFieldError(fieldEl, message) {
     if (!fieldEl) return;
     fieldEl.classList.add('is-invalid');
+    fieldEl.querySelector('input')?.setAttribute('aria-invalid', 'true');
     const errorEl = fieldEl.querySelector('.field-error span');
     if (errorEl && message) errorEl.textContent = message;
   }
@@ -52,6 +53,7 @@
   function clearFieldError(fieldEl) {
     if (!fieldEl) return;
     fieldEl.classList.remove('is-invalid');
+    fieldEl.querySelector('input')?.removeAttribute('aria-invalid');
   }
 
   function setLoading(button, isLoading, idleLabel) {
@@ -102,7 +104,7 @@
           return;
         }
         const requested = new URLSearchParams(window.location.search).get('next');
-        window.location.href = requested && requested.startsWith('/app/pages/') ? requested : 'dashboard.html';
+        window.location.href = requested && (requested.startsWith('/app/pages/') || requested.startsWith('/app/next/')) ? requested : window.location.pathname.includes('/next/') ? 'index.html' : 'dashboard.html';
       }, 700);
     });
   }

@@ -21,6 +21,8 @@
   const maxPollAttempts = 240;
   let mode = 'single';
   let activePoll = 0;
+  const completedJobs = new Map();
+  const jobContexts = new Map();
   let ready = false;
   let sending = false;
   let uploaded = false;
@@ -149,7 +151,13 @@
   }
 
   function renderExtractionComplete(report) {
-    const readiness = report.readiness;
+    const readiness = report?.readiness;
+    if (!report?.submission?.id || !readiness ||
+        !Number.isInteger(readiness.mapped_answer_count) ||
+        !Number.isInteger(readiness.expected_question_count) ||
+        readiness.mapped_answer_count < 0 || readiness.expected_question_count < readiness.mapped_answer_count) {
+      throw new Error('Extraction details are not available yet.');
+    }
     const mapped = `${readiness.mapped_answer_count}/${readiness.expected_question_count}`;
     const needsAttention = !(readiness.bulk_grading_allowed ?? readiness.mapping_complete);
     result.innerHTML = `<div class="workspace-card card-pad upload-status-card is-complete" role="status">
@@ -189,13 +197,22 @@
     window.showToast(settled ? 'Batch extraction complete.' : 'Check the remaining batch papers.', settled ? 'success' : 'warning');
   }
 
+  function renderCompletedDetailsUnavailable(jobId, context, paused = false) {
+    const destination = context.submissionId ? submissionLink(context.submissionId) : context.destination;
+    result.innerHTML = `<div class="workspace-card card-pad upload-status-card is-complete" role="status"><strong>Extraction completed</strong><p class="section-copy">Your paper is saved. ${paused ? 'Automatic detail updates have paused.' : 'The result details could not be loaded; reconnecting automatically.'} Do not upload this paper again.</p><div class="job-actions"><a class="btn btn-primary" href="${destination}">${context.submissionId ? 'Open extraction result' : 'View batch submissions'}</a><button class="btn btn-secondary" type="button" data-refresh-completed="${MisraUI.escapeHTML(jobId)}">Reload details</button></div></div>`;
+  }
+
   async function pollJob(jobId, context, pollId) {
+    jobContexts.set(jobId, context);
     for (let attempt = 0; attempt < maxPollAttempts && pollId === activePoll; attempt += 1) {
       try {
-        const job = await MisraAPI.job(jobId);
+        const job = completedJobs.get(jobId) || await MisraAPI.job(jobId);
         if (pollId !== activePoll) return;
         if (job.status === 'failed') { renderExtractionFailure(job, context); return; }
         if (job.status === 'completed') {
+          // Job completion is durable; a later details/render failure must not
+          // turn it back into an unknown/processing state or offer an OCR retry.
+          completedJobs.set(jobId, job);
           if (context.submissionId) {
             const report = await MisraAPI.extractionReview(context.submissionId);
             if (pollId !== activePoll) return;
@@ -210,11 +227,13 @@
         renderJobProgress(job, context);
       } catch (error) {
         if (pollId !== activePoll) return;
-        result.innerHTML = '<div class="upload-status-card" role="status"><strong>Connection interrupted</strong><p>Processing may still be running. Reconnecting automatically; do not upload this paper again.</p></div>';
+        if (completedJobs.has(jobId)) renderCompletedDetailsUnavailable(jobId, context);
+        else result.innerHTML = `<div class="workspace-card card-pad upload-status-card" role="status"><strong>Progress updates unavailable</strong><p class="section-copy">The paper was accepted, but its latest processing status could not be checked. Reconnecting automatically; do not upload it again.</p><a class="btn btn-secondary" href="${context.submissionId ? submissionLink(context.submissionId) : context.destination}">Open saved upload</a></div>`;
       }
       await wait(pollIntervalMs);
     }
     if (pollId === activePoll) {
+      if (completedJobs.has(jobId)) { renderCompletedDetailsUnavailable(jobId, context, true); return; }
       result.innerHTML = `<div class="workspace-card card-pad upload-status-card"><strong>Live updates paused</strong><p class="section-copy">The job may still be running. Refresh this page to check its latest status; do not upload the same paper again.</p>${context.submissionId ? `<a class="btn btn-secondary" href="${submissionLink(context.submissionId)}">Open extraction result</a>` : `<a class="btn btn-secondary" href="${context.destination}">View submissions</a>`}</div>`;
     }
   }
@@ -374,6 +393,15 @@
   });
 
   result.addEventListener('click', async (event) => {
+    const reload = event.target.closest('[data-refresh-completed]');
+    if (reload) {
+      const context = jobContexts.get(reload.dataset.refreshCompleted);
+      if (context) {
+        reload.disabled = true;
+        pollJob(reload.dataset.refreshCompleted, context, ++activePoll);
+      }
+      return;
+    }
     const retryBatch = event.target.closest('[data-retry-batch]');
     if (retryBatch) {
       retryBatch.disabled = true;

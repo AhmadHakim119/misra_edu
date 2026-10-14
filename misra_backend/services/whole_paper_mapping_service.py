@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import unicodedata
 
 
 _COMMON = {
@@ -17,13 +18,16 @@ _COMMON = {
     "have", "into", "model", "more", "question", "result", "show", "student",
     "system", "task", "that", "their", "them", "these", "this", "using",
     "what", "when", "where", "which", "with", "write", "your",
+    "اكتب", "اشرح", "اذكر", "السؤال", "الطالب", "المطلوب", "باستخدام", "على", "هذه", "هذا", "التي", "الذي",
 }
 
 
 def _words(value: str) -> set[str]:
+    value = unicodedata.normalize("NFC",value).casefold().replace("_"," ")
+    value = re.sub(r"[\u064b-\u065f\u0670\u0640]","",value)
     return {
-        word for word in re.findall(r"[a-z][a-z0-9]{2,}", value.lower().replace("_", " "))
-        if word not in _COMMON
+        word for word in re.findall(r"\w+",value,re.UNICODE)
+        if len(word) >= 3 and any(char.isalpha() for char in word) and word not in _COMMON
     }
 
 
@@ -65,6 +69,9 @@ def reconcile_paper(pages, questions, normalize_label, resolve_label, is_cover_m
                 continue
             label, previous_base = normalize_label(original, previous_base)
             mapped, question_id = resolve_label(label, lookup)
+            printed_raw = getattr(segment,"printed_question_number",None)
+            printed_label,_ = normalize_label(printed_raw,None)
+            printed_number,printed_id = resolve_label(printed_label,lookup)
             # Two question-specific terms are required before text can challenge
             # a label. This deliberately avoids a generic word like "data".
             text_terms = _words(segment.text)
@@ -76,7 +83,14 @@ def reconcile_paper(pages, questions, normalize_label, resolve_label, is_cover_m
             best = ranked[0] if ranked else None
             runner_up = hits[ranked[1]] if len(ranked) > 1 else 0
             strong = bool(best and hits[best] >= 2 and hits[best] >= runner_up + 2)
-            if strong and best != mapped:
+            if printed_id and strong and best != printed_number:
+                decisions[key] = MappingDecision(None,None,"anchor_conflict",
+                    candidates=tuple(dict.fromkeys([printed_number,best])),
+                    reason="Printed question anchor and distinctive answer terminology disagree; visual confirmation is needed.",
+                    original_label=original)
+            elif printed_id:
+                decisions[key] = MappingDecision(printed_number,printed_id,"printed_anchor",original_label=original)
+            elif strong and best != mapped:
                 decisions[key] = MappingDecision(
                     best, lookup[best], "semantic_correction",
                     candidates=tuple(dict.fromkeys([best, mapped] if mapped else [best])),
@@ -107,7 +121,7 @@ def reconcile_paper(pages, questions, normalize_label, resolve_label, is_cover_m
     for page_index, page in enumerate(pages):
         for segment_index, segment in enumerate(page.segments):
             key = (page_index, segment_index)
-            if decisions[key].method != "unresolved" or not _words(segment.text):
+            if decisions[key].method != "unresolved" or not segment.text.strip():
                 continue
             number = None
             if len(page_votes[page_index]) == 1:

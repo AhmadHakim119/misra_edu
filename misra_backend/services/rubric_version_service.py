@@ -129,6 +129,7 @@ def approve_rubric_version(
     version: RubricVersion,
     db: Session,
     approved_by: str | None = None,
+    commit: bool = True,
 ) -> tuple[RubricVersion, bool]:
     if version.status != "draft":
         raise ValueError("Only a draft rubric version can be approved")
@@ -165,6 +166,9 @@ def approve_rubric_version(
         is not None
     )
 
-    db.commit()
-    db.refresh(version)
+    if commit:
+        db.commit()
+        db.refresh(version)
+    else:
+        db.flush()
     return version, has_prior_runs

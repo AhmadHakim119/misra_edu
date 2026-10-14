@@ -17,6 +17,8 @@
     ['language_tolerance', 'Language tolerance', 'Language quality is not assessed here.'],
     ['rubric_issue', 'Rubric issue', 'The marking rule needs correction.'],
     ['ocr_or_mapping_error', 'OCR or mapping error', 'Extraction is wrong; this is not a marking preference.'],
+    ['unsupported_deduction', 'Unsupported deduction', 'The deduction is not justified by the approved marking guide or student work.'],
+    ['evidence_citation_error', 'Incorrect source citation', 'The cited source does not support the explanation.'],
     ['other', 'Other', 'A different reason described below.'],
   ];
 

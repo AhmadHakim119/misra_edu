@@ -29,6 +29,7 @@ from services.job_execution_service import _grade_submission, execute_processing
 from services.job_queue_service import dispatch_processing_job  # noqa: E402
 from services.job_recovery_service import recover_orphaned_jobs  # noqa: E402
 from services.ocr_service import _clear_incomplete_extraction  # noqa: E402
+from services.grading_errors import GradingResponseValidationError
 
 
 class ProcessingJobTests(unittest.TestCase):
@@ -211,6 +212,35 @@ class ProcessingJobTests(unittest.TestCase):
         self.assertEqual(saved.status, "completed")
         self.assertEqual(saved.progress_current, 2)
         self.assertEqual(saved.attempt_count, 1)
+
+    def test_invalid_grading_response_stops_automatic_retries_but_allows_manual_retry(self):
+        job = self._job(job_type='grade_submission', max_attempts=3,
+                        payload={'completed_answer_ids': ['already-completed']})
+        self.submission.status = 'grading'
+        self.db.commit()
+        with patch('services.job_execution_service.SessionLocal', self.Session), \
+             patch('services.job_execution_service._grade_submission', side_effect=GradingResponseValidationError(
+                 'missing_traceable_evidence', 'Missing tracked evidence after correction.', 1)) as grade:
+            with self.assertRaises(GradingResponseValidationError):
+                execute_processing_job(job.id)
+            execute_processing_job(job.id)  # Stale RQ delivery must not invoke a model again.
+            self.assertEqual(grade.call_count, 1)
+        self.db.expire_all()
+        saved = self.db.get(ProcessingJob, job.id)
+        self.assertEqual(saved.status, 'failed')
+        self.assertEqual(saved.attempt_count, 1)
+        self.assertEqual(saved.payload['completed_answer_ids'], ['already-completed'])
+        self.assertIn('Missing tracked evidence', saved.error_message)
+        self.assertEqual(self.db.get(Submission, self.submission.id).status, 'extracted')
+        from services.job_queue_service import retry_processing_job
+        with patch('services.job_queue_service.dispatch_processing_job', side_effect=lambda job, db: job):
+            retry_processing_job(saved, self.db)
+        with patch('services.job_execution_service.SessionLocal', self.Session), \
+             patch('services.job_execution_service._grade_submission') as grade:
+            execute_processing_job(job.id)
+            grade.assert_called_once()
+        self.db.expire_all()
+        self.assertEqual(self.db.get(ProcessingJob, job.id).status, 'completed')
 
     def test_worker_passes_explicit_reprocess_intent_to_ocr(self):
         job = self._job()

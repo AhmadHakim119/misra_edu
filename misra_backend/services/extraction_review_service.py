@@ -49,6 +49,7 @@ def _serialize_answer(answer: Answer) -> dict[str, Any]:
         "raw_ocr_text": answer.raw_ocr_text,
         "ocr_legibility": answer.ocr_legibility,
         "score": _number(answer.score),
+        "teacher_override_score": _number(answer.teacher_override_score),
         "max_score": _number(answer.max_score),
         "feedback": answer.feedback,
         "llm_confidence": _number(answer.llm_confidence),
@@ -198,6 +199,8 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
         if item.get("excluded_reason")
     ]
     unmatched_count = len(active_unmatched)
+    from services.extraction_coverage_service import coverage_report
+    coverage = coverage_report(db,submission,sources,excluded_segments)
     mapping_issues = [
         {
             "unmatched_index": item["unmatched_index"],
@@ -228,6 +231,8 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
         blocking_reasons.append(
             f"{unmatched_count} OCR segment(s) are still unmatched."
         )
+    if coverage["issues"]:
+        blocking_reasons.append("Visible student-answer regions are not fully accounted for. Re-scan the indicated original pages before grading.")
     if submission.status not in {"extracted", "graded", "needs_review", "reviewed"}:
         blocking_reasons.append(
             f"Submission status is '{submission.status}', not ready for grading."
@@ -261,6 +266,8 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
             "bulk_grading_allowed": bulk_grading_allowed,
             "can_reprocess": can_reprocess,
             "blocking_reasons": blocking_reasons,
+            "coverage_status":coverage["status"],
+            "unaccounted_region_count":coverage["unaccounted_region_count"],
         },
         "suspicious_answers": suspicious_answers,
         "questions": rows,
@@ -271,6 +278,7 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
         "unmatched_segments": active_unmatched,
         "mapping_issues": mapping_issues,
         "excluded_segments": excluded_segments,
+        "coverage":coverage,
     }
 
 
@@ -393,7 +401,12 @@ def remove_manually_assigned_source(
         raise ValueError("The source answer no longer exists")
     _assert_answer_is_ungraded(answer, db)
     submission_id = answer.submission_id
-
+    submission = db.get(Submission,submission_id)
+    segments = list(submission.unmatched_segments or [])
+    segments.append({**dict(source.ocr_segment or {}),"text":source.extracted_text,
+        "page_index":source.page_index,"page_number":source.page_index+1,"segment_index":source.segment_index,
+        "former_source_id":source.id,"excluded_reason":"instructor_excluded"})
+    submission.unmatched_segments = segments
     db.delete(source)
     db.flush()
     _rebuild_answer_from_sources(answer, db)
@@ -466,7 +479,10 @@ def resolve_unmatched_segment(
     elif action != "ignore":
         raise ValueError("Invalid unmatched-segment action")
 
-    segments.pop(unmatched_index)
+    if action == "ignore":
+        segments[unmatched_index] = {**segment,"excluded_reason":"instructor_excluded"}
+    else:
+        segments.pop(unmatched_index)
     submission.unmatched_segments = segments or None
     db.commit()
     return build_extraction_review(submission.id, db)

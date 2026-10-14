@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=27">
-  <link rel="stylesheet" href="../css/workflow-ease.css?v=1">
+  <link rel="stylesheet" href="../css/workflow-ease.css?v=3">
 </head>
 <body class="workspace-body" data-page="submissions">
   <main class="workspace-content" id="workspace-content">
@@ -33,11 +33,13 @@
       </form>
     </details>
     <section id="readiness-panel" aria-live="polite"><div class="skel" style="height:118px"></div></section>
+    <section id="coverage-panel" class="paper-coverage" aria-label="Paper coverage" hidden></section>
     <div class="extraction-layout">
-      <aside class="source-viewer workspace-card" id="source-viewer">
+      <aside class="source-viewer workspace-card" id="source-viewer" tabindex="-1">
         <div class="source-viewer-head"><div><h2 class="section-title">Original paper</h2><p class="section-copy" id="page-label">Page 1</p></div><div class="page-stepper"><button type="button" id="previous-page" aria-label="Previous page">←</button><button type="button" id="next-page" aria-label="Next page">→</button></div></div>
         <div class="page-recovery-toolbar" id="page-recovery-toolbar" hidden><div><strong>Missing an answer?</strong><span>Scan this page again for handwriting and selected choices.</span></div><button class="btn btn-secondary" id="reextract-page" type="button" disabled>Re-extract page</button></div>
         <div class="page-recovery-panel" id="page-recovery-panel" hidden aria-live="polite"></div>
+        <p class="paper-region-caption" id="paper-region-caption" role="status" hidden></p>
         <div class="paper-frame"><div class="paper-image-wrap"><img id="page-image" src="../assets/logo.png" alt="Original submitted paper page"><span class="paper-answer-highlight" id="page-highlight" hidden aria-hidden="true"></span></div></div>
       </aside>
       <section class="workspace-card extraction-list-panel">
@@ -46,12 +48,12 @@
           <div class="segmented" aria-label="Filter questions"><button type="button" aria-pressed="true" data-filter="all">All</button><button type="button" aria-pressed="false" data-filter="issues">Issues</button><button type="button" aria-pressed="false" data-filter="missing">Missing</button></div>
         </div>
         <div class="task-tools"><div class="field"><label for="extraction-question-jump">Go to a question</label><select class="input select" id="extraction-question-jump"><option value="">Choose a question…</option></select></div><button class="btn btn-secondary" type="button" id="next-extraction-issue" hidden>Show next issue</button></div>
-        <div class="mapping-guide"><strong>Answers and their locations</strong><p>Open a question to see its extracted answer. “Show on page” locates the original handwriting. <a href="#unmatched-panel">Advanced OCR tools</a> are below the questions if a correction is needed.</p></div>
+        <div class="mapping-guide"><strong>Answers and their locations</strong><p>Open a question to see its extracted answer. “Find answer on page” checks its location on the original paper; OCR estimates are labelled approximate. <a href="#unmatched-panel">Advanced OCR tools</a> are below the questions if a correction is needed.</p></div>
         <div id="question-mappings" aria-live="polite"><div class="loading-list card-pad"><div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
       </section>
     </div>
     <section id="unmatched-panel" aria-live="polite"></section>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=22"></script><script src="../js/workspace.js?v=18"></script><script src="../js/submission.js?v=20"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=23"></script><script src="../js/workspace.js?v=18"></script><script src="../js/paper-evidence.js?v=1"></script><script src="../js/submission.js?v=22"></script>
 </body>
 </html>

@@ -173,6 +173,12 @@
   function renderCriteria(criteria, gradingPackage) {
     if (!Array.isArray(criteria) || !criteria.length) return '<p class="grade-empty-copy">No criterion-level scores were recorded.</p>';
     const evidence = new Map((gradingPackage?.student_evidence || []).map(item => [item.id, item]));
+    const references = new Map((gradingPackage?.course_references?.passages || []).map(item => [item.id, item]));
+    const referenceLabel = id => {
+      const item = references.get(id);
+      return item ? `${item.title} · v${item.material_version_number} · document page ${item.page_index + 1}${item.printed_page_label ? ` (printed ${item.printed_page_label})` : ''}`
+        : gradingPackage?.answer_key?.version ? `Answer key v${gradingPackage.answer_key.version}` : 'Legacy rubric reference';
+    };
     const label = id => {
       const item = evidence.get(id);
       if (!item) return id;
@@ -180,7 +186,7 @@
     };
     return `<div class="criteria-results">${criteria.map((criterion) => `<div class="criterion-result"><div class="criterion-result-head"><strong>${MisraUI.escapeHTML(criterionName(criterion.criterion_id))}</strong><span>${number(criterion.points_earned)} / ${number(criterion.max_points)}</span></div><p>${MisraUI.escapeHTML(criterion.feedback || 'No criterion feedback was recorded.')}</p>
       ${gradingPackage ? `<p><strong>Evidence:</strong> ${MisraUI.escapeHTML((criterion.evidence_refs || []).map(label).join('; ') || 'No evidence cited — review required.')}</p>` : ''}
-      ${criterion.reference_refs?.length ? `<p><strong>Reference:</strong> ${MisraUI.escapeHTML(gradingPackage?.answer_key?.version ? `Answer key v${gradingPackage.answer_key.version}` : 'Legacy rubric reference')}</p>` : ''}
+      ${criterion.reference_refs?.length ? `<p><strong>References:</strong> ${MisraUI.escapeHTML(criterion.reference_refs.map(referenceLabel).join('; '))}</p>${criterion.reference_refs.filter(id => references.has(id)).map(id => `<details><summary>Read cited source passage</summary><pre dir="auto">${MisraUI.escapeHTML(references.get(id).text)}</pre></details>`).join('')}` : ''}
       ${criterion.policy_applied?.length ? `<p><strong>Rules applied:</strong> ${MisraUI.escapeHTML(criterion.policy_applied.map(criterionName).join(', '))}</p>` : ''}
       ${criterion.uncertainties?.length ? `<p class="mapping-warning"><strong>Needs judgment:</strong> ${MisraUI.escapeHTML(criterion.uncertainties.join('; '))}</p>` : ''}
       </div>`).join('')}</div>`;
@@ -197,19 +203,15 @@
       ${key.reference_text ? `<pre>${MisraUI.escapeHTML(key.reference_text)}</pre>` : ''}
       ${key.alternatives?.length ? `<p><strong>Accepted alternatives:</strong></p><ul>${key.alternatives.map(text => `<li>${MisraUI.escapeHTML(text)}</li>`).join('')}</ul>` : ''}
       ${key.document_refs?.length ? `<p><strong>Reference pages:</strong> ${MisraUI.escapeHTML(key.document_refs.map(ref => `Pages ${ref.page_indices.map(p => p + 1).join(', ')} (document ${ref.job_id})`).join('; '))}</p>` : ''}
+      <h4>Retrieved course sources</h4><p>${MisraUI.escapeHTML(pack.course_references?.status?.replaceAll('_',' ') || 'Not configured for this run')} · ${MisraUI.escapeHTML(pack.course_references?.strategy || 'No retrieval')} · ${pack.course_references?.scope_version_number ? `scope v${number(pack.course_references.scope_version_number)}` : 'no approved scope'}</p>
+      ${(pack.course_references?.passages || []).map(p => `<details><summary>${MisraUI.escapeHTML(p.title)} · v${number(p.material_version_number)} · document page ${number(p.page_index + 1)}</summary><pre dir="auto">${MisraUI.escapeHTML(p.text)}</pre><p>For criteria: ${MisraUI.escapeHTML((p.criterion_ids || []).join(', '))}</p></details>`).join('')}
       <h4>Marking policy</h4>${policies.length ? `<dl>${policies.map(([name,value]) => `<dt>${MisraUI.escapeHTML(criterionName(name))}</dt><dd>${MisraUI.escapeHTML(String(value ?? 'Not specified').replaceAll('_', ' '))}</dd>`).join('')}</dl>` : '<p>Legacy criteria and notes apply; no explicit policy was stored.</p>'}
       <p><strong>Route:</strong> ${MisraUI.escapeHTML(modeLabel(pack.routing?.selected_mode))} · ${MisraUI.escapeHTML(pack.routing?.policy_mode || 'Not recorded')}</p>
       <details><summary>Snapshot identifiers</summary><p class="grade-empty-copy">Definition fingerprint: ${MisraUI.escapeHTML(pack.snapshot_sha256 || 'Not recorded')}</p><p class="grade-empty-copy">Student document fingerprint: ${MisraUI.escapeHTML(pack.student_document_sha256 || 'Not available')}</p></details>`;
   }
 
   function validEvidenceBox(source) {
-    const box = source?.ocr_segment?.bounding_box;
-    if (!box) return null;
-    const values = [box.x, box.y, box.width, box.height].map(Number);
-    if (values.some((value) => !Number.isFinite(value))) return null;
-    const [x, y, width, height] = values;
-    if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > 1.01 || y + height > 1.01) return null;
-    return { x, y, width, height };
+    return MisraEvidence.validBox(source?.ocr_segment?.bounding_box);
   }
 
   function renderPaperEvidence(row) {
@@ -222,10 +224,10 @@
       const sources = row.sources.filter((source) => source.page_number === page);
       const boxes = sources.map(validEvidenceBox).filter(Boolean);
       const overlays = boxes.length
-        ? boxes.map((box) => `<span class="evidence-highlight" style="--evidence-x:${box.x * 100}%;--evidence-y:${box.y * 100}%;--evidence-width:${box.width * 100}%;--evidence-height:${box.height * 100}%" aria-hidden="true"></span>`).join('')
+        ? boxes.map((box) => `<span class="evidence-highlight is-approximate" style="--evidence-x:${box.x * 100}%;--evidence-y:${box.y * 100}%;--evidence-width:${box.width * 100}%;--evidence-height:${box.height * 100}%" aria-hidden="true"></span>`).join('')
         : '<span class="evidence-highlight is-page-level" aria-hidden="true"></span>';
       const caption = boxes.length
-        ? `${boxes.length} answer region${boxes.length === 1 ? '' : 's'} highlighted from OCR evidence.`
+        ? `${boxes.length} approximate OCR region${boxes.length === 1 ? '' : 's'}. Checking original PDF text positions…`
         : 'This older OCR record has page-level evidence only; the exact answer coordinates were not stored.';
       return `<figure class="evidence-page" data-evidence-page="${page}" ${index ? 'hidden' : ''}>
         <div class="evidence-page-canvas"><img src="${MisraAPI.submissionPageUrl(report.submission.id, page - 1)}" alt="Original submitted paper, page ${page}" loading="lazy">${overlays}</div>
@@ -239,6 +241,36 @@
       ${figures}
       <a class="paper-evidence-link" href="submission.html?id=${encodeURIComponent(report.submission.id)}&page=${pages[0] - 1}">Open full extraction view →</a>
     </aside>`;
+  }
+
+  async function refreshPaperLocations(details) {
+    if (!details?.open || !report) return;
+    const row = report.questions.find(item => item.question.id === details.dataset.gradeQuestion);
+    if (!row) return;
+    for (const figure of details.querySelectorAll('.evidence-page:not([hidden])')) {
+      if (figure.dataset.locationsChecked) continue;
+      figure.dataset.locationsChecked = 'pending';
+      const page = Number(figure.dataset.evidencePage);
+      let locations = {};
+      try { locations = await MisraEvidence.pageLocations(submissionId, page - 1); } catch (_) { /* Keep estimated locations, never claim verification. */ }
+      if (!figure.isConnected) continue;
+      const sources = row.sources.filter(source => source.page_number === page);
+      const located = sources.map(source => MisraEvidence.location(source, locations));
+      figure.querySelectorAll('.evidence-highlight').forEach(element => element.remove());
+      const canvas = figure.querySelector('.evidence-page-canvas');
+      for (const item of located.filter(item => item.box)) {
+        const span = document.createElement('span');
+        span.className = `evidence-highlight${item.verified ? '' : ' is-approximate'}`;
+        span.setAttribute('aria-hidden', 'true');
+        for (const [name, value] of Object.entries(item.box)) span.style.setProperty(`--evidence-${name}`, `${value * 100}%`);
+        canvas.appendChild(span);
+      }
+      const matched = located.filter(item => item.verified).length;
+      const approximate = located.filter(item => item.box && !item.verified).length;
+      const unavailable = located.length - matched - approximate;
+      figure.querySelector('figcaption').textContent = `${matched} text-matched region${matched === 1 ? '' : 's'}; ${approximate} approximate OCR region${approximate === 1 ? '' : 's'}${unavailable ? `; ${unavailable} without exact coordinates` : ''}. Compare the full original answer. Location matching does not verify the grade.`;
+      figure.dataset.locationsChecked = 'done';
+    }
   }
 
   function renderInstructorEditor(row, answer, latestLabel) {
@@ -270,6 +302,8 @@
       ['language_tolerance', 'Language tolerance', 'Language quality is not being assessed by this criterion.'],
       ['rubric_issue', 'Rubric issue', 'The approved rubric does not represent the intended marking decision.'],
       ['ocr_or_mapping_error', 'OCR or mapping error', 'The extracted evidence is wrong. This is never treated as a marking preference.'],
+      ['unsupported_deduction', 'Unsupported deduction', 'The deduction is not justified by the approved rubric, policy or student work.'],
+      ['evidence_citation_error', 'Incorrect source citation', 'A cited passage or paper region does not support the explanation.'],
       ['other', 'Other', 'Record a different reason in the detail field.'],
     ];
     const reasonEditor = `<details class="grade-criterion-editor" data-decision-reasons${selectedReasons.size ? ' open' : ''}><summary>Decision reasons <span>Required for a changed grade</span></summary><fieldset class="review-reason-fieldset">
@@ -357,7 +391,18 @@
       return renderQuestion(row, answer, answer ? reviewLabels.get(answer.id) : null, index, rows.length, calibration);
     }).join('');
     applyGradeFilter();
+    questionsHost.querySelectorAll('[data-grade-question][open]').forEach(refreshPaperLocations);
   }
+
+  questionsHost.addEventListener('toggle', event => {
+    if (event.target.matches('[data-grade-question]')) refreshPaperLocations(event.target);
+  }, true);
+  questionsHost.addEventListener('click', event => {
+    if (event.target.closest('[data-evidence-page-target]')) {
+      // The existing click handler selects the page synchronously.
+      queueMicrotask(() => refreshPaperLocations(event.target.closest('[data-grade-question]')));
+    }
+  });
 
   async function load() {
     if (!submissionId) {

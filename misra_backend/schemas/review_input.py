@@ -18,6 +18,8 @@ class ReviewReasonCode(str, Enum):
     LANGUAGE_TOLERANCE = "language_tolerance"
     RUBRIC_ISSUE = "rubric_issue"
     OCR_OR_MAPPING_ERROR = "ocr_or_mapping_error"
+    UNSUPPORTED_DEDUCTION = "unsupported_deduction"
+    EVIDENCE_CITATION_ERROR = "evidence_citation_error"
     OTHER = "other"
 
 

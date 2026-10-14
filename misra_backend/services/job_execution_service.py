@@ -10,6 +10,7 @@ from services.grading_service import process_grading, process_grading_with_polic
 from services.ocr_service import process_batch, process_submission
 from services.audit_service import safe_error_message
 from services.grading_scope_service import is_external_question
+from services.grading_errors import GradingResponseValidationError
 
 
 def _progress_callback(job: ProcessingJob, db: Session):
@@ -102,7 +103,7 @@ def execute_processing_job(processing_job_id: str) -> None:
         job = db.query(ProcessingJob).filter(ProcessingJob.id == processing_job_id).first()
         if not job:
             raise ValueError(f"Processing job {processing_job_id} not found")
-        if job.status == "completed":
+        if job.status in {"completed", "failed"}:
             return
 
         job.status = "processing"
@@ -114,7 +115,10 @@ def execute_processing_job(processing_job_id: str) -> None:
         db.commit()
 
         progress = _progress_callback(job, db)
-        if job.job_type == "exam_setup":
+        if job.job_type == "material_ingestion":
+            from services.course_material_service import ingest_material_job
+            ingest_material_job(job, db, progress)
+        elif job.job_type == "exam_setup":
             from services.exam_setup_service import extract_setup_documents
             extract_setup_documents(job, db, progress)
         elif job.job_type == "ocr_submission":
@@ -143,13 +147,25 @@ def execute_processing_job(processing_job_id: str) -> None:
         job = db.query(ProcessingJob).filter(ProcessingJob.id == processing_job_id).first()
         if job:
             safe_error = safe_error_message(error)
-            exhausted = int(job.attempt_count or 0) >= int(job.max_attempts or 1)
+            validation_failed = isinstance(error, GradingResponseValidationError)
+            exhausted = validation_failed or int(job.attempt_count or 0) >= int(job.max_attempts or 1)
             job.status = "failed" if exhausted else "retrying"
             job.error_message = safe_error
             job.progress_message = (
-                "Retry limit reached" if exhausted else "Failed; waiting to retry"
+                "AI response rejected; review or retry grading" if validation_failed
+                else "Retry limit reached" if exhausted else "Failed; waiting to retry"
             )
             job.completed_at = datetime.now() if exhausted else None
+            if job.job_type == "material_ingestion":
+                from models import MaterialVersion
+                version = db.query(MaterialVersion).filter(
+                    MaterialVersion.id == (job.payload or {}).get("material_version_id"),
+                    MaterialVersion.processing_job_id == job.id,
+                    MaterialVersion.status == "draft",
+                ).first()
+                if version:
+                    version.ingestion_status = "failed" if exhausted else "retrying"
+                    version.error_message = safe_error
             if exhausted and job.job_type == "grade_submission" and job.submission_id:
                 submission = (
                     db.query(Submission)

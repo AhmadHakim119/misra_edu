@@ -33,7 +33,7 @@ test('verified extraction stays concise and locates the source on the paper', as
   await expect(page.locator('.extraction-row')).toHaveAttribute('open', '');
   await page.locator('.extraction-row > summary').click();
   await page.locator('.extraction-row > summary').click();
-  await page.getByRole('button', { name: 'Show on page 1 · highlighted' }).click();
+  await page.getByRole('button', { name: 'Find answer on page 1' }).click();
   await expect(page.locator('#page-highlight')).toBeVisible();
   await expect(page.locator('#page-highlight')).toHaveCSS('left', /\d/);
   await page.screenshot({ path: testInfo.outputPath('extraction-clarity.png'), fullPage: true, animations: 'disabled' });

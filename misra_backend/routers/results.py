@@ -2,7 +2,7 @@ import io
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from PIL import Image
 from pdf2image import convert_from_bytes
 from sqlalchemy.exc import IntegrityError
@@ -47,6 +47,16 @@ from services.job_queue_service import create_processing_job, job_to_dict
 from services.ocr_service import assert_reprocessing_allowed
 
 router = APIRouter(prefix="/api", tags=["results"])
+
+
+@router.get('/exams/{exam_id}/learning-insights')
+def assessment_learning_insights(exam_id: str, db: Session = Depends(get_db),
+                                 user: User = Depends(require_instructor)):
+    exam = db.query(Exam).filter(Exam.id == exam_id, Exam.institution_id == user.institution_id).first()
+    if not exam:
+        raise HTTPException(404, 'Assessment not found')
+    from services.learning_insights_service import learning_insights
+    return learning_insights(db, exam)
 
 
 def _owned_submission(submission_id: str, db: Session, user: User) -> Submission | None:
@@ -174,12 +184,24 @@ def list_submissions(
     items = []
     for submission in submissions:
         report = build_extraction_review(submission.id, db)
+        # Reuse the paper-only question rows; do not count externally assessed work.
+        scores = [row["answer"].get("teacher_override_score") if row["answer"].get("teacher_override_score") is not None
+            else row["answer"].get("score") for row in report["questions"] if row.get("answer")]
+        recorded = [score for score in scores if score is not None]
+        grading_summary = {"recorded_score": sum(recorded) if recorded else None,
+            "max_score": sum(row["question"]["max_score"] or 0 for row in report["questions"]),
+            "graded_count": len(recorded), "expected_count": len(report["questions"]),
+            "complete": bool(report["questions"]) and len(recorded) == len(report["questions"]),
+            "review_count": sum(bool(row["answer"].get("needs_review") or row["answer"].get("review_status") == "pending")
+                for row in report["questions"] if row.get("answer")),
+            "scope_kind": report["grading_scope"]["kind"]}
         latest_job = latest_ocr_jobs.get(submission.id)
         grading_job = latest_grading_jobs.get(submission.id)
         items.append(
             {
                 **report["submission"],
                 "readiness": report["readiness"],
+                "grading_summary": grading_summary,
                 "latest_ocr_job": job_to_dict(latest_job) if latest_job else None,
                 "latest_grading_job": job_to_dict(grading_job) if grading_job else None,
             }
@@ -432,6 +454,28 @@ def _stored_submission_path(raw_path: str) -> Path:
         if candidate.exists():
             return candidate.resolve()
     return candidates[-1].resolve()
+
+
+@router.get("/submissions/{submission_id}/source-locations")
+def get_source_locations(
+    submission_id: str,
+    response: Response,
+    page_index: int = Query(ge=0),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    submission = _owned_submission(submission_id, db, user)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    if page_index >= submission.page_count:
+        raise HTTPException(status_code=404, detail="Page not found")
+    sources = (db.query(AnswerSource).join(Answer, Answer.id == AnswerSource.answer_id)
+               .filter(Answer.submission_id == submission.id, Answer.institution_id == user.institution_id,
+                       AnswerSource.page_index == page_index)
+               .order_by(AnswerSource.segment_index).all())
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    from services.source_location_service import page_source_locations
+    return page_source_locations(_stored_submission_path(submission.original_file_path), page_index, sources)
 
 
 @router.get("/submissions/{submission_id}/pages/{page_index}")

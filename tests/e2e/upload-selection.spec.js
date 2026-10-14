@@ -2,7 +2,8 @@ const { test, expect } = require('@playwright/test');
 const path = require('path');
 const file = name => ({ name, mimeType: 'application/pdf', buffer: Buffer.from('Synthetic upload fixture') });
 
-async function setup(page, { hold = false, fail = false, jobs = [], theme = 'dark', batchCompleted = 2 } = {}) {
+async function setup(page, { hold = false, fail = false, jobs = [], theme = 'dark', batchCompleted = 2,
+  detailsFailures = 0, malformedDetails = false, jobFailures = 0, batchDetailsFailures = 0 } = {}) {
   await page.addInitScript(theme => localStorage.setItem('misra-theme', theme), theme);
   const traffic = [], persisted = new Set();
   let release;
@@ -22,17 +23,67 @@ async function setup(page, { hold = false, fail = false, jobs = [], theme = 'dar
       if (fail) return route.fulfill({ status: 422, json: { detail: 'Synthetic validation failure. Choose another file.' } });
       persisted.add('student1');
       body = { submission: { id: 'student1' }, job: url === '/upload-batch' ? { id: 'batch-job', batch_id: 'batch1', status: 'queued' } : { id: 'job1', status: 'queued' } };
-    } else if (url === '/jobs/job1') body = { id: 'job1', job_type: 'ocr_submission', submission_id: 'student1', status: 'completed', progress_total: 2 };
+    } else if (url === '/jobs/job1') {
+      if (jobFailures-- > 0) return route.fulfill({ status: 503, json: { detail: 'Status check unavailable' } });
+      body = { id: 'job1', job_type: 'ocr_submission', submission_id: 'student1', status: 'completed', progress_total: 2 };
+    }
     else if (url === '/jobs/batch-job') body = { id: 'batch-job', job_type: 'ocr_batch', batch_id: 'batch1', status: 'completed', progress_total: 2 };
-    else if (url === '/batches/batch1') body = { batch: { total_count: 2, completed_count: batchCompleted, failed_count: 0 } };
-    else if (url.endsWith('/extraction-review')) body = { submission: { id: 'student1' }, readiness: { mapped_answer_count: 1, expected_question_count: 1, mapping_complete: true } };
+    else if (url === '/batches/batch1') {
+      if (batchDetailsFailures-- > 0) return route.fulfill({ status: 503, json: { detail: 'Batch details unavailable' } });
+      body = { batch: { total_count: 2, completed_count: batchCompleted, failed_count: 0 } };
+    }
+    else if (url.endsWith('/extraction-review')) {
+      if (detailsFailures-- > 0) return route.fulfill({ status: 503, json: { detail: 'Result details unavailable' } });
+      body = malformedDetails ? { submission: { id: 'student1' } } : { submission: { id: 'student1' }, readiness: { mapped_answer_count: 1, expected_question_count: 1, mapping_complete: true } };
+    }
     else return route.fulfill({ status: 404, json: { detail: 'Not mocked' } });
     await route.fulfill({ json: body });
   });
   await page.goto('/pages/upload.html');
   await expect(page.locator('#upload-button')).toBeEnabled();
-  return { traffic, persisted, release, uploads: () => traffic.filter(r => ['/upload-exam', '/upload-batch'].includes(r.url)) };
+  return { traffic, persisted, release, allowDetails: () => { detailsFailures = 0; malformedDetails = false; batchDetailsFailures = 0; }, uploads: () => traffic.filter(r => ['/upload-exam', '/upload-batch'].includes(r.url)) };
 }
+
+for (const malformed of [false, true]) {
+  test(`completed OCR stays completed when details ${malformed ? 'are malformed' : 'fail to load'}; reload never queues OCR`, async ({ page }, info) => {
+    const state = await setup(page, { detailsFailures: malformed ? 0 : Infinity, malformedDetails: malformed });
+    await page.locator('#paper-files').setInputFiles(file('complete.pdf'));
+    await page.locator('#upload-button').click();
+    await expect(page.locator('#upload-result')).toContainText('Extraction completed');
+    await expect(page.locator('#upload-result')).not.toContainText('Processing may still');
+    await expect(page.locator('[data-retry-job]')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Open extraction result', exact: true })).toHaveAttribute('href', 'submission.html?id=student1');
+    if (!malformed) await page.screenshot({ path: info.outputPath('completed-details-unavailable.png'), fullPage: true, animations: 'disabled' });
+    state.allowDetails();
+    await page.getByRole('button', { name: 'Reload details', exact: true }).click();
+    await expect(page.locator('#upload-result')).toContainText('Extraction complete');
+    await expect(page.locator('#upload-result')).not.toContainText('could not be loaded');
+    expect(state.uploads()).toHaveLength(1);
+    expect(state.traffic.filter(item => item.method === 'POST' && item.url.includes('retry'))).toHaveLength(0);
+  });
+}
+
+test('completed batch keeps completion while batch details are unavailable', async ({ page }) => {
+  const state = await setup(page, { batchDetailsFailures: Infinity });
+  await page.locator('[data-mode="batch"]').click();
+  await page.locator('#paper-files').setInputFiles([file('one.pdf'), file('two.pdf')]);
+  await page.locator('#upload-button').click();
+  await expect(page.locator('#upload-result')).toContainText('Extraction completed');
+  state.allowDetails();
+  await page.getByRole('button', { name: 'Reload details' }).click();
+  await expect(page.locator('#upload-result')).toContainText('Batch extraction complete');
+  expect(state.uploads()).toHaveLength(1);
+});
+
+test('unknown job status recovers without claiming job completion or accepting another upload', async ({ page }) => {
+  const state = await setup(page, { jobFailures: 1 });
+  await page.locator('#paper-files').setInputFiles(file('pending.pdf'));
+  await page.locator('#upload-button').click();
+  await expect(page.locator('#upload-result')).toContainText('Progress updates unavailable');
+  await expect(page.locator('#upload-result')).not.toContainText('Extraction completed');
+  await expect(page.locator('#upload-result')).toContainText('Extraction complete', { timeout: 10000 });
+  expect(state.uploads()).toHaveLength(1);
+});
 
 async function drop(page, names) {
   await page.locator('#dropzone').evaluate((element, names) => {
