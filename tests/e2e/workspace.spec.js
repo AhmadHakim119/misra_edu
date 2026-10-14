@@ -24,8 +24,8 @@ async function mockWorkspaceApi(page, overrides = {}) {
     }],
     '/submissions': [{
       id: 'submission-1',
-      extracted_student_name: 'Leen Sharab',
-      extracted_student_number: 'S23108524',
+      extracted_student_name: 'Example Student',
+      extracted_student_number: 'TEST-1001',
       identity_status: 'matched',
       status: 'graded',
     }],
@@ -133,7 +133,7 @@ test('background OCR progress remains visible after navigation', async ({ page }
 
   await page.goto('/pages/account.html');
   await expect(page.getByText('1 background task in progress')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Open' })).toHaveAttribute('href', 'submissions.html?exam_id=exam-1');
+  await expect(page.getByRole('link', { name: 'Open' })).toHaveAttribute('href', 'submissions.html?exam_id=exam-1&batch_id=batch-1');
 });
 
 test('completed background work stays visible until dismissed', async ({ page }) => {

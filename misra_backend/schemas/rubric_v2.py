@@ -72,6 +72,7 @@ class RubricCriterionV2(BaseModel):
 
 
 class RubricPolicy(BaseModel):
+    assessment_scope: Literal["paper", "external"] = "paper"
     language_quality_policy: Literal["criterion_specific", "ignore_unless_assessed", "assess"] = "criterion_specific"
     error_carried_forward: Literal["criterion_specific", "single_penalty", "penalize_each"] = "criterion_specific"
     handwritten_syntax_policy: Literal["criterion_specific", "accept_unambiguous", "require_correct"] = "criterion_specific"

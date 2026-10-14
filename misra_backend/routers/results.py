@@ -2,7 +2,7 @@ import io
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from PIL import Image
 from pdf2image import convert_from_bytes
 from sqlalchemy.exc import IntegrityError
@@ -43,9 +43,20 @@ from services.page_recovery_service import (
 )
 from services.auth_dependencies import require_instructor
 from services.audit_service import record_audit_event
-from services.job_queue_service import job_to_dict
+from services.job_queue_service import create_processing_job, job_to_dict
+from services.ocr_service import assert_reprocessing_allowed
 
 router = APIRouter(prefix="/api", tags=["results"])
+
+
+@router.get('/exams/{exam_id}/learning-insights')
+def assessment_learning_insights(exam_id: str, db: Session = Depends(get_db),
+                                 user: User = Depends(require_instructor)):
+    exam = db.query(Exam).filter(Exam.id == exam_id, Exam.institution_id == user.institution_id).first()
+    if not exam:
+        raise HTTPException(404, 'Assessment not found')
+    from services.learning_insights_service import learning_insights
+    return learning_insights(db, exam)
 
 
 def _owned_submission(submission_id: str, db: Session, user: User) -> Submission | None:
@@ -67,6 +78,44 @@ def _owned_source(source_id: str, db: Session, user: User) -> AnswerSource | Non
         .first()
     )
 
+
+@router.post("/submissions/{submission_id}/reprocess-extraction", status_code=202)
+def reprocess_extraction(
+    submission_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    submission = _owned_submission(submission_id, db, user)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    active_grading = db.query(ProcessingJob).filter(
+        ProcessingJob.submission_id == submission.id,
+        ProcessingJob.institution_id == user.institution_id,
+        ProcessingJob.job_type == "grade_submission",
+        ProcessingJob.status.in_(("queued", "processing", "retrying")),
+    ).first()
+    if active_grading:
+        raise HTTPException(status_code=409, detail="Wait for the active grading job to finish first")
+    try:
+        assert_reprocessing_allowed(submission, db)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if not _stored_submission_path(submission.original_file_path).is_file():
+        raise HTTPException(status_code=404, detail="Original paper is no longer available")
+    job, created = create_processing_job(
+        db, institution_id=user.institution_id, requested_by=user.id,
+        job_type="ocr_submission", submission_id=submission.id,
+        progress_total=submission.page_count, payload={"reprocess": True},
+    )
+    if created:
+        record_audit_event(
+            db, institution_id=user.institution_id, actor_id=user.id,
+            action="extraction_reprocess_requested", entity_type="submission",
+            entity_id=submission.id, details={"job_id": job.id},
+        )
+        db.commit()
+    return {"job": job_to_dict(job), "created": created}
+
 @router.get("/results/{submission_id}")
 async def get_results(
     submission_id: str,
@@ -78,6 +127,11 @@ async def get_results(
         raise HTTPException(status_code=404, detail=f"Submission {submission_id} not found")
 
     answers = db.query(Answer).filter(Answer.submission_id == submission_id).all()
+    from models import Question
+    from services.grading_scope_service import scope_summary
+    grading_scope = scope_summary(db.query(Question).filter(Question.exam_id == submission.exam_id).all())
+    external_answers = [a for a in answers if a.question_id in grading_scope["external_question_ids"]]
+    answers = [a for a in answers if a.question_id not in grading_scope["external_question_ids"]]
     latest_review_labels = []
     for answer in answers:
         label = (
@@ -93,6 +147,8 @@ async def get_results(
         "submission": submission,
         "answers": answers,
         "latest_review_labels": latest_review_labels,
+        "grading_scope": grading_scope,
+        "external_answers": external_answers,
     }
 
 
@@ -108,29 +164,46 @@ def list_submissions(
 
     submissions = query.order_by(Submission.uploaded_at.desc()).all()
     latest_ocr_jobs = {}
+    latest_grading_jobs = {}
     submission_ids = [submission.id for submission in submissions]
     if submission_ids:
         jobs = (
             db.query(ProcessingJob)
             .filter(
                 ProcessingJob.submission_id.in_(submission_ids),
-                ProcessingJob.job_type == "ocr_submission",
+                ProcessingJob.institution_id == user.institution_id,
+                ProcessingJob.job_type.in_(("ocr_submission", "grade_submission")),
             )
-            .order_by(ProcessingJob.created_at.desc())
+            .order_by(ProcessingJob.created_at.desc(), ProcessingJob.id.desc())
             .all()
         )
         for job in jobs:
-            latest_ocr_jobs.setdefault(job.submission_id, job)
+            target = latest_ocr_jobs if job.job_type == "ocr_submission" else latest_grading_jobs
+            target.setdefault(job.submission_id, job)
 
     items = []
     for submission in submissions:
         report = build_extraction_review(submission.id, db)
+        # Reuse the paper-only question rows; do not count externally assessed work.
+        scores = [row["answer"].get("teacher_override_score") if row["answer"].get("teacher_override_score") is not None
+            else row["answer"].get("score") for row in report["questions"] if row.get("answer")]
+        recorded = [score for score in scores if score is not None]
+        grading_summary = {"recorded_score": sum(recorded) if recorded else None,
+            "max_score": sum(row["question"]["max_score"] or 0 for row in report["questions"]),
+            "graded_count": len(recorded), "expected_count": len(report["questions"]),
+            "complete": bool(report["questions"]) and len(recorded) == len(report["questions"]),
+            "review_count": sum(bool(row["answer"].get("needs_review") or row["answer"].get("review_status") == "pending")
+                for row in report["questions"] if row.get("answer")),
+            "scope_kind": report["grading_scope"]["kind"]}
         latest_job = latest_ocr_jobs.get(submission.id)
+        grading_job = latest_grading_jobs.get(submission.id)
         items.append(
             {
                 **report["submission"],
                 "readiness": report["readiness"],
+                "grading_summary": grading_summary,
                 "latest_ocr_job": job_to_dict(latest_job) if latest_job else None,
+                "latest_grading_job": job_to_dict(grading_job) if grading_job else None,
             }
         )
     return items
@@ -383,6 +456,28 @@ def _stored_submission_path(raw_path: str) -> Path:
     return candidates[-1].resolve()
 
 
+@router.get("/submissions/{submission_id}/source-locations")
+def get_source_locations(
+    submission_id: str,
+    response: Response,
+    page_index: int = Query(ge=0),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+):
+    submission = _owned_submission(submission_id, db, user)
+    if not submission:
+        raise HTTPException(status_code=404, detail="Submission not found")
+    if page_index >= submission.page_count:
+        raise HTTPException(status_code=404, detail="Page not found")
+    sources = (db.query(AnswerSource).join(Answer, Answer.id == AnswerSource.answer_id)
+               .filter(Answer.submission_id == submission.id, Answer.institution_id == user.institution_id,
+                       AnswerSource.page_index == page_index)
+               .order_by(AnswerSource.segment_index).all())
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    from services.source_location_service import page_source_locations
+    return page_source_locations(_stored_submission_path(submission.original_file_path), page_index, sources)
+
+
 @router.get("/submissions/{submission_id}/pages/{page_index}")
 def get_submission_page(
     submission_id: str,
@@ -528,4 +623,7 @@ async def get_review_queue(
         query = query.filter(Submission.exam_id == exam_id)
 
     answers = query.all()
-    return answers
+    from models import Question
+    from services.grading_scope_service import is_external_question
+    questions = {q.id: q for q in db.query(Question).filter(Question.id.in_([a.question_id for a in answers])).all()}
+    return [a for a in answers if a.question_id in questions and not is_external_question(questions[a.question_id])]

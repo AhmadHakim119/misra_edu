@@ -17,6 +17,7 @@ from services.grading_package_service import (
     validate_evidence_references,
 )
 from services.grading_service import GradingResult, process_grading, process_grading_with_policy
+from services.grading_errors import GradingResponseValidationError
 from services.run_comparison_service import apply_material_disagreement_gate
 
 
@@ -161,7 +162,7 @@ class GradingPackageTests(unittest.TestCase):
             process_grading("a", self.db)
         run = self.db.query(GradingRun).one()
         original = deepcopy(run.response_json["grading_package"])
-        self.assertEqual(run.prompt_version, "v3-evidence-package")
+        self.assertEqual(run.prompt_version, "v7-course-grounded-citations")
         self.assertIn("GRADING PACKAGE JSON", generate.call_args.kwargs["contents"])
         self.q.question_text = "Changed question"
         self.db.query(RubricVersion).first().rubric_json = {**self.rubric, "reference_context": "Changed reference"}
@@ -185,6 +186,99 @@ class GradingPackageTests(unittest.TestCase):
         self.assertEqual(policy.error_carried_forward, "single_penalty")
         with self.assertRaises(ValueError):
             RubricPolicy(handwritten_syntax_policy="always_full_marks")
+
+    def test_missing_tracked_citation_gets_one_correction_same_package_and_marks(self):
+        first = self.result(evidence_refs=['student:combined:1'], reference_refs=['instructor:answer_key'])
+        second = self.result(evidence_refs=['student:segment:1'], reference_refs=['instructor:answer_key'])
+        with patch('services.grading_service.generate', side_effect=[json.dumps(first), json.dumps(second)]) as generate:
+            process_grading('a', self.db)
+        self.assertEqual(generate.call_count, 2)
+        initial = generate.call_args_list[0].kwargs['contents']
+        corrected = generate.call_args_list[1].kwargs['contents']
+        self.assertTrue(corrected.startswith(initial))
+        self.assertIn('EVERY criterion', initial)
+        self.assertIn('zero-credit', initial)
+        self.assertIn('CITATION CORRECTION', corrected)
+        self.assertIn('Keep every criterion', corrected)
+        self.assertNotIn('source:source', corrected)
+        run = self.db.query(GradingRun).one()
+        self.assertEqual(float(run.score), 2)
+        self.assertEqual(run.criteria_scores[0]['evidence_refs'], ['source:source'])
+        self.assertEqual(run.response_json['inference']['call_count'], 2)
+        self.assertIsNone(run.response_json['inference']['reported_cost_usd'])
+        self.assertTrue(run.response_json['validation']['citation_correction_performed'])
+        self.assertTrue(run.needs_review)
+        self.assertEqual(float(run.final_confidence), 40)
+
+    def test_zero_credit_missing_step_still_cites_inspected_work(self):
+        first = self.result(points_earned=0, evidence_refs=[], uncertainties=['No comparison stated'])
+        first['score'] = 0
+        second = deepcopy(first)
+        second['criteria_scores'][0]['evidence_refs'] = ['student:segment:1']
+        with patch('services.grading_service.generate', side_effect=[json.dumps(first), json.dumps(second)]):
+            process_grading('a', self.db)
+        self.assertEqual(float(self.answer.score), 0)
+        self.assertEqual(self.answer.criteria_scores[0]['evidence_refs'], ['source:source'])
+        self.assertTrue(self.answer.needs_review)
+
+    def test_repeated_invalid_citation_never_saves_and_stops_after_two_calls(self):
+        response = json.dumps(self.result(evidence_refs=['invented']))
+        with patch('services.grading_service.generate', return_value=response) as generate:
+            with self.assertRaises(GradingResponseValidationError) as failure:
+                process_grading('a', self.db)
+        self.assertEqual(generate.call_count, 2)
+        self.assertEqual(failure.exception.code, 'invalid_student_reference')
+        self.assertIn('one correction attempt', str(failure.exception))
+        self.assertEqual(self.db.query(GradingRun).count(), 0)
+        self.assertIsNone(self.answer.score)
+
+    def test_citation_correction_may_not_change_marks(self):
+        first = self.result(evidence_refs=[])
+        second = self.result(points_earned=1)
+        second['score'] = 1
+        with patch('services.grading_service.generate', side_effect=[json.dumps(first), json.dumps(second)]) as generate:
+            with self.assertRaises(GradingResponseValidationError) as failure:
+                process_grading('a', self.db)
+        self.assertEqual(failure.exception.code, 'correction_changed_marks')
+        self.assertEqual(generate.call_count, 2)
+        self.assertEqual(self.db.query(GradingRun).count(), 0)
+
+    def test_schema_and_score_failures_do_not_trigger_citation_repair(self):
+        for response in ['not JSON', json.dumps({'score': 1}), json.dumps({**self.result(), 'score': 1})]:
+            with self.subTest(response=response), patch('services.grading_service.generate', return_value=response) as generate:
+                with self.assertRaises(GradingResponseValidationError):
+                    process_grading('a', self.db)
+                self.assertEqual(generate.call_count, 1)
+        self.assertEqual(self.db.query(GradingRun).count(), 0)
+
+    def test_multimodal_correction_reuses_original_images_and_references(self):
+        first = self.result(evidence_refs=[])
+        second = self.result(evidence_refs=['student:page:1'])
+        image = object()
+        with patch('services.grading_service._load_answer_source_images', return_value=([image], [0])), \
+             patch('services.grading_service.generate', side_effect=[json.dumps(first), json.dumps(second)]) as generate:
+            process_grading('a', self.db, mode='image_text')
+        initial, corrected = [call.kwargs['contents'] for call in generate.call_args_list]
+        self.assertEqual(corrected[:-1], initial)
+        self.assertIs(corrected[2], image)
+        self.assertEqual(self.db.query(GradingRun).one().criteria_scores[0]['evidence_refs'], ['page:0'])
+
+    def test_free_only_repair_keeps_provider_and_aggregates_usage(self):
+        first = self.result(evidence_refs=[])
+        second = self.result(evidence_refs=['student:segment:1'])
+        metadata = {'provider': 'openrouter_free', 'model': 'synthetic:free',
+                    'prompt_tokens': 10, 'completion_tokens': 5, 'reported_cost_usd': 0}
+        responses = [SimpleNamespace(text=json.dumps(item), metadata=metadata) for item in (first, second)]
+        with patch.dict(os.environ, {'GRADING_PROVIDER': 'openrouter_free'}), \
+             patch('services.free_model_gateway.complete_free', side_effect=responses) as provider, \
+             patch('services.grading_service.generate') as gemini:
+            process_grading('a', self.db)
+        self.assertEqual(provider.call_count, 2)
+        gemini.assert_not_called()
+        inference = self.db.query(GradingRun).one().response_json['inference']
+        self.assertEqual(inference['prompt_tokens'], 20)
+        self.assertEqual(inference['completion_tokens'], 10)
+        self.assertEqual(inference['reported_cost_usd'], 0)
 
     def test_uncertain_audit_gates_primary_without_replacing_score(self):
         with patch("services.grading_service.generate", return_value=json.dumps(self.result())):
@@ -250,6 +344,7 @@ class GradingPackageTests(unittest.TestCase):
             "question": {"id": "q", "text": "Changed task"},
             "rubric_version_id": "new-rubric",
             "answer_key": {"id": "new-key", "reference_text": "Changed key"},
+            "course_references": {"scope_version_id":"changed","passages":[{"text":"Changed source"}]},
             "policy": {"handwritten_syntax_policy": "require_correct"},
             "student_evidence": [{"id": "answer:a:text", "kind": "combined_ocr", "text": "Corrected OCR"}],
             "student_document_sha256": "changed-file",

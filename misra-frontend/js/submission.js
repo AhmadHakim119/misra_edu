@@ -5,6 +5,8 @@
   const meta = document.getElementById('submission-meta');
   const errorRegion = document.getElementById('submission-error');
   const readinessPanel = document.getElementById('readiness-panel');
+  const coveragePanel = document.getElementById('coverage-panel');
+  const regionCaption = document.getElementById('paper-region-caption');
   const unmatchedPanel = document.getElementById('unmatched-panel');
   const metadataForm = document.getElementById('metadata-form');
   const metadataEditor = document.getElementById('metadata-editor');
@@ -15,6 +17,7 @@
   const mappingCopy = document.getElementById('mapping-copy');
   const mappingList = document.getElementById('question-mappings');
   const pageImage = document.getElementById('page-image');
+  const pageHighlight = document.getElementById('page-highlight');
   const pageLabel = document.getElementById('page-label');
   const previousPage = document.getElementById('previous-page');
   const nextPage = document.getElementById('next-page');
@@ -28,8 +31,46 @@
   const requestedPage = Number.parseInt(MisraUI.getParam('page'), 10);
   let pageIndex = Number.isInteger(requestedPage) && requestedPage >= 0 ? requestedPage : 0;
   let filter = 'all';
+  let lastIssueQuestion = '';
+  const questionJump = document.getElementById('extraction-question-jump');
+  const nextIssue = document.getElementById('next-extraction-issue');
+  function focusQuestion(id) {
+    filter = 'all';
+    document.querySelectorAll('[data-filter]').forEach(item => item.setAttribute('aria-pressed', String(item.dataset.filter === 'all')));
+    renderMappings();
+    const row = [...mappingList.querySelectorAll('[data-question-id]')].find(item => item.dataset.questionId === id);
+    if (!row) return;
+    row.open = true;
+    const source = report.questions.find(item => item.question.id === id)?.sources?.[0];
+    if (source && Number.isInteger(source.page_index)) setPage(source.page_index);
+    row.scrollIntoView({ block: 'start', behavior: 'auto' });
+    row.querySelector('summary').focus({ preventScroll: true });
+    questionJump.value = id;
+  }
+  questionJump.addEventListener('change', () => focusQuestion(questionJump.value));
+  nextIssue.addEventListener('click', () => {
+    const issues = report.questions.filter(row => !row.answer || row.mapping_flags.length);
+    if (!issues.length) return;
+    const index = (issues.findIndex(row => row.question.id === lastIssueQuestion) + 1) % issues.length;
+    lastIssueQuestion = issues[index].question.id;
+    focusQuestion(lastIssueQuestion);
+  });
   let recoveryPreview = null;
   let activeOcrPoll = 0;
+  let locationRequest = 0;
+  let metadataDirty = false;
+  let metadataSaving = false;
+  const metadataStatus = document.createElement('p');
+  metadataStatus.setAttribute('role', 'status');
+  metadataForm.appendChild(metadataStatus);
+  metadataForm.addEventListener('input', () => {
+    metadataDirty = true;
+    metadataStatus.textContent = 'Unsaved changes';
+  });
+  window.addEventListener('beforeunload', event => {
+    if (!metadataDirty && !metadataSaving) return;
+    event.preventDefault(); event.returnValue = '';
+  });
 
   function wait(milliseconds) {
     return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
@@ -59,7 +100,13 @@
   async function watchOcrJob(jobId) {
     const pollId = ++activeOcrPoll;
     for (let attempt = 0; attempt < 240 && pollId === activeOcrPoll; attempt += 1) {
-      const job = await MisraAPI.job(jobId);
+      let job;
+      try { job = await MisraAPI.job(jobId); } catch (_) {
+        if (pollId !== activeOcrPoll) return;
+        errorRegion.innerHTML = `<div class="workspace-card card-pad" role="status"><strong>Progress connection interrupted</strong><p>The background job may still be running. Reconnect to check it; do not upload the paper again.</p><button type="button" class="btn btn-secondary" data-reconnect-ocr="${MisraUI.escapeHTML(jobId)}">Reconnect</button></div>`;
+        return;
+      }
+      if (pollId !== activeOcrPoll) return;
       if (job.status === 'completed') {
         activeOcrPoll += 1;
         window.showToast('Extraction complete. Review the mapped answers.', 'success');
@@ -67,7 +114,7 @@
         return;
       }
       renderOcrJob(job);
-      if (job.status === 'failed') return;
+      if (job.status === 'failed') { await load(); return; }
       await wait(2500);
     }
   }
@@ -79,6 +126,8 @@
   }
 
   function setPage(nextIndex) {
+    locationRequest += 1;
+    pageHighlight.classList.remove('is-approximate');
     if (!report) return;
     if (!Number.isInteger(nextIndex)) {
       window.showToast('This answer has no tracked source page.', 'error');
@@ -87,36 +136,115 @@
     const resolvedIndex = Math.max(0, Math.min(report.submission.page_count - 1, nextIndex));
     if (resolvedIndex !== pageIndex) clearRecoveryPreview();
     pageIndex = resolvedIndex;
+    const pageUrl = new URL(location.href);
+    pageUrl.searchParams.set('page', String(pageIndex));
+    history.replaceState(null, '', pageUrl);
     pageLabel.textContent = `Page ${pageIndex + 1} of ${report.submission.page_count}`;
     pageImage.src = MisraAPI.submissionPageUrl(report.submission.id, pageIndex);
     pageImage.alt = `Original submitted paper, page ${pageIndex + 1}`;
+    pageHighlight.hidden = true;
+    regionCaption.hidden = true;
     previousPage.disabled = pageIndex === 0;
     nextPage.disabled = pageIndex === report.submission.page_count - 1;
     reextractPage.textContent = `Re-extract page ${pageIndex + 1}`;
-    const hasMissingAnswers = Boolean(report.readiness.missing_question_numbers.length);
+    const hasMissingAnswers = recoveryTargets().length > 0;
     recoveryToolbar.hidden = !hasMissingAnswers;
     reextractPage.disabled = !hasMissingAnswers;
   }
 
   function renderReadiness() {
+    renderCoverage();
     const ready = report.readiness.bulk_grading_allowed;
     const missing = report.readiness.missing_question_numbers;
+    const issues = report.mapping_issues || [];
     readinessPanel.innerHTML = `<div class="readiness-band ${ready ? 'is-ready' : 'needs-action'}">
-      <div class="readiness-state"><span class="readiness-mark">${ready ? '✓' : '!'}</span><div><strong>${ready ? 'Mapping verified for grading' : 'Extraction needs attention'}</strong><p>${ready ? 'Every expected answer has traceable OCR source segments.' : report.readiness.blocking_reasons.map(MisraUI.escapeHTML).join(' ')}</p></div></div>
-      <dl class="readiness-metrics"><div><dt>Mapped</dt><dd>${report.readiness.mapped_answer_count}/${report.readiness.expected_question_count}</dd></div><div><dt>Suspicious</dt><dd>${report.readiness.suspicious_mapping_count}</dd></div><div><dt>Unmatched</dt><dd>${report.readiness.unmatched_segment_count}</dd></div></dl>
+      <div class="readiness-state"><span class="readiness-mark">${ready ? '✓' : '!'}</span><div><strong>${ready ? 'Ready to grade' : 'Grading is paused for this paper'}</strong><p>${ready ? 'Expected answers are mapped and no blocking issue was detected. Inspect the original work; this does not verify every OCR location or the answer’s correctness.' : report.coverage?.issues?.length ? 'Some visible work is not accounted for. Open the affected area in Paper coverage below, then re-scan it before grading.' : 'MISRA could not verify every answer location. Open the highlighted question below; grading stays off until the remaining issue is resolved.'}</p></div></div>
+      <dl class="readiness-metrics"><div><dt>Answers found</dt><dd>${report.readiness.mapped_answer_count}/${report.readiness.expected_question_count}</dd></div><div><dt>Locations to check</dt><dd>${report.readiness.suspicious_mapping_count}</dd></div><div><dt>Unplaced text</dt><dd>${report.readiness.unmatched_segment_count}</dd></div></dl>
       ${missing.length ? `<div class="missing-strip"><strong>Missing:</strong> ${missing.map((number) => `<span>${MisraUI.escapeHTML(number)}</span>`).join('')}</div>` : ''}
+      ${issues.length ? `<div class="mapping-issue-list"><strong>Text MISRA could not place</strong><p>Only these regions need attention. The original paper is preserved.</p>${issues.slice(0, 5).map((issue) => `<button class="mapping-issue-link" type="button" data-mapping-issue="${issue.unmatched_index}"><span>Page ${Number(issue.page_number) || Number(issue.page_index) + 1} · ${MisraUI.escapeHTML((issue.text || '').slice(0, 110))}</span><small>${MisraUI.escapeHTML(issue.reason || 'Question location not confirmed')}${issue.candidate_questions?.length ? ` · Possible question${issue.candidate_questions.length === 1 ? '' : 's'} ${issue.candidate_questions.map((item) => MisraUI.escapeHTML(item)).join(', ')}` : ''}</small></button>`).join('')}${issues.length > 5 ? `<small>${issues.length - 5} more region${issues.length - 5 === 1 ? '' : 's'} in OCR details below.</small>` : ''}</div>` : ''}
+      ${!ready && report.readiness.can_reprocess ? '<div class="reprocess-action"><button class="btn btn-secondary" type="button" data-reprocess-extraction>Re-run automatic extraction</button><small>Uses AI quota. Your current ungraded mapping stays in place if the new scan fails.</small></div>' : ''}
     </div>`;
     gradeAll.disabled = !ready;
-    gradeAll.title = ready ? '' : 'Resolve all missing and suspicious mappings first.';
+    if (report.grading_scope?.kind === 'paper_only') {
+      readinessPanel.insertAdjacentHTML('beforeend', `<p class="section-copy">Paper component only: questions ${MisraUI.escapeHTML(report.grading_scope.external_question_numbers.join(', '))} are assessed outside MISRA and are not missing paper answers. They will not be AI-graded.</p>`);
+    }
+    gradeAll.title = ready ? '' : 'Resolve missing answers, uncertain locations and unaccounted work first.';
   }
+
+  function recoveryTargets() {
+    const missing = report?.readiness.missing_question_numbers || [];
+    const regionIssue = report?.coverage?.issues?.some(issue => issue.page_index === pageIndex && issue.code === 'unaccounted_answer_region');
+    // Large assessments use the existing full-paper re-scan rather than an invalid request.
+    if (regionIssue && report.questions.length <= 30) return report.questions.map(row => row.question.question_number);
+    return missing;
+  }
+
+  function renderCoverage() {
+    const coverage = report.coverage;
+    coveragePanel.hidden = !coverage || coverage.status === 'not_recorded';
+    if (coveragePanel.hidden) { coveragePanel.innerHTML = ''; return; }
+    const issues = coverage.issues || [];
+    const label = issues.length ? 'Visible work needs another scan' : coverage.status === 'provider_accounted' ? 'Detected answer areas are accounted for' : 'Full-page coverage is not confirmed';
+    coveragePanel.innerHTML = `<details ${issues.length ? 'open' : ''}>
+      <summary><strong>Paper coverage</strong><span>${MisraUI.escapeHTML(label)}</span></summary>
+      <div class="paper-coverage-body"><p>OCR reports ${Number(coverage.accounted_region_count) || 0} of ${Number(coverage.answer_region_count) || 0} detected answer areas accounted for. This does not independently prove that every handwritten mark was read.</p>
+      ${issues.map((issue, index) => Number.isInteger(issue.page_index) ? `<button class="paper-coverage-issue" type="button" data-coverage-issue="${index}"><span>Page ${issue.page_index + 1} · Show unresolved answer area</span><small>${MisraUI.escapeHTML(issue.message)}</small></button>` : `<p role="alert">${MisraUI.escapeHTML(issue.message)}</p>`).join('')}
+      <ul class="paper-coverage-pages">${(coverage.pages || []).map(page => `<li><span>Page ${page.page_number} · ${page.page_role === 'cover' ? 'Cover / identity' : 'Answer page'}</span><span>${page.regions.filter(region => region.accounted).length}/${page.regions.length} detected areas accounted for${page.coverage_reported_complete === true ? '' : ' · Full-page check unconfirmed'}</span></li>`).join('')}</ul>
+      ${(coverage.warnings || []).length ? '<p class="section-copy">Some pages have incomplete region inventories. Grading results will be routed to review where coverage remains uncertain.</p>' : ''}</div></details>`;
+  }
+
+  coveragePanel.addEventListener('click', event => {
+    const button = event.target.closest('[data-coverage-issue]');
+    if (!button) return;
+    const issue = report.coverage.issues[Number(button.dataset.coverageIssue)];
+    if (!issue || !Number.isInteger(issue.page_index)) return;
+    setPage(issue.page_index);
+    const box = issue.bounding_box;
+    pageHighlight.classList.add('is-approximate');
+    if (box && [box.x, box.y, box.width, box.height].every(Number.isFinite)) {
+      Object.assign(pageHighlight.style, { left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%` });
+      pageHighlight.hidden = false;
+    }
+    const locationLabel = pageHighlight.hidden ? 'the affected page' : 'the approximate highlighted area';
+    const recoveryAction = recoveryTargets().length
+      ? 'Re-extract this page, review the proposed text, then approve it. If it remains unresolved, use Re-run automatic extraction.'
+      : 'Use Re-run automatic extraction above to scan the full paper again; page recovery is unavailable for this assessment.';
+    regionCaption.textContent = `Page ${issue.page_index + 1}: ${locationLabel} has no complete mapped transcription. ${recoveryAction}`;
+    regionCaption.hidden = false;
+    const viewer = document.getElementById('source-viewer');
+    viewer.scrollIntoView({ behavior: 'auto', block: 'start' });
+    viewer.focus({ preventScroll: true });
+  });
+
+  readinessPanel.addEventListener('click', (event) => {
+    const target = event.target.closest('[data-mapping-issue]');
+    if (!target) return;
+    const issue = (report.mapping_issues || []).find((item) => item.unmatched_index === Number(target.dataset.mappingIssue));
+    if (!issue || !Number.isInteger(issue.page_index)) return;
+    setPage(issue.page_index);
+    const box = issue.bounding_box;
+    pageHighlight.classList.add('is-approximate');
+    if (box && [box.x, box.y, box.width, box.height].every((value) => Number.isFinite(Number(value)))) {
+      pageHighlight.style.left = `${Number(box.x) * 100}%`;
+      pageHighlight.style.top = `${Number(box.y) * 100}%`;
+      pageHighlight.style.width = `${Number(box.width) * 100}%`;
+      pageHighlight.style.height = `${Number(box.height) * 100}%`;
+      pageHighlight.hidden = false;
+    }
+    document.getElementById('source-viewer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 
   function renderIdentity() {
     const identity = MisraUI.identityState(report.submission);
     title.textContent = identity.displayName;
     meta.textContent = `${identity.displayNumber} · ${report.submission.page_count} pages · uploaded ${MisraUI.formatDate(report.submission.uploaded_at)}`;
-    studentName.value = report.submission.extracted_student_name || '';
-    studentNumber.value = report.submission.extracted_student_number || '';
-    instructorName.value = report.submission.instructor_name || '';
+    if (!metadataDirty) {
+      studentName.value = report.submission.extracted_student_name || '';
+      studentNumber.value = report.submission.extracted_student_number || '';
+      instructorName.value = report.submission.instructor_name || '';
+    }
+    if (location.hash === '#metadata-editor') metadataEditor.open = true;
+    document.querySelector('.back-link').href = `submissions.html?exam_id=${encodeURIComponent(report.submission.exam_id)}`;
     identityGuidance.innerHTML = `<div class="identity-guidance-state ${identity.needsAttention ? 'needs-action' : 'is-ready'}">
       <span class="readiness-mark">${identity.needsAttention ? '!' : '✓'}</span>
       <div><strong>${MisraUI.escapeHTML(identity.label)}</strong><p>${MisraUI.escapeHTML(identity.message)}</p></div>
@@ -141,7 +269,7 @@
       if (!Number.isInteger(segment.page_index) || !groups[segment.page_index]) return;
       groups[segment.page_index].items.push({
         kind: 'unmatched',
-        index,
+        index: Number.isInteger(segment.unmatched_index) ? segment.unmatched_index : index,
         segmentIndex: Number(segment.segment_index ?? 10000 + index),
         text: segment.text || '',
         questionNumber: null,
@@ -150,20 +278,22 @@
     });
 
     const visibleGroups = groups.filter((group) => group.items.length);
-    if (!visibleGroups.length) {
+    const excluded = report.excluded_segments || [];
+    if (!visibleGroups.length && !excluded.length) {
       unmatchedPanel.innerHTML = '';
       return;
     }
     visibleGroups.forEach((group) => group.items.sort((left, right) => left.segmentIndex - right.segmentIndex));
     const questionOptions = report.questions.map((row) => `<option value="${row.question.id}">Question ${MisraUI.escapeHTML(row.question.question_number)} — ${MisraUI.escapeHTML(row.question.question_text || 'Untitled question')}</option>`).join('');
 
-    unmatchedPanel.innerHTML = `<section class="workspace-card segment-organizer" aria-labelledby="segment-organizer-title">
-      <div class="segment-organizer-head"><div><h2 class="section-title" id="segment-organizer-title">Organize OCR by page</h2><p class="section-copy">Select several fragments, then move them together. Use “Mark as noise” only for headers, footers, and OCR mistakes.</p></div>${report.readiness.unmatched_segment_count ? MisraUI.badge(`${report.readiness.unmatched_segment_count} unassigned`, 'warning') : MisraUI.badge('All assigned', 'success')}</div>
+    unmatchedPanel.innerHTML = `<details class="workspace-card segment-organizer">
+      <summary class="segment-organizer-head"><div><h2 class="section-title" id="segment-organizer-title">${report.readiness.unmatched_segment_count ? 'See unplaced OCR text' : 'See OCR details'}</h2><p class="section-copy">${report.readiness.unmatched_segment_count ? 'Open only if the automatic re-scan still needs help. Assign text only when it is student work.' : report.coverage?.issues?.length ? 'These are the fragments already extracted. Use Paper coverage above to recover work that is missing from the transcription.' : 'All expected questions have mapped text. Open this only if a question looks wrong.'}</p></div>${report.readiness.unmatched_segment_count ? MisraUI.badge(`${report.readiness.unmatched_segment_count} to check`, 'warning') : MisraUI.badge('Optional', 'draft')}</summary>
+      <div class="segment-organizer-body">
       <div class="segment-bulk-toolbar">
         <strong><span data-selection-count>0</span> selected</strong>
         <select class="input select" data-bulk-target aria-label="Question for selected OCR fragments"><option value="">Move selected to…</option>${questionOptions}</select>
         <button class="btn btn-primary" type="button" data-bulk-assign disabled>Move selected</button>
-        <button class="btn btn-ghost source-noise" type="button" data-bulk-ignore disabled>Mark as noise</button>
+        <button class="btn btn-ghost source-noise" type="button" data-bulk-ignore disabled>Exclude selected</button>
       </div>
       <div class="segment-page-groups">${visibleGroups.map((group) => {
         const unmatchedCount = group.items.filter((item) => item.kind === 'unmatched').length;
@@ -178,12 +308,13 @@
           </label>`).join('')}</div>
         </details>`;
       }).join('')}</div>
-    </section>`;
+      ${excluded.length ? `<details class="excluded-segments"><summary>${excluded.length} cover-page, marking or printed fragment${excluded.length === 1 ? '' : 's'} excluded from grading</summary><p class="section-copy">These do not block grading. If one is actually a student answer, select it and move it to the correct question above.</p><div class="segment-choice-list">${excluded.map((item) => `<label class="segment-choice"><input type="checkbox" data-unmatched-index="${item.unmatched_index}"><span class="segment-choice-copy"><strong>Page ${Number(item.page_index) + 1} · ${MisraUI.escapeHTML(item.excluded_reason.replaceAll('_', ' '))}</strong><span>${MisraUI.escapeHTML(item.text || '')}</span></span></label>`).join('')}</div></details>` : ''}
+      </div></details>`;
   }
 
   function sourceMarkup(source, row) {
     return `<div class="source-segment" data-source="${source.id}">
-      <button class="source-page-link" type="button" data-source-page="${source.page_index}">Page ${source.page_number} · ${source.resolved_from_unmatched ? 'manually assigned' : `OCR segment ${source.segment_index + 1}`}</button>
+      <button class="source-page-link" type="button" data-source-page="${source.page_index}" data-source-id="${source.id}">Find answer on page ${source.page_number}</button>
       <p>${MisraUI.escapeHTML(source.extracted_text)}</p>
     </div>`;
   }
@@ -204,10 +335,10 @@
       const stateLabel = state === 'mapped' ? 'Mapped' : state === 'missing' ? 'Missing' : 'Verify';
       const pages = row.sources.length ? [...new Set(row.sources.map((source) => source.page_number))].join(', ') : '—';
       const sourcePageAttribute = row.sources.length ? ` data-source-page="${row.sources[0].page_index}"` : '';
-      return `<details class="extraction-row is-${state}" ${state !== 'mapped' ? 'open' : ''}>
+      return `<details class="extraction-row is-${state}" data-question-id="${MisraUI.escapeHTML(row.question.id)}" ${state !== 'mapped' ? 'open' : ''}>
         <summary${sourcePageAttribute}><span class="mapping-number">${MisraUI.escapeHTML(row.question.question_number)}</span><span class="mapping-question"><strong>${MisraUI.escapeHTML(row.question.question_text || `Question ${row.question.question_number}`)}</strong><small>${row.question.max_score} points · source page${pages.includes(',') ? 's' : ''} ${pages}</small></span>${MisraUI.badge(stateLabel, state === 'mapped' ? 'success' : state === 'missing' ? 'danger' : 'warning')}<span class="disclosure" aria-hidden="true">⌄</span></summary>
         <div class="mapping-body">
-          ${row.mapping_flags.map((flag) => `<div class="mapping-warning"><strong>Check mapping</strong><span>${MisraUI.escapeHTML(flag.message)}</span></div>`).join('')}
+          ${row.mapping_flags.map((flag) => `<div class="mapping-warning"><strong>Location needs checking</strong><span>${MisraUI.escapeHTML(flag.message)} Use “Find answer on page” below to inspect the answer. Only open OCR details if it belongs to a different question.</span></div>`).join('')}
           ${row.answer ? `<div class="ocr-answer"><div class="ocr-answer-head"><span>Combined OCR text</span>${row.answer.ocr_legibility ? MisraUI.badge(row.answer.ocr_legibility, row.answer.ocr_legibility === 'clear' ? 'draft' : 'warning') : ''}</div><p>${MisraUI.escapeHTML(row.answer.raw_ocr_text || '')}</p></div><div class="source-segments"><h3>Tracked source segments</h3>${row.sources.map((source) => sourceMarkup(source, row)).join('') || '<p class="section-copy">No source segments were recorded.</p>'}</div>` : `<div class="missing-answer"><strong>No OCR answer was mapped here.</strong><p>Open the page containing this answer and use Re-extract page, or move an existing source segment here.</p></div>`}
         </div>
       </details>`;
@@ -225,6 +356,8 @@
         MisraAPI.submissionJobs(submissionId, 'ocr_submission'),
       ]);
       report = nextReport;
+      questionJump.innerHTML = '<option value="">Choose a question…</option>' + report.questions.map(row => `<option value="${MisraUI.escapeHTML(row.question.id)}">Question ${MisraUI.escapeHTML(row.question.question_number)} · ${!row.answer ? 'Answer missing' : row.mapping_flags.length ? 'Check location' : 'Answer found'}</option>`).join('');
+      nextIssue.hidden = !report.questions.some(row => !row.answer || row.mapping_flags.length);
       renderIdentity();
       renderReadiness();
       renderSegmentOrganizer();
@@ -246,7 +379,29 @@
 
   previousPage.addEventListener('click', () => setPage(pageIndex - 1));
   nextPage.addEventListener('click', () => setPage(pageIndex + 1));
+  readinessPanel.addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-reprocess-extraction]');
+    if (!button || !report?.readiness.can_reprocess) return;
+    if (!window.confirm('Re-run OCR on this ungraded paper? This uses AI quota and replaces its current answer mapping only if the complete new scan succeeds.')) return;
+    button.disabled = true;
+    button.textContent = 'Scheduling scan…';
+    try {
+      const response = await MisraAPI.reprocessExtraction(submissionId);
+      renderOcrJob(response.job);
+      if (response.job.status !== 'failed') watchOcrJob(response.job.id);
+    } catch (error) {
+      window.showToast(error.message, 'error');
+      button.disabled = false;
+      button.textContent = 'Re-run automatic extraction';
+    }
+  });
   errorRegion.addEventListener('click', async (event) => {
+    const reconnect = event.target.closest('[data-reconnect-ocr]');
+    if (reconnect) {
+      reconnect.disabled = true;
+      await watchOcrJob(reconnect.dataset.reconnectOcr);
+      return;
+    }
     const retry = event.target.closest('[data-retry-ocr]');
     if (!retry) return;
     retry.disabled = true;
@@ -263,6 +418,10 @@
   });
   metadataForm.addEventListener('submit', async (event) => {
     event.preventDefault();
+    if (metadataSaving) return;
+    metadataSaving = true;
+    metadataStatus.textContent = 'Saving…';
+    [studentName, studentNumber, instructorName].forEach(input => { input.disabled = true; });
     const button = metadataForm.querySelector('[type="submit"]');
     button.disabled = true; button.textContent = 'Saving…';
     try {
@@ -271,12 +430,17 @@
         student_number: studentNumber.value.trim() || null,
         instructor_name: instructorName.value.trim() || null,
       });
+      metadataDirty = false;
       renderIdentity();
+      metadataStatus.textContent = 'Saved';
       const identity = MisraUI.identityState(report.submission);
       window.showToast(identity.complete ? 'Student identity saved and linked to the roster.' : 'Details saved. Student identity is still incomplete.', identity.complete ? 'success' : 'warning');
     } catch (error) {
+      metadataStatus.textContent = `Not saved: ${error.message}. Your edits are still here; try saving again.`;
       window.showToast(error.message, 'error');
     } finally {
+      metadataSaving = false;
+      [studentName, studentNumber, instructorName].forEach(input => { input.disabled = false; });
       button.disabled = false; button.textContent = 'Save paper details';
     }
   });
@@ -299,7 +463,7 @@
     if (!target || !assign || !ignore || !count) return;
     count.textContent = String(selected.length);
     assign.disabled = !selected.length || !target.value;
-    ignore.disabled = !selected.length || selected.some((input) => !input.hasAttribute('data-unmatched-index'));
+    ignore.disabled = !selected.length;
   }
 
   unmatchedPanel.addEventListener('change', (event) => {
@@ -309,7 +473,7 @@
     const viewPage = event.target.closest('[data-view-segment-page]');
     if (viewPage) {
       setPage(Number(viewPage.dataset.viewSegmentPage));
-      document.getElementById('source-viewer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      document.getElementById('source-viewer').scrollIntoView({ behavior: 'auto', block: 'start' });
       return;
     }
 
@@ -340,6 +504,7 @@
       window.showToast('Choose the destination question first.', 'error');
       return;
     }
+    if (ignore && !window.confirm(`Exclude ${selected.length} selected fragment${selected.length === 1 ? '' : 's'} from grading? You can restore them from the excluded fragments section.`)) return;
     assign && (assign.disabled = true);
     ignore && (ignore.disabled = true);
     try {
@@ -348,15 +513,15 @@
       renderSegmentOrganizer();
       renderMappings();
       setPage(pageIndex);
-      window.showToast(ignore ? 'Selected OCR noise removed.' : `${selected.length} fragment${selected.length === 1 ? '' : 's'} moved and saved.`, 'success');
+      window.showToast(ignore ? 'Selected fragments excluded from grading. They remain available in OCR details.' : `${selected.length} fragment${selected.length === 1 ? '' : 's'} moved and saved.`, 'success');
     } catch (error) {
       window.showToast(error.message, 'error');
       updateSegmentActions();
     }
   });
   reextractPage.addEventListener('click', async () => {
-    const targets = report?.readiness.missing_question_numbers || [];
-    if (!targets.length) { window.showToast('There are no missing answers to recover.', 'success'); return; }
+    const targets = recoveryTargets();
+    if (!targets.length) { window.showToast('No answer recovery is available on this page. Use the full-paper automatic scan if coverage remains unresolved.', 'warning'); return; }
     reextractPage.disabled = true;
     reextractPage.textContent = 'Scanning page…';
     recoveryPanel.hidden = false;
@@ -373,7 +538,7 @@
       recoveryPanel.innerHTML = `${MisraUI.errorState(error.message)}<button class="btn btn-secondary" type="button" data-dismiss-recovery style="margin-top:10px">Close</button>`;
     } finally {
       reextractPage.textContent = `Re-extract page ${pageIndex + 1}`;
-      reextractPage.disabled = !report?.readiness.missing_question_numbers.length;
+      reextractPage.disabled = !recoveryTargets().length;
     }
   });
   recoveryPanel.addEventListener('click', async (event) => {
@@ -405,7 +570,24 @@
     const pageTarget = event.target.closest('[data-source-page]');
     if (pageTarget) {
       setPage(Number.parseInt(pageTarget.dataset.sourcePage, 10));
-      document.getElementById('source-viewer').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const source = report.questions.flatMap((row) => row.sources).find((item) => item.id === pageTarget.dataset.sourceId);
+      if (source) {
+        const request = ++locationRequest;
+        const selectedPage = pageIndex;
+        regionCaption.hidden = false;
+        regionCaption.textContent = 'Finding this answer on the original page…';
+        let locations = {};
+        try { locations = await MisraEvidence.pageLocations(submissionId, selectedPage); } catch (_) { /* Approximate fallback is explicitly labelled. */ }
+        if (request !== locationRequest || pageIndex !== selectedPage) return;
+        const { box, verified, message } = MisraEvidence.location(source, locations);
+        pageHighlight.classList.toggle('is-approximate', !verified);
+        if (box) {
+          Object.assign(pageHighlight.style, { left: `${box.x * 100}%`, top: `${box.y * 100}%`, width: `${box.width * 100}%`, height: `${box.height * 100}%` });
+          pageHighlight.hidden = false;
+        }
+        regionCaption.textContent = box ? message : 'Exact answer location is unavailable. The full original page is shown; no answer has been cropped.';
+      }
+      document.getElementById('source-viewer').scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
     }
   });
   gradeAll.addEventListener('click', async () => {

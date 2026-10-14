@@ -1,151 +1,116 @@
-(async function () {
+(function () {
   'use strict';
-
-  const stats = document.getElementById('dashboard-stats');
-  const recent = document.getElementById('recent-assessments');
-  const focusActions = document.getElementById('dashboard-focus-actions');
-  const focusCopy = document.getElementById('focus-copy');
-  const dashboardLead = document.getElementById('dashboard-lead');
-  const pipeline = document.getElementById('dashboard-pipeline');
-  const primaryAction = document.getElementById('dashboard-primary-action');
-
-  const number = (value) => Number.isFinite(Number(value)) ? Number(value) : 0;
-  const plural = (value, singular, pluralForm = `${singular}s`) => `${value} ${value === 1 ? singular : pluralForm}`;
-  const clamp = (value, min, max) => Math.min(Math.max(value, min), max);
+  const $ = (id) => document.getElementById(id);
+  const escape = MisraUI.escapeHTML, number = MisraPaperFlow.number;
+  const plural = (n, label) => n + ' ' + label + (n === 1 ? '' : 's');
+  const href = (page, id) => page + '.html?exam_id=' + encodeURIComponent(id);
+  let exams = [], submissions = [], context = {}, loading = false, loaded = false, timer;
+  let currentChecks = null;
 
   function assessmentState(exam) {
-    const questions = number(exam.question_count);
-    const approved = clamp(number(exam.approved_question_count), 0, questions);
-    const submissions = number(exam.submission_count);
-    const reviews = number(exam.review_count);
-    const readiness = questions ? Math.round((approved / questions) * 100) : 0;
-
-    if (!questions) return { label: 'Add questions', tone: 'setup', readiness, href: `rubric-studio.html?exam_id=${encodeURIComponent(exam.id)}` };
-    if (approved < questions) return { label: 'Finish rubrics', tone: 'setup', readiness, href: `rubric-studio.html?exam_id=${encodeURIComponent(exam.id)}` };
-    if (!submissions) return { label: 'Upload papers', tone: 'ready', readiness, href: `upload.html?exam_id=${encodeURIComponent(exam.id)}` };
-    if (reviews) return { label: 'Review grades', tone: 'review', readiness, href: `reviews.html?exam_id=${encodeURIComponent(exam.id)}` };
-    return { label: 'Open grades', tone: 'complete', readiness, href: `grades.html?exam_id=${encodeURIComponent(exam.id)}` };
+    const papers = submissions.filter((paper) => paper.exam_id === exam.id);
+    const counts = MisraPaperFlow.counts(papers);
+    const questions = number(exam.question_count), approved = number(exam.approved_question_count);
+    const destination = (label, page, detail, tone) => ({ label, href: href(page, exam.id), detail, tone });
+    if (!questions) return destination('Add questions', 'rubric-studio', 'Add the source exam or create questions to begin.', 'setup');
+    if (approved < questions) return destination('Finish rubrics', 'rubric-studio', approved + ' of ' + questions + ' question rubrics approved.', 'setup');
+    if (exam.id === context.selectedId && currentChecks?.ready === false) return destination('Finish setup', 'rubric-studio', 'Resolve the answer-key, rubric or policy checks.', 'setup');
+    if (counts.attention) return destination('Check papers', 'submissions', plural(counts.attention, 'paper') + ' need processing or evidence checks.', 'review');
+    if (number(exam.review_count) || counts.review) return destination('Review grades', 'reviews', 'Instructor decisions are waiting in the review queue.', 'review');
+    if (counts.processing) return destination('View progress', 'submissions', plural(counts.processing, 'paper') + ' still processing. You can leave the page.', 'ready');
+    if (counts.ready) return destination('Start grading', 'submissions', plural(counts.ready, 'paper') + ' ready to grade.', 'ready');
+    if (counts.graded) return destination('Open grades', 'grades', 'Grades recorded. Export eligibility is checked separately.', 'complete');
+    if (number(exam.submission_count)) return destination('Open papers', 'submissions', 'Inspect the uploaded papers and their saved progress.', 'ready');
+    return destination('Upload papers', 'upload', 'Rubrics approved. Upload student work when ready.', 'ready');
   }
-
-  function focusItem({ count, label, copy, href, tone = 'neutral' }) {
-    return `<a class="focus-action focus-action-${tone}" href="${href}">
-      <span class="focus-action-count">${number(count)}</span>
-      <span class="focus-action-copy"><strong>${MisraUI.escapeHTML(label)}</strong><small>${MisraUI.escapeHTML(copy)}</small></span>
-      <span class="focus-action-arrow" aria-hidden="true">→</span>
-    </a>`;
+  function renderAssessments() {
+    const query = $('assessment-search').value.trim().toLocaleLowerCase();
+    const visible = exams.filter((exam) => [exam.course_code, exam.course_title, exam.title].join(' ').toLocaleLowerCase().includes(query));
+    $('recent-assessments').innerHTML = visible.length ? visible.map((exam) => {
+      const state = assessmentState(exam);
+      return `<article class="dashboard-assessment" data-tone="${state.tone}">
+        <div class="assessment-main"><div class="assessment-course">${escape(exam.course_code || exam.course_title || 'Assessment')}</div>
+        <h3>${escape(exam.title)}</h3><div class="assessment-meta"><span>${plural(number(exam.question_count), 'question')}</span><span>${plural(number(exam.submission_count), 'paper')}</span></div></div>
+        <div class="assessment-readiness"><span class="assessment-state-note">${escape(state.detail)}</span></div>
+        <a class="assessment-next" href="${state.href}"><span>${escape(state.label)}</span><span aria-hidden="true">→</span></a>
+      </article>`;
+    }).join('') : MisraUI.emptyState(exams.length ? 'No matching assessments' : 'Create your first assessment', exams.length ? 'Try a different course code or title.' : 'Add a course and assessment, then prepare its grading foundations.');
   }
-
-  function metric(label, value, note, tone = '') {
-    return `<article class="dashboard-metric ${tone ? `is-${tone}` : ''}">
-      <span class="dashboard-metric-label">${MisraUI.escapeHTML(label)}</span>
-      <strong>${MisraUI.escapeHTML(value)}</strong>
-      <small>${MisraUI.escapeHTML(note)}</small>
-    </article>`;
+  function focusItem(count, label, copy, url, tone = 'neutral') {
+    return `<a class="focus-action focus-action-${tone}" href="${url}"><span class="focus-action-count">${count}</span><span class="focus-action-copy"><strong>${escape(label)}</strong><small>${escape(copy)}</small></span><span class="focus-action-arrow" aria-hidden="true">→</span></a>`;
   }
-
-  function assessmentRow(exam) {
-    const state = assessmentState(exam);
-    const questions = number(exam.question_count);
-    const approved = number(exam.approved_question_count);
-    const submissions = number(exam.submission_count);
-    const reviews = number(exam.review_count);
-    const course = exam.course_code || exam.course_title || 'Course not labeled';
-    const readinessLabel = questions ? `${approved} of ${questions} grading foundations approved` : 'No questions configured';
-
-    return `<article class="dashboard-assessment" data-tone="${state.tone}">
-      <div class="assessment-main">
-        <div class="assessment-course">${MisraUI.escapeHTML(course)}</div>
-        <h3>${MisraUI.escapeHTML(exam.title)}</h3>
-        <div class="assessment-meta">
-          <span>${plural(questions, 'question')}</span>
-          <span>${plural(submissions, 'paper')}</span>
-          ${reviews ? `<span class="assessment-review-count">${plural(reviews, 'review')}</span>` : '<span>No pending reviews</span>'}
-        </div>
-      </div>
-      <div class="assessment-readiness">
-        <div class="assessment-readiness-copy"><span>Rubric readiness</span><strong>${state.readiness}%</strong></div>
-        <div class="assessment-progress" role="progressbar" aria-label="${MisraUI.escapeHTML(exam.title)} rubric readiness" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${state.readiness}"><span style="--assessment-progress:${state.readiness}%"></span></div>
-        <small>${MisraUI.escapeHTML(readinessLabel)}</small>
-      </div>
-      <a class="assessment-next" href="${state.href}"><span>${MisraUI.escapeHTML(state.label)}</span><span aria-hidden="true">→</span></a>
-    </article>`;
-  }
-
-  try {
-    const [context, submissions] = await Promise.all([
-      MisraUI.assessmentReady,
-      window.MisraAPI.submissions(),
-    ]);
-    const exams = context.exams;
-    if (context.error) throw context.error;
+  function render() {
+    const counts = MisraPaperFlow.counts(submissions);
+    const reviews = exams.reduce((total, exam) => total + number(exam.review_count), 0);
+    const setup = exams.filter((exam) => !number(exam.question_count) || number(exam.approved_question_count) < number(exam.question_count) || (exam.id === context.selectedId && currentChecks?.ready === false));
     const current = exams.find((exam) => exam.id === context.selectedId) || exams[0];
     if (current) {
-      const checks = await MisraAPI.setupReadiness(current.id).catch(() => null);
-      const action = !checks?.ready
-        ? { label: 'Finish assessment setup', page: 'rubric-studio.html' }
-        : !number(current.submission_count)
-          ? { label: 'Upload student papers', page: 'upload.html' }
-          : number(current.review_count)
-            ? { label: 'Review flagged grades', page: 'reviews.html' }
-            : { label: 'Open grades', page: 'grades.html' };
-      primaryAction.textContent = action.label;
-      primaryAction.href = `${action.page}?exam_id=${encodeURIComponent(current.id)}`;
+      const action = assessmentState(current);
+      $('dashboard-primary-action').textContent = action.label === 'Finish rubrics' ? 'Continue assessment setup' : action.label;
+      $('dashboard-primary-action').href = action.href;
     }
-
-    const totals = exams.reduce((sum, exam) => ({
-      questions: sum.questions + number(exam.question_count),
-      approved: sum.approved + number(exam.approved_question_count),
-      submissions: sum.submissions + number(exam.submission_count),
-      reviews: sum.reviews + number(exam.review_count),
-    }), { questions: 0, approved: 0, submissions: 0, reviews: 0 });
-    const identityIssues = submissions.filter((submission) => MisraUI.identityState(submission).needsAttention);
-    const setupIssues = exams.filter((exam) => number(exam.question_count) === 0 || number(exam.approved_question_count) < number(exam.question_count));
-    const activeJobs = submissions.filter((submission) => ['uploaded', 'queued', 'processing', 'extracting', 'grading', 'retrying'].includes(String(submission.status || '').toLowerCase()));
-    const gradedPapers = submissions.filter((submission) => ['graded', 'completed', 'needs_review'].includes(String(submission.status || '').toLowerCase()));
-    const allClear = totals.reviews === 0 && identityIssues.length === 0 && setupIssues.length === 0;
-
-    dashboardLead.textContent = allClear
-      ? 'Your grading workspace is clear. Start a new upload or prepare the next assessment.'
-      : `${plural(totals.reviews + identityIssues.length + setupIssues.length, 'item')} need a decision before every result is ready.`;
-    focusCopy.textContent = allClear
-      ? 'Everything is ready for the next batch.'
-      : 'Resolve these items first to keep grading traceable and safe to export.';
-
-    focusActions.innerHTML = allClear
-      ? `<a class="focus-action focus-action-clear" href="upload.html"><span class="focus-clear-mark" aria-hidden="true">✓</span><span class="focus-action-copy"><strong>Workspace clear</strong><small>Upload the next set of papers when you are ready.</small></span><span class="focus-action-arrow" aria-hidden="true">→</span></a>`
-      : [
-        focusItem({ count: totals.reviews, label: 'Grade reviews', copy: totals.reviews ? 'Resolve low-confidence or disputed results' : 'No answers are currently flagged', href: 'reviews.html', tone: totals.reviews ? 'urgent' : 'quiet' }),
-        focusItem({ count: identityIssues.length, label: 'Identity checks', copy: identityIssues.length ? 'Confirm missing names or student IDs' : 'All recorded identities are complete', href: 'submissions.html?identity=attention', tone: identityIssues.length ? 'warning' : 'quiet' }),
-        focusItem({ count: setupIssues.length, label: 'Assessment setup', copy: setupIssues.length ? 'Finish questions or approve grading foundations' : 'All assessment rubrics are approved', href: 'rubric-studio.html', tone: setupIssues.length ? 'setup' : 'quiet' }),
-      ].join('');
-
-    const readinessPercent = totals.questions ? Math.round((totals.approved / totals.questions) * 100) : 0;
-    stats.innerHTML = [
-      metric('Assessments', String(exams.length), exams.length ? 'Available in your workspace' : 'Create your first assessment'),
-      metric('Rubric readiness', `${readinessPercent}%`, totals.questions ? `${totals.approved} of ${totals.questions} questions approved` : 'No questions configured', readinessPercent === 100 && totals.questions ? 'good' : 'attention'),
-      metric('Papers in progress', String(activeJobs.length), activeJobs.length ? 'OCR or grading is underway' : 'No active processing jobs'),
-      metric('Graded papers', String(gradedPapers.length), totals.reviews ? `${plural(totals.reviews, 'answer')} still need review` : 'No pending grading reviews', totals.reviews ? 'attention' : 'good'),
-    ].join('');
-
-    recent.innerHTML = exams.length
-      ? exams.slice(0, 6).map(assessmentRow).join('')
-      : MisraUI.emptyState('No assessments yet', 'Create your first assessment, then add questions and approve its grading foundations.');
-
-    pipeline.innerHTML = [
-      { label: 'Assessment setup', value: setupIssues.length ? `${plural(setupIssues.length, 'assessment')} incomplete` : 'All active assessments configured', state: setupIssues.length ? 'attention' : 'complete', href: 'rubric-studio.html' },
-      { label: 'Paper processing', value: activeJobs.length ? `${plural(activeJobs.length, 'paper')} in progress` : `${plural(totals.submissions, 'paper')} received`, state: activeJobs.length ? 'active' : (totals.submissions ? 'complete' : 'idle'), href: 'submissions.html' },
-      { label: 'Instructor review', value: totals.reviews ? `${plural(totals.reviews, 'answer')} waiting` : 'Review queue is clear', state: totals.reviews ? 'attention' : 'complete', href: 'reviews.html' },
-      { label: 'Grade export', value: gradedPapers.length ? `${plural(gradedPapers.length, 'paper')} recorded` : 'No completed papers yet', state: gradedPapers.length ? 'complete' : 'idle', href: 'grades.html' },
-    ].map((item) => `<li data-state="${item.state}"><span class="pipeline-marker"></span><div><strong>${MisraUI.escapeHTML(item.label)}</strong><small>${MisraUI.escapeHTML(item.value)}</small></div><a href="${item.href}" aria-label="Open ${MisraUI.escapeHTML(item.label)}">→</a></li>`).join('');
-
-    MisraUI.reveal(stats.querySelectorAll('.dashboard-metric'));
-    MisraUI.reveal(focusActions.querySelectorAll('.focus-action'));
-    MisraUI.reveal(recent.querySelectorAll('.dashboard-assessment'), { limit: 6 });
-  } catch (error) {
-    stats.innerHTML = '';
-    focusCopy.textContent = 'Live workspace data is unavailable.';
-    focusActions.innerHTML = MisraUI.errorState(`${error.message}. Start the backend on port 8000 and refresh.`);
-    recent.innerHTML = MisraUI.errorState('Assessment data is unavailable while the engine is offline.');
-    pipeline.innerHTML = '<li data-state="attention"><span class="pipeline-marker"></span><div><strong>Connection interrupted</strong><small>Reconnect to refresh the workflow.</small></div></li>';
+    const tasks = [];
+    if (counts.attention) tasks.push(focusItem(counts.attention, 'Paper checks', 'Inspect stopped jobs or unresolved evidence', 'submissions.html?status=attention', 'urgent'));
+    if (reviews || counts.review) tasks.push(focusItem(reviews || counts.review, reviews ? 'Answers to review' : 'Papers to review', 'Confirm or correct recorded grades', 'reviews.html', 'warning'));
+    if (counts.ready) tasks.push(focusItem(counts.ready, 'Ready for grading', 'Open papers with completed mapping checks', 'submissions.html?status=ready', 'setup'));
+    if (counts.identity) tasks.push(focusItem(counts.identity, 'Identity checks', 'Confirm missing names or student IDs before export', 'submissions.html?identity=attention', 'warning'));
+    if (setup.length) tasks.push(focusItem(setup.length, 'Assessment setup', 'Finish questions, keys, rubrics and policies', href('rubric-studio', setup[0].id), 'setup'));
+    if (!tasks.length && counts.processing) tasks.push(focusItem(counts.processing, 'Work is in progress', 'Your background worker keeps going while you leave this page', 'submissions.html?status=processing'));
+    if (!tasks.length) tasks.push(focusItem(exams.length ? counts.graded : 0, exams.length ? 'Ready for your next assessment' : 'Start your workspace', exams.length ? 'Recorded grades are available; check eligibility before exporting.' : 'Create an assessment and prepare its grading foundations.', exams.length ? 'assessments.html' : 'assessments.html'));
+    $('dashboard-lead').textContent = counts.processing ? plural(counts.processing, 'paper') + ' processing in the background. Continue your work here.'
+      : 'Prepare assessments, follow your papers and make the decisions that matter.';
+    $('focus-copy').textContent = 'Next actions from saved records. Identity checks and grading decisions stay separate.';
+    $('dashboard-focus-actions').innerHTML = tasks.join('');
+    $('dashboard-stats').innerHTML = [
+      ['Assessments', exams.length, plural(setup.length, 'assessment') + ' need setup checks'],
+      ['Processing', counts.processing, 'OCR or grading in progress'],
+      ['Ready to grade', counts.ready, 'Mapping checks passed'],
+      ['Grades recorded', counts.graded + counts.review, 'Recorded does not mean export-ready'],
+    ].map(([label, count, note]) => `<article class="dashboard-metric"><span class="dashboard-metric-label">${label}</span><strong>${count}</strong><small>${note}</small></article>`).join('');
+    renderAssessments();
+    $('dashboard-pipeline').innerHTML = [
+      ['Prepare', setup.length ? plural(setup.length, 'assessment') + ' to finish' : 'Review keys, rubrics and policies', setup.length ? 'attention' : 'idle', setup.length ? href('rubric-studio', setup[0].id) : 'assessments.html'],
+      ['Extract', counts.processing ? plural(counts.processing, 'paper') + ' processing' : plural(counts.attention, 'paper') + ' to check', counts.attention ? 'attention' : counts.processing ? 'active' : 'idle', 'submissions.html'],
+      ['Grade & review', plural(counts.ready, 'paper') + ' ready to grade', counts.ready ? 'active' : 'idle', counts.ready ? 'submissions.html?status=ready' : 'reviews.html'],
+      ['Export', 'Check student identity and final grade eligibility', 'idle', 'grades.html'],
+    ].map(([label, detail, state, url]) => `<li data-state="${state}"><span class="pipeline-marker"></span><div><strong>${label}</strong><small>${escape(detail)}</small></div><a href="${url}" aria-label="Open ${escape(label)}">→</a></li>`).join('');
   }
+  async function load() {
+    if (loading) return;
+    loading = true; $('dashboard-refresh').disabled = true;
+    try {
+      if (!loaded) { context = await MisraUI.assessmentReady; }
+      const [newExams, papers, checks] = await Promise.all([
+        loaded || context.error ? MisraAPI.exams() : Promise.resolve(context.exams),
+        MisraAPI.submissions(),
+        context.selectedId ? MisraAPI.setupReadiness(context.selectedId).catch(() => null) : Promise.resolve(null),
+      ]);
+      exams = newExams; submissions = papers; currentChecks = checks;
+      if (!context.selectedId) context.selectedId = exams[0]?.id;
+      loaded = true; $('dashboard-connection').hidden = true;
+      render();
+      $('dashboard-sync').textContent = 'Updated ' + new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(new Date()) + ' · refreshes automatically';
+    } catch (error) {
+      $('dashboard-sync').textContent = 'Connection interrupted';
+      if (loaded) {
+        $('dashboard-connection').hidden = false;
+        $('dashboard-connection').textContent = 'Showing the last loaded overview. Refresh when the connection returns. Background work may still be running.';
+      } else {
+        $('dashboard-stats').innerHTML = '';
+        $('focus-copy').textContent = 'Workspace data could not load.';
+        $('dashboard-focus-actions').innerHTML = MisraUI.errorState(error.message + '. Start the backend on port 8000 and try again.');
+        $('recent-assessments').innerHTML = MisraUI.emptyState('Waiting for your workspace', 'Reconnect to load assessments. No records were changed.');
+      }
+    } finally {
+      loading = false; $('dashboard-refresh').disabled = false;
+      clearTimeout(timer);
+      if (!document.hidden) timer = setTimeout(load, submissions.some((paper) => MisraPaperFlow.state(paper).active) ? 20000 : 60000);
+    }
+  }
+  $('assessment-search').addEventListener('input', renderAssessments);
+  $('dashboard-refresh').addEventListener('click', load);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(); else clearTimeout(timer); });
+  window.addEventListener('online', load);
+  window.addEventListener('pagehide', () => clearTimeout(timer));
+  load();
 })();

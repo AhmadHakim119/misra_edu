@@ -40,6 +40,7 @@ class ExtractedPage(BaseModel):
 class ReviewedQuestion(ExtractedQuestion):
     max_score: float = Field(gt=0, le=9999.99, allow_inf_nan=False)
     marking_guide: str = Field(min_length=1, max_length=20000)
+    source_draft_id: str | None = Field(default=None, min_length=1, max_length=36)
 
 
 class ConfirmImport(BaseModel):
@@ -73,6 +74,10 @@ def safe_setup_path(document):
 
 def extract_setup_documents(job, db, progress):
     payload = dict(job.payload or {})
+    if payload.get('purpose') == 'course_source_questions':
+        from services.source_question_draft_service import generate_source_questions
+        generate_source_questions(job, db, progress)
+        return
     exam = db.query(Exam).filter(Exam.id == payload['exam_id'], Exam.institution_id == job.institution_id).first()
     if not exam:
         raise ValueError('Assessment no longer exists')
@@ -164,6 +169,13 @@ def confirm_import(job, request, db, user):
         return payload['imported_question_ids']
     if job.status != 'completed':
         raise HTTPException(409, 'Wait for extraction to finish before importing questions.')
+    source_package, source_originals = None, []
+    if payload.get('purpose') == 'course_source_questions':
+        from services.source_question_draft_service import validated_import_sources
+        try:
+            source_package, source_originals = validated_import_sources(job, request.questions, db, user)
+        except ValueError as error:
+            raise HTTPException(409, str(error)) from error
     numbers = [q.question_number.strip().lower() for q in request.questions]
     if any(not n for n in numbers) or len(numbers) != len(set(numbers)):
         raise HTTPException(422, 'Every question needs a unique number.')
@@ -175,20 +187,42 @@ def confirm_import(job, request, db, user):
     for index, reviewed in enumerate(request.questions):
         if not reviewed.question_text.strip() or not reviewed.marking_guide.strip():
             raise HTTPException(422, 'Question text and marking guide cannot be blank.')
+        criteria = [dict(title='Expected answer and reasoning', description=reviewed.marking_guide,
+                         points=reviewed.max_score, partial_credit_allowed=True)]
+        if source_originals:
+            original = source_originals[index]
+            if reviewed.marking_guide == original['marking_guide'] and reviewed.max_score == original['max_score']:
+                criteria = [{key:value for key,value in criterion.items() if key != 'citations'}
+                            for criterion in original['suggested_criteria']]
         rubric = build_rubric(max_score=reviewed.max_score, grading_approach=request.grading_approach,
-            criteria=[dict(title='Expected answer and reasoning', description=reviewed.marking_guide,
-                           points=reviewed.max_score, partial_credit_allowed=True)],
-            reference_context=reviewed.answer_key or None)
+            criteria=criteria, reference_context=None if source_originals else reviewed.answer_key or None)
         question = Question(institution_id=user.institution_id, exam_id=payload['exam_id'],
             question_number=numbers[index], question_text=reviewed.question_text,
-            max_score=reviewed.max_score, rubric_json={}, order_index=len(existing)+index+1, language='mixed')
+            max_score=reviewed.max_score, rubric_json={}, order_index=len(existing)+index+1,
+            language=payload['generation_request']['language'] if source_originals else 'mixed')
         db.add(question)
         db.flush()
         db.add(RubricVersion(question_id=question.id, version_number=1, schema_version=2,
             rubric_json=rubric.model_dump(), grading_approach=request.grading_approach,
             source='ai', status='draft', change_summary='Imported exam/key; instructor review required.', created_by=user.id))
+        if source_originals:
+            from models import AnswerKeyVersion
+            from schemas.course_materials import MaterialScopeRequest
+            from services.course_material_service import save_scope
+            from services.source_question_draft_service import draft_scope_bindings
+            db.add(AnswerKeyVersion(question_id=question.id, version_number=1, status='draft',
+                mode='reference' if reviewed.answer_key.strip() else 'no_fixed_answer',
+                reference_text=reviewed.answer_key, acceptable_answers=[], document_refs=[], created_by=user.id,
+                change_summary=f'AI source question draft {reviewed.source_draft_id}; verify the solution and approve separately.'))
+            save_scope(db, question, MaterialScopeRequest(mode='required',
+                bindings=draft_scope_bindings(source_package, source_originals[index])), user, rubric.model_dump())
         ids.append(question.id)
     payload['imported_question_ids'] = ids
+    if source_originals:
+        from services.source_question_draft_service import snapshot_hash
+        payload['imported_source_drafts'] = [dict(source_draft_id=reviewed.source_draft_id,
+            question_id=ids[index], reviewed_question=reviewed.model_dump(),
+            reviewed_sha256=snapshot_hash(reviewed.model_dump())) for index,reviewed in enumerate(request.questions)]
     payload['pages'] = {}  # Keep only the consolidated draft, not duplicate per-page text.
     job.payload = payload
     return ids

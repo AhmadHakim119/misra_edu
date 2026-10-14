@@ -96,5 +96,5 @@
     catch (_) { if (request === generation) error = 'Document upload failed. Choose the file again and retry.'; }
     finally { if (request === generation) { busy = false; render(); } }
   }
-  window.MisraAnswerKeys = { load, reset, canLeave, discard() { choose(current); error = ''; render(); }, hasUnsaved: () => dirty || busy, mount(element) { sync(); host = element; render(); } };
+  window.MisraAnswerKeys = { load, reset, canLeave, isBusy: () => busy, async saveDraft(){if(dirty && !busy)await save(false);return !dirty && !busy;}, discard() { choose(current); error = ''; render(); }, hasUnsaved: () => dirty || busy, mount(element) { sync(); host = element; render(); } };
 })();

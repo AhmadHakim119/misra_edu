@@ -22,6 +22,9 @@ class CriterionInput(BaseModel):
     alternative_methods: list[str] = Field(default_factory=list)
 
 class QuestionCreateRequest(BaseModel):
+    # Legacy clients explicitly create an approved manual rubric. New authoring
+    # clients can save a draft without making it grading authority.
+    approve_initial_rubric: bool = True
     question_number: str
     question_text: str
     max_score: float = Field(gt=0)

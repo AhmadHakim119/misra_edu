@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Exam, Question, User
+from models import Exam, Question, RubricVersion, User
 from services.auth_dependencies import require_instructor
 from schemas.rubric_input import QuestionCreateRequest
 from services.rubric_service import build_rubric
@@ -72,13 +72,29 @@ async def create_question(
     )
     db.add(question)
     db.flush()
-    attach_initial_approved_rubric(
-        question=question,
-        rubric=rubric,
-        source="manual",
-        change_summary="Initial instructor-created rubric.",
-        db=db,
-    )
+    if payload.approve_initial_rubric:
+        attach_initial_approved_rubric(
+            question=question,
+            rubric=rubric,
+            source="manual",
+            change_summary="Initial instructor-created rubric.",
+            approved_by=user.id,
+            db=db,
+        )
+    else:
+        # Keep question and initial draft atomic. The presence of an unapproved
+        # version blocks the legacy-JSON fallback in get_effective_rubric.
+        db.add(RubricVersion(
+            question_id=question.id,
+            version_number=1,
+            schema_version=2,
+            rubric_json=rubric.model_dump(),
+            grading_approach=rubric.policy.grading_approach,
+            source="manual",
+            status="draft",
+            change_summary="Initial instructor draft; approval required.",
+            created_by=user.id,
+        ))
     db.commit()
     db.refresh(question)
 

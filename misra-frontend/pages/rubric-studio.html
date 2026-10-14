@@ -6,28 +6,36 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=25">
-  <link rel="stylesheet" href="../css/assessment-workspace.css?v=25">
+  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=26">
+  <link rel="stylesheet" href="../css/assessment-workspace.css?v=26">
+  <link rel="stylesheet" href="../css/workflow-ease.css?v=1">
+  <link rel="stylesheet" href="../css/course-materials.css?v=2">
 </head>
 <body class="workspace-body" data-page="rubric">
   <main class="workspace-content" id="workspace-content">
     <header class="page-heading">
-      <div><h1>Rubric Studio</h1><p>Turn instructor intent into granular, versioned grading criteria. AI suggestions always remain drafts until you approve them.</p></div>
+      <div><h1>Rubric Studio</h1><p>Choose a question, check what earns marks, then approve its marking guide. AI suggestions remain drafts until you approve them.</p></div>
     </header>
 
     <section class="workspace-card card-pad" style="margin-bottom:20px">
       <div class="control-row">
         <div class="field"><label for="rubric-exam">Assessment</label><select class="input select" id="rubric-exam"><option value="">Loading assessments…</option></select></div>
+        <a class="btn btn-secondary" href="#rubric-workspace">Jump to rubric</a>
         <a class="btn btn-secondary" id="upload-link" href="upload.html" aria-disabled="true">Upload student answers</a>
       </div>
     </section>
     <div id="rubric-next-step" class="rubric-next-step" role="status" aria-live="polite" hidden></div>
+    <details class="workspace-card card-pad rubric-section" id="assessment-sources-panel">
+      <summary class="rubric-section-summary"><span><strong>Assessment source defaults</strong><small>Choose references once · questions can have approved exceptions</small></span></summary>
+      <div id="assessment-sources-host"><p>Choose an assessment to configure its shared references.</p></div>
+    </details>
 
     <section class="workspace-card card-pad exam-setup" aria-labelledby="setup-title">
-      <div class="section-head"><div><h2 class="section-title" id="setup-title">Start from your exam</h2><p class="section-copy">Upload a blank exam and, optionally, its answer key. Review the questions, then approve their rubrics. These files never become student submissions.</p></div></div>
+      <div class="section-head"><div><h2 class="section-title" id="setup-title">Start from your exam</h2><p class="section-copy">Upload an exam and its optional key, or create question drafts from approved course material below. Review the questions, then approve their grading foundations. Setup files never become student submissions.</p></div></div>
       <ol class="setup-steps" aria-label="Assessment setup"><li>Upload exam</li><li>Review questions</li><li>Approve rubrics</li><li>Upload student answers</li></ol>
       <p id="setup-readiness" class="field-hint" role="status">Choose an assessment to check its setup.</p>
       <details class="setup-check-details"><summary>Question-by-question setup checks</summary><div id="rubric-setup-checks"><p>Choose an assessment first.</p></div></details>
+      <details class="setup-upload-details" id="setup-upload-details"><summary>Upload a blank exam or answer key</summary>
       <form id="setup-upload-form">
         <div class="setup-file-grid">
           <div class="field"><label for="setup-exam-file">Blank exam</label><input class="input" id="setup-exam-file" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" required><span class="field-hint">Questions and printed maximum marks, not a student’s answers.</span></div>
@@ -35,6 +43,20 @@
         </div>
         <div class="setup-actions"><button class="btn btn-primary" id="setup-upload-button" disabled>Read exam & suggest questions</button><span class="field-hint">PDF or image · files are securely validated on upload.</span></div>
       </form>
+      </details>
+      <details id="source-question-details"><summary>Create questions from course material</summary>
+        <p class="section-copy">Use approved textbook pages or teaching notes to propose questions, solutions and marking criteria. Review the proposals before adding them; every grading foundation still needs its own approval.</p>
+        <p id="source-question-library-status" role="status">Choose an assessment first.</p>
+        <div class="setup-actions"><button class="btn btn-secondary" id="refresh-question-sources" type="button">Refresh approved sources</button><button class="btn btn-ghost" id="manage-question-sources" type="button">Manage course library</button></div>
+        <form id="source-draft-form">
+          <div class="field"><label for="question-source-version">Approved source version</label><select class="input select" id="question-source-version" required><option value="">Choose approved material…</option></select></div>
+          <div class="field"><label for="question-source-pages">Document pages</label><input class="input" id="question-source-pages" required placeholder="e.g. 2-4, 6"><span class="field-hint">Page positions start at 1. Only approved pages can be selected.</span></div>
+          <div class="field"><label for="question-source-topic">Topic or learning objective</label><input class="input" id="question-source-topic" required maxlength="500" placeholder="e.g. Work done against gravity"></div>
+          <div class="setup-file-grid"><div class="field"><label for="source-draft-count">Number of questions</label><input class="input" id="source-draft-count" type="number" min="1" max="5" step="1" value="3" required></div><div class="field"><label for="source-draft-marks">Marks per question</label><input class="input" id="source-draft-marks" type="number" min="0.01" max="100" step="0.01" value="2" required></div><div class="field"><label for="source-draft-language">Question language</label><select class="input select" id="source-draft-language"><option value="en">English</option><option value="ar">Arabic</option><option value="mixed">Mixed</option></select></div><div class="field"><label for="source-draft-difficulty">Difficulty</label><select class="input select" id="source-draft-difficulty"><option value="introductory">Introductory</option><option value="intermediate" selected>Intermediate</option><option value="advanced">Advanced</option></select></div></div>
+          <p id="source-draft-error" role="alert"></p><button class="btn btn-primary" id="source-draft-button" type="submit" disabled>Generate question drafts</button><p class="field-hint">Sends selected source passages to the configured free OpenRouter model. No paid or Gemini fallback. Free availability is not guaranteed.</p>
+        </form>
+      </details>
+      <details id="setup-source-library" hidden><summary>Course material library</summary><div id="setup-library-host"></div></details>
       <div id="setup-status" role="status" aria-live="polite" tabindex="-1"></div>
       <button type="button" class="btn btn-secondary" id="setup-new-upload" hidden>Upload another setup document</button>
       <details id="setup-history" hidden><summary>Previous setup uploads</summary><div id="setup-history-list" class="setup-actions"></div></details>
@@ -83,6 +105,6 @@
       </div>
     </div>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=17"></script><script src="../js/assessment-checks.js?v=1"></script><script src="../js/exam-setup.js?v=3"></script><script src="../js/answer-keys.js?v=2"></script><script src="../js/rubric-studio.js?v=10"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=24"></script><script src="../js/workspace.js?v=19"></script><script src="../js/assessment-checks.js?v=1"></script><script src="../js/exam-setup.js?v=5"></script><script src="../js/answer-keys.js?v=2"></script><script src="../js/course-materials.js?v=3"></script><script src="../js/assessment-sources.js?v=1"></script><script src="../js/source-question-drafts.js?v=1"></script><script src="../js/rubric-studio.js?v=16"></script>
 </body>
 </html>

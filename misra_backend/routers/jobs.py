@@ -5,7 +5,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Batch, Course, Exam, ProcessingJob, Submission, User
+from models import Batch, Course, CourseMaterial, Exam, ProcessingJob, Submission, User
 from services.auth_dependencies import require_instructor
 from services.job_queue_service import job_to_dict, retry_processing_job
 from services.audit_service import record_audit_event
@@ -41,6 +41,15 @@ def _workspace_job(job: ProcessingJob, db: Session) -> dict:
 
     exam = None
     course = None
+    material = None
+    if job.job_type == "material_ingestion":
+        material = db.query(CourseMaterial).filter(
+            CourseMaterial.id == (job.payload or {}).get("material_id"),
+            CourseMaterial.institution_id == job.institution_id,
+        ).first()
+        if material:
+            course = db.query(Course).filter(Course.id == material.course_id,
+                Course.institution_id == job.institution_id).first()
     if exam_id:
         exam = db.query(Exam).filter(
             Exam.id == exam_id,
@@ -57,6 +66,8 @@ def _workspace_job(job: ProcessingJob, db: Session) -> dict:
         "exam_id": exam.id if exam else None,
         "exam_title": exam.title if exam else None,
         "course_code": course.course_code if course else None,
+        "course_id": course.id if course else None,
+        "material_title": material.title if material else None,
         "batch_status": batch.status if batch else None,
         "batch_total_count": int(batch.total_count or 0) if batch else None,
         "batch_completed_count": int(batch.completed_count or 0) if batch else None,

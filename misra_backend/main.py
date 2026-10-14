@@ -13,6 +13,7 @@ from services.auth_dependencies import require_instructor
 from services.job_queue_service import redis_connection
 from services.build_info import build_info
 from routers import exam_setup
+from routers import course_materials
 
 load_dotenv()
 
@@ -37,7 +38,7 @@ app.add_middleware(
 async def prevent_sensitive_page_caching(request, call_next):
     response = await call_next(request)
     path = request.url.path
-    if path.startswith("/api/") or path.startswith("/app/pages/"):
+    if path.startswith("/api/") or path.startswith("/app/pages/") or path.startswith("/app/next/"):
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -64,6 +65,7 @@ app.include_router(instructor_preferences.router, dependencies=protected)
 app.include_router(exports.router, dependencies=protected)
 app.include_router(jobs.router, dependencies=protected)
 app.include_router(exam_setup.router, dependencies=protected)
+app.include_router(course_materials.router, dependencies=protected)
 
 @app.get("/")
 def read_root():
@@ -78,6 +80,9 @@ def health():
     return {
         "status": "online" if queue_online else "degraded",
         "model": DEFAULT_MODEL,
+        "ocr_provider": "gemini",
+        "grading_provider": os.getenv("GRADING_PROVIDER", "gemini"),
+        "grading_model": os.getenv("OPENROUTER_GRADING_MODEL", "nvidia/nemotron-3-super-120b-a12b:free") if os.getenv("GRADING_PROVIDER", "gemini") == "openrouter_free" else DEFAULT_MODEL,
         "queue": "online" if queue_online else "unavailable",
         "build": build_info(),
     }

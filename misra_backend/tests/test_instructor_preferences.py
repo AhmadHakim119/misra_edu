@@ -342,7 +342,7 @@ class InstructorPreferenceTests(unittest.TestCase):
         self.assertEqual(below["suggestions"], [])
         self.assertEqual(
             below["excluded_reason_codes"],
-            ["rubric_issue", "ocr_or_mapping_error", "other"],
+            ["rubric_issue", "ocr_or_mapping_error", "unsupported_deduction", "evidence_citation_error", "other"],
         )
         third = self.review_label("threshold-3", ["minor_notation"])
         self.db.commit()

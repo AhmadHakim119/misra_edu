@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, inspect
 
 from database import get_db
-from models import Exam, ProcessingJob, User
+from models import Exam, ProcessingJob, User, AnswerKeyVersion
+from schemas.source_question_drafts import SourceQuestionDraftRequest
 from services.auth_dependencies import require_instructor
 from services.audit_service import record_audit_event
 from services.exam_setup_service import ConfirmImport, SETUP_DIR, confirm_import, owned_exam, safe_setup_path, setup_readiness
@@ -26,8 +27,42 @@ def owned_import(db, user, exam_id, job_id, lock=False):
 def public_import(job):
     payload = job.payload or {}
     return dict(job=job_to_dict(job), questions=payload.get('draft_questions', []),
+        origin=payload.get('purpose', 'uploaded_exam'), source_passages=(payload.get('source_package') or {}).get('passages', []),
         warnings=payload.get('warnings', []), imported_question_ids=payload.get('imported_question_ids', []),
         documents=[dict(role=d['role'], page_count=d['page_count']) for d in payload.get('documents', [])])
+
+
+@router.post('/exams/{exam_id}/source-question-drafts', status_code=202)
+def draft_source_questions(exam_id: str, payload: SourceQuestionDraftRequest,
+                          db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    from services.source_question_draft_service import PURPOSE, source_package, snapshot_hash
+    from services.course_material_service import schema_available
+    exam = owned_exam(db, user, exam_id)
+    if not schema_available(db) or not inspect(db.connection()).has_table(AnswerKeyVersion.__tablename__):
+        raise HTTPException(503, 'Back up and run the grading-foundation and course-material upgrades before generating source questions.')
+    db.query(Exam).filter(Exam.id == exam.id).with_for_update().one()
+    try:
+        package = source_package(db, exam, payload)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    request = payload.model_dump()
+    existing = db.query(ProcessingJob).filter(ProcessingJob.institution_id == user.institution_id,
+        ProcessingJob.job_type == 'exam_setup', ProcessingJob.status.in_(['queued', 'processing', 'retrying']),
+        ProcessingJob.payload['exam_id'].as_string() == exam.id).all()
+    for job in existing:
+        if (job.payload or {}).get('purpose') == PURPOSE and job.payload.get('generation_request') == request:
+            return public_import(job)
+    job = ProcessingJob(institution_id=user.institution_id, requested_by=user.id, job_type='exam_setup',
+        status='queued', max_attempts=2, progress_total=1, progress_message='Waiting to generate source-grounded question drafts',
+        payload=dict(exam_id=exam.id, purpose=PURPOSE, documents=[], generation_request=request,
+                     source_package=package, source_package_sha256=snapshot_hash(package)))
+    db.add(job); db.flush()
+    record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
+        action='source_question_drafts_requested', entity_type='processing_job', entity_id=job.id,
+        details={'exam_id':exam.id, 'question_count':payload.count})
+    db.commit()
+    dispatch_processing_job(job, db)
+    return public_import(job)
 
 
 @router.get('/exams/{exam_id}/setup-readiness')

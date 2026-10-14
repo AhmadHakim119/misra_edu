@@ -11,16 +11,19 @@ const checks = { ready: true, message: 'Setup checks passed. Ready for student a
 ] };
 async function mock(page, { empty = false, fail = false, dark = false } = {}) {
   if (dark) await page.addInitScript(() => localStorage.setItem('misra-theme', 'dark'));
-  let failures = fail ? 1 : 0;
+  // The shared workflow bar also checks readiness. Keep the outage deterministic
+  // until this test restores it, rather than failing whichever request wins a race.
+  let unavailable = fail;
   await page.route('**/api/**', route => {
     const path = new URL(route.request().url()).pathname.replace('/api', '');
-    if (path.endsWith('/setup-readiness') && failures-- > 0) return route.fulfill({ status: 503, json: { detail: 'Connection interrupted' } });
+    if (path.endsWith('/setup-readiness') && unavailable) return route.fulfill({ status: 503, json: { detail: 'Connection interrupted' } });
     const body = path === '/auth/me' ? { id: 't', full_name: 'Test Instructor', role: 'teacher' } :
       path === '/health' ? { status: 'ok', model: 'test-model' } :
       path === '/exams' ? (empty ? [] : exams) : path === '/courses' ? [] :
       path.endsWith('/setup-readiness') ? checks : {};
     return route.fulfill({ json: body });
   });
+  return { restoreChecks: () => { unavailable = false; } };
 }
 
 test('course groups, typo search and filters keep assessment actions scoped', async ({ page }) => {
@@ -52,10 +55,11 @@ test('inline workspace shows versioned boundaries and scoped grades link', async
 });
 
 test('failed checks offer retry without claiming setup is ready', async ({ page }) => {
-  await mock(page, { fail: true });
+  const connection = await mock(page, { fail: true });
   await page.goto('/pages/assessments.html?exam_id=e1');
   await expect(page.getByRole('alert')).toContainText('Could not check setup');
   await expect(page.getByText('Setup checked', { exact: true })).toHaveCount(0);
+  connection.restoreChecks();
   await page.getByRole('button', { name: 'Retry checks' }).click();
   await expect(page.getByText('Setup checked', { exact: true })).toBeVisible();
 });

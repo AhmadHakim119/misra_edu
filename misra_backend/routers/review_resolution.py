@@ -29,6 +29,11 @@ def resolve_review(
     )
     if not answer:
         raise HTTPException(status_code=404, detail="Answer not found")
+    from models import Question
+    from services.grading_scope_service import is_external_question
+    question = db.query(Question).filter(Question.id == answer.question_id).first()
+    if request.apply_as_current and question and is_external_question(question):
+        raise HTTPException(status_code=409, detail="This question is assessed outside MISRA. Historical evaluation-only labels remain allowed.")
 
     if answer.score is None or answer.max_score is None:
         raise HTTPException(

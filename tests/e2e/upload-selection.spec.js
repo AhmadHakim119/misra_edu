@@ -2,8 +2,9 @@ const { test, expect } = require('@playwright/test');
 const path = require('path');
 const file = name => ({ name, mimeType: 'application/pdf', buffer: Buffer.from('Synthetic upload fixture') });
 
-async function setup(page, { hold = false, fail = false } = {}) {
-  await page.addInitScript(() => localStorage.setItem('misra-theme', 'dark'));
+async function setup(page, { hold = false, fail = false, jobs = [], theme = 'dark', batchCompleted = 2,
+  detailsFailures = 0, malformedDetails = false, jobFailures = 0, batchDetailsFailures = 0 } = {}) {
+  await page.addInitScript(theme => localStorage.setItem('misra-theme', theme), theme);
   const traffic = [], persisted = new Set();
   let release;
   const gate = new Promise(resolve => { release = resolve; });
@@ -15,21 +16,74 @@ async function setup(page, { hold = false, fail = false } = {}) {
     if (url === '/auth/me') body = { id: 'teacher', full_name: 'Test Instructor', role: 'teacher' };
     else if (url === '/health') body = { status: 'ok', model: 'test' };
     else if (url === '/exams') body = [{ id: 'exam1', title: 'Synthetic assessment', course_code: 'TEST101' }];
+    else if (url === '/jobs') body = { items: jobs, active_count: 0 };
     else if (url.endsWith('/setup-readiness')) body = { ready: true, message: 'Rubrics approved. Ready for student answers.' };
     else if (url === '/upload-exam' || url === '/upload-batch') {
       if (hold) await gate;
       if (fail) return route.fulfill({ status: 422, json: { detail: 'Synthetic validation failure. Choose another file.' } });
       persisted.add('student1');
-      body = { submission: { id: 'student1' }, job: { id: 'job1', status: 'queued' } };
-    } else if (url === '/jobs/job1') body = { id: 'job1', job_type: 'ocr_submission', submission_id: 'student1', status: 'completed', progress_total: 2 };
-    else if (url.endsWith('/extraction-review')) body = { submission: { id: 'student1' }, readiness: { mapped_answer_count: 1, expected_question_count: 1, mapping_complete: true } };
+      body = { submission: { id: 'student1' }, job: url === '/upload-batch' ? { id: 'batch-job', batch_id: 'batch1', status: 'queued' } : { id: 'job1', status: 'queued' } };
+    } else if (url === '/jobs/job1') {
+      if (jobFailures-- > 0) return route.fulfill({ status: 503, json: { detail: 'Status check unavailable' } });
+      body = { id: 'job1', job_type: 'ocr_submission', submission_id: 'student1', status: 'completed', progress_total: 2 };
+    }
+    else if (url === '/jobs/batch-job') body = { id: 'batch-job', job_type: 'ocr_batch', batch_id: 'batch1', status: 'completed', progress_total: 2 };
+    else if (url === '/batches/batch1') {
+      if (batchDetailsFailures-- > 0) return route.fulfill({ status: 503, json: { detail: 'Batch details unavailable' } });
+      body = { batch: { total_count: 2, completed_count: batchCompleted, failed_count: 0 } };
+    }
+    else if (url.endsWith('/extraction-review')) {
+      if (detailsFailures-- > 0) return route.fulfill({ status: 503, json: { detail: 'Result details unavailable' } });
+      body = malformedDetails ? { submission: { id: 'student1' } } : { submission: { id: 'student1' }, readiness: { mapped_answer_count: 1, expected_question_count: 1, mapping_complete: true } };
+    }
     else return route.fulfill({ status: 404, json: { detail: 'Not mocked' } });
     await route.fulfill({ json: body });
   });
   await page.goto('/pages/upload.html');
   await expect(page.locator('#upload-button')).toBeEnabled();
-  return { traffic, persisted, release, uploads: () => traffic.filter(r => ['/upload-exam', '/upload-batch'].includes(r.url)) };
+  return { traffic, persisted, release, allowDetails: () => { detailsFailures = 0; malformedDetails = false; batchDetailsFailures = 0; }, uploads: () => traffic.filter(r => ['/upload-exam', '/upload-batch'].includes(r.url)) };
 }
+
+for (const malformed of [false, true]) {
+  test(`completed OCR stays completed when details ${malformed ? 'are malformed' : 'fail to load'}; reload never queues OCR`, async ({ page }, info) => {
+    const state = await setup(page, { detailsFailures: malformed ? 0 : Infinity, malformedDetails: malformed });
+    await page.locator('#paper-files').setInputFiles(file('complete.pdf'));
+    await page.locator('#upload-button').click();
+    await expect(page.locator('#upload-result')).toContainText('Extraction completed');
+    await expect(page.locator('#upload-result')).not.toContainText('Processing may still');
+    await expect(page.locator('[data-retry-job]')).toHaveCount(0);
+    await expect(page.getByRole('link', { name: 'Open extraction result', exact: true })).toHaveAttribute('href', 'submission.html?id=student1');
+    if (!malformed) await page.screenshot({ path: info.outputPath('completed-details-unavailable.png'), fullPage: true, animations: 'disabled' });
+    state.allowDetails();
+    await page.getByRole('button', { name: 'Reload details', exact: true }).click();
+    await expect(page.locator('#upload-result')).toContainText('Extraction complete');
+    await expect(page.locator('#upload-result')).not.toContainText('could not be loaded');
+    expect(state.uploads()).toHaveLength(1);
+    expect(state.traffic.filter(item => item.method === 'POST' && item.url.includes('retry'))).toHaveLength(0);
+  });
+}
+
+test('completed batch keeps completion while batch details are unavailable', async ({ page }) => {
+  const state = await setup(page, { batchDetailsFailures: Infinity });
+  await page.locator('[data-mode="batch"]').click();
+  await page.locator('#paper-files').setInputFiles([file('one.pdf'), file('two.pdf')]);
+  await page.locator('#upload-button').click();
+  await expect(page.locator('#upload-result')).toContainText('Extraction completed');
+  state.allowDetails();
+  await page.getByRole('button', { name: 'Reload details' }).click();
+  await expect(page.locator('#upload-result')).toContainText('Batch extraction complete');
+  expect(state.uploads()).toHaveLength(1);
+});
+
+test('unknown job status recovers without claiming job completion or accepting another upload', async ({ page }) => {
+  const state = await setup(page, { jobFailures: 1 });
+  await page.locator('#paper-files').setInputFiles(file('pending.pdf'));
+  await page.locator('#upload-button').click();
+  await expect(page.locator('#upload-result')).toContainText('Progress updates unavailable');
+  await expect(page.locator('#upload-result')).not.toContainText('Extraction completed');
+  await expect(page.locator('#upload-result')).toContainText('Extraction complete', { timeout: 10000 });
+  expect(state.uploads()).toHaveLength(1);
+});
 
 async function drop(page, names) {
   await page.locator('#dropzone').evaluate((element, names) => {
@@ -123,3 +177,72 @@ test('rejected upload retains selection and allows explicit removal', async ({ p
   await expect(page.locator('#paper-files')).toBeEnabled();
   await expect(page.locator('#file-summary')).toHaveText('No files selected');
 });
+
+test('individual removal updates the batch payload and keeps focus predictable', async ({ page }) => {
+  const state = await setup(page);
+  await page.locator('[data-mode="batch"]').click();
+  await page.locator('#paper-files').setInputFiles([file('keep.pdf'), file('remove.pdf'), file('also-keep.pdf')]);
+  await expect(page.getByRole('list', { name: 'Selected papers' }).getByRole('listitem')).toHaveCount(3);
+  await expect(page.locator('#pages-field')).toBeHidden();
+  await page.getByRole('button', { name: 'Remove remove.pdf', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Remove also-keep.pdf', exact: true })).toBeFocused();
+  await page.locator('#upload-button').click();
+  await expect(page.locator('#upload-result')).toContainText('2 of 2 papers recorded as extracted');
+  expect(state.uploads()[0].body).not.toContain('filename="remove.pdf"');
+  expect(state.uploads()[0].body).toContain('filename="keep.pdf"');
+  await expect(page.locator('#upload-result a')).toHaveAttribute('href', 'submissions.html?exam_id=exam1&batch_id=batch1');
+});
+
+test('combined PDF requires positive whole page counts before upload', async ({ page }) => {
+  const state = await setup(page);
+  await page.locator('[data-mode="batch"]').click();
+  await page.locator('#paper-files').setInputFiles(file('combined.pdf'));
+  await page.locator('#pages-per-student').fill('1.5');
+  await page.locator('#upload-button').click();
+  await expect(page.locator('#upload-result')).toContainText('whole number');
+  expect(state.uploads()).toHaveLength(0);
+  await page.locator('#clear-files').click();
+  await expect(page.locator('#pages-per-student')).toHaveValue('');
+  await page.locator('#paper-files').setInputFiles(file('combined.pdf'));
+  await page.locator('#pages-per-student').fill('4');
+  await page.locator('#upload-button').click();
+  await expect.poll(() => state.uploads().length).toBe(1);
+  expect(state.uploads()[0].body).toContain('name="pages_per_student"');
+});
+
+test('returning to Upload offers the current assessment job without re-uploading', async ({ page }) => {
+  const state = await setup(page, { jobs: [
+    { id: 'unrelated', exam_id: 'other', job_type: 'ocr_submission', status: 'queued' },
+    { id: 'job1', exam_id: 'exam1', job_type: 'ocr_submission', status: 'completed' },
+  ] });
+  await expect(page.locator('#recent-upload')).toContainText('Finished — review results');
+  await page.locator('#recent-upload a').click();
+  await expect(page.locator('#upload-form')).toBeHidden();
+  await expect(page.locator('#upload-result')).toContainText('Extraction complete');
+  await page.reload();
+  await expect(page.locator('#upload-result')).toContainText('Extraction complete');
+  expect(state.uploads()).toHaveLength(0);
+});
+
+test('zero extracted papers never appears as a successful full batch', async ({ page }) => {
+  await setup(page, { batchCompleted: 0 });
+  await page.locator('[data-mode="batch"]').click();
+  await page.locator('#paper-files').setInputFiles([file('one.pdf'), file('two.pdf')]);
+  await page.locator('#upload-button').click();
+  await expect(page.locator('#upload-result')).toContainText('Batch needs a status check');
+  await expect(page.locator('#upload-result')).toContainText('0 of 2');
+});
+
+for (const theme of ['light', 'dark']) {
+  test('upload batch layout in ' + theme, async ({ page }, info) => {
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await setup(page, { theme });
+    await page.locator('[data-mode="batch"]').click();
+    await page.locator('#paper-files').setInputFiles([file('Database Systems — Section 1 — Student paper.pdf'), file('Another-paper-with-a-very-long-filename-for-responsive-testing.pdf'), file('ورقة اختبار.pdf')]);
+    await expect(page.locator('#selected-file-list li')).toHaveCount(3);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: info.outputPath('upload-' + theme + '.png'), fullPage: true, animations: 'disabled' });
+    expect(errors).toEqual([]);
+  });
+}

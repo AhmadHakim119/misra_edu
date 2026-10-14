@@ -19,6 +19,7 @@ from services.extraction_review_service import (
     build_extraction_review,
 )
 from services.gemini_client import generate
+from services.extraction_coverage_service import confirmed_recovery_regions
 from services.ocr_service import _normalize_question_number
 
 
@@ -159,7 +160,6 @@ def _sign_preview(
 ) -> str:
     signing_key = (
         os.getenv("RECOVERY_SIGNING_KEY")
-        or os.getenv("GOOGLE_API_KEY")
         or os.getenv("GEMINI_API_KEY")
     )
     if not signing_key:
@@ -213,6 +213,13 @@ def preview_page_recovery(
 
     page_bytes = load_submission_page_bytes(submission, page_index)
     extracted = extract_recovery_page(page_bytes, normalized_targets)
+    review = build_extraction_review(submission.id, db)
+    missing_labels = set(review["readiness"]["missing_question_numbers"])
+    missing_regions = {
+        (issue.get("page_index"), issue.get("region_index"))
+        for issue in review.get("coverage", {}).get("issues", [])
+        if issue.get("code") == "unaccounted_answer_region"
+    }
     segments = []
     for candidate in extracted.segments:
         normalized_number, _ = _normalize_question_number(
@@ -222,6 +229,10 @@ def preview_page_recovery(
         if normalized_number not in question_lookup or not candidate.text.strip():
             continue
         segment = candidate.model_dump()
+        if missing_regions and normalized_number not in missing_labels:
+            refs = confirmed_recovery_regions(db, submission, page_index, segment.get("bounding_box"))
+            if not any((ref["page_index"], ref["region_index"]) in missing_regions for ref in refs):
+                continue
         segment["question_number"] = normalized_number
         segment["text"] = candidate.text.strip()
         segments.append(segment)
@@ -349,6 +360,9 @@ def confirm_page_recovery(
             "approved": True,
             "preview_signature": preview_signature,
             "page_index": page_index,
+            "coverage_region_refs": confirmed_recovery_regions(
+                db, submission, page_index, raw_segment.get("bounding_box")
+            ),
         }
         db.add(
             AnswerSource(

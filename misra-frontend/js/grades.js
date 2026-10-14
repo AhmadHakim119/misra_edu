@@ -15,6 +15,7 @@
   let exams = [];
   let examsById = {};
   let preflightRequest = 0;
+  let exportBusy = false;
 
   function courseLabel(exam) {
     const code = exam.course_code || '';
@@ -73,13 +74,21 @@
     const requestedExamId = MisraUI.getParam('exam_id');
     const requestedExam = examsById[requestedExamId];
     if (requestedExam) courseSelect.value = requestedExam.course_id || 'unassigned';
+    else if ([...courseSelect.options].some(option => option.value === MisraUI.getParam('course_id'))) courseSelect.value = MisraUI.getParam('course_id');
     populateAssessmentOptions(requestedExamId);
+    for (const [select, key] of [[statusSelect, 'status'], [exportProfile, 'profile']]) {
+      const value = MisraUI.getParam(key);
+      if ([...select.options].some(option => option.value === value)) select.value = value;
+    }
   }
 
   function syncUrl() {
     const url = new URL(window.location.href);
     if (examSelect.value) url.searchParams.set('exam_id', examSelect.value);
     else url.searchParams.delete('exam_id');
+    for (const [key, value] of [['course_id', courseSelect.value], ['status', statusSelect.value], ['profile', exportProfile.value]]) {
+      if (value) url.searchParams.set(key, value); else url.searchParams.delete(key);
+    }
     window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`);
   }
 
@@ -115,12 +124,13 @@
       return;
     }
     exportPreflight.innerHTML = '<div class="export-preflight-loading"><span class="api-status-dot"></span><span>Checking student identities and export readiness…</span></div>';
+    exportCsv.setAttribute('aria-disabled', 'true');
     try {
       const preflight = await MisraAPI.gradeExportPreflight(examId, 'student_number');
       if (requestId !== preflightRequest) return;
-      const issues = preflight.rows.filter((row) => row.issues.length);
-      const displayRows = (issues.length ? issues : preflight.rows).slice(0, 8);
-      const hiddenCount = (issues.length ? issues : preflight.rows).length - displayRows.length;
+      const displayRows = preflight.rows;
+      const included = displayRows.filter(row => !blackboard || !row.issues.some(issue => issue.blocking)).length;
+      exportCsv.setAttribute('aria-disabled', String(exportBusy || included === 0));
       exportPreflight.innerHTML = `<div class="export-preflight-head">
         <div><strong>${blackboard ? 'Blackboard import check' : 'Generic CSV export check'}</strong><p>${blackboard ? 'The import file intentionally contains only Blackboard Username and one grade column. Confirm the selected assessment and roster identity before upload.' : 'The generic file includes identity, score, maximum score, percentage, completion, and review state for local records or LMS mapping.'}</p></div>
         <div class="export-preflight-counts">${MisraUI.badge(`${preflight.counts.ready} export ready`, 'success')}${preflight.counts.missing_name ? MisraUI.badge(`${preflight.counts.missing_name} missing name`, 'warning') : ''}${preflight.counts.missing_identifier ? MisraUI.badge(`${preflight.counts.missing_identifier} missing ID`, blackboard ? 'danger' : 'warning') : ''}${preflight.counts.incomplete_grading ? MisraUI.badge(`${preflight.counts.incomplete_grading} incomplete`, 'warning') : ''}${preflight.counts.needs_review ? MisraUI.badge(`${preflight.counts.needs_review} to review`, 'warning') : ''}</div>
@@ -129,16 +139,18 @@
       ${displayRows.length ? `<div class="export-preflight-list">${displayRows.map((row) => {
         const name = row.student_name || 'Student name missing';
         const username = row.username || 'Student number missing';
-        const blocking = row.issues.some((issue) => issue.blocking);
-        const status = blocking ? row.issues.filter((issue) => issue.blocking).map((issue) => issue.message).join(' · ') : row.issues.length ? row.issues.map((issue) => issue.message).join(' · ') : (blackboard ? 'Ready for Blackboard import' : 'Ready for generic export');
+        const blocking = blackboard && row.issues.some((issue) => issue.blocking);
+        const status = `${blocking ? 'Excluded' : 'Included'}${row.issues.length ? ` · ${row.issues.map(issue => issue.message).join(' · ')}` : ''}`;
+        const identityIssue = row.issues.some(issue => ['missing_name', 'missing_identifier'].includes(issue.code));
+        const gradingIssue = row.issues.some(issue => ['incomplete_grading', 'needs_review'].includes(issue.code));
         return `<div class="export-preflight-row">
           <div><strong>${MisraUI.escapeHTML(name)}</strong><span>${MisraUI.escapeHTML(username)}</span></div>
           <div class="export-preflight-score"><strong>${number(row.score)}</strong><span>/ ${number(row.max_score)}</span></div>
           <div>${MisraUI.badge(status, blocking ? 'danger' : row.issues.length ? 'warning' : 'success')}</div>
-          <a class="link-button" href="submission.html?id=${encodeURIComponent(row.submission_id)}">Check record</a>
+          <div>${identityIssue ? `<a class="link-button" href="submission.html?id=${encodeURIComponent(row.submission_id)}#metadata-editor">Fix identity</a>` : ''} ${gradingIssue ? `<a class="link-button" href="grade-results.html?id=${encodeURIComponent(row.submission_id)}">Review grades</a>` : ''}${!identityIssue && !gradingIssue ? `<a class="link-button" href="grade-results.html?id=${encodeURIComponent(row.submission_id)}">View grades</a>` : ''}</div>
         </div>`;
       }).join('')}</div>` : '<p class="section-copy">No submissions are recorded for this assessment.</p>'}
-      ${hiddenCount > 0 ? `<p class="export-preflight-more">${hiddenCount} more row${hiddenCount === 1 ? '' : 's'} not shown. The downloaded Excel report includes every student.</p>` : ''}`;
+      <p class="export-preflight-more">${included} included · ${displayRows.length - included} excluded. ${included === 0 ? 'Resolve the listed blockers before downloading this CSV, or use the Excel report to inspect all records.' : 'Every student is listed above. Recheck this preview after correcting a record.'}</p>`;
       MisraUI.reveal(exportPreflight.querySelectorAll('.export-preflight-row'));
     } catch (error) {
       if (requestId !== preflightRequest) return;
@@ -150,7 +162,12 @@
     event.preventDefault();
     const link = event.currentTarget;
     const url = link.dataset.downloadUrl;
-    if (!url || link.getAttribute('aria-disabled') === 'true') return;
+    if (exportBusy || !url || link.getAttribute('aria-disabled') === 'true') return;
+    exportBusy = true;
+    const controls = [courseSelect, examSelect, statusSelect, exportProfile];
+    const disabledStates = controls.map(control => control.disabled);
+    controls.forEach(control => { control.disabled = true; });
+    [exportCsv, exportXlsx].forEach(control => control.setAttribute('aria-disabled', 'true'));
     const idleLabel = link.textContent;
     link.setAttribute('aria-disabled', 'true');
     link.textContent = 'Preparing…';
@@ -189,12 +206,16 @@
     } catch (error) {
       window.showToast(error.message || 'Could not prepare the export.', 'error');
     } finally {
+      exportBusy = false;
+      controls.forEach((control, index) => { control.disabled = disabledStates[index]; });
       link.textContent = idleLabel;
-      link.setAttribute('aria-disabled', String(!examSelect.value));
+      updateExports();
+      updatePreflight();
     }
   }
 
   function number(value) {
+    if (value === null || value === undefined) return '—';
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed.toLocaleString(undefined, { maximumFractionDigits: 2 }) : '—';
   }
@@ -208,7 +229,7 @@
     const percentage = record.maxScore ? (record.score / record.maxScore) * 100 : null;
     return `<a class="gradebook-row" href="grade-results.html?id=${encodeURIComponent(record.submission.id)}">
       <div class="gradebook-person"><strong>${MisraUI.escapeHTML(identity.displayName)}</strong><span>${MisraUI.escapeHTML(identity.displayNumber)}</span></div>
-      <div class="gradebook-score"><strong>${number(record.score)} <span>/ ${number(record.maxScore)}</span></strong><small>${percentage === null ? 'Score unavailable' : `${number(percentage)}%`}</small></div>
+      <div class="gradebook-score"><strong>${number(record.score)} <span>/ ${number(record.maxScore)}</span></strong><small>${percentage === null ? 'Score unavailable' : `${number(percentage)}%`}${record.paperOnly ? ' · Paper only' : ''}</small></div>
       <div class="gradebook-review">${MisraUI.badge(record.needsReview ? `${record.reviewCount} to review` : record.gradedCount < record.questionCount ? `${record.gradedCount} of ${record.questionCount} graded` : 'Complete', record.needsReview || record.gradedCount < record.questionCount ? 'warning' : 'draft')}</div>
       <div class="gradebook-date"><span>${MisraUI.formatDate(record.submission.uploaded_at)}</span><span aria-hidden="true">→</span></div>
     </a>`;
@@ -266,9 +287,10 @@
         return {
           submission,
           score: scored.reduce((sum, answer) => sum + Number(scoreFor(answer) || 0), 0),
-          maxScore: scored.reduce((sum, answer) => sum + Number(answer.max_score || 0), 0),
+          maxScore: Number(report.grading_scope?.paper_max_score ?? report.answers.reduce((sum, answer) => sum + Number(answer.max_score || 0), 0)),
           gradedCount: scored.length,
-          questionCount: Number(exam?.question_count || report.answers.length),
+          questionCount: Number(report.grading_scope?.paper_question_count ?? (exam?.question_count != null ? Math.max(0, Number(exam.question_count) - (report.grading_scope?.external_question_ids?.length || 0)) : report.answers.length)),
+          paperOnly: report.grading_scope?.kind === 'paper_only',
           reviewCount,
           needsReview: reviewCount > 0,
         };
@@ -303,12 +325,13 @@
     render();
   });
   exportProfile.addEventListener('change', () => {
+    syncUrl();
     updateExports();
     updatePreflight();
   });
   exportCsv.addEventListener('click', downloadExport);
   exportXlsx.addEventListener('click', downloadExport);
-  statusSelect.addEventListener('change', render);
+  statusSelect.addEventListener('change', () => { syncUrl(); render(); });
   result.addEventListener('click', (event) => {
     const trigger = event.target.closest('[data-exam-id]');
     if (!trigger) return;

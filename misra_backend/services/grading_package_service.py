@@ -5,10 +5,11 @@ import json
 from io import BytesIO
 from pathlib import Path
 
-from models import AnswerSource, Exam, QuestionGradingPolicy, Submission
+from models import Answer, AnswerSource, Exam, QuestionGradingPolicy, Submission
 from services.answer_key_service import resolve_answer_key, public_snapshot
 from services.assessment_readiness_service import definition_consistency
 from services.rubric_version_service import get_effective_rubric
+from services.material_retrieval_service import retrieve_for_question, provider_sources
 
 
 def _routing_snapshot(answer, question, rubric, policy, mode, db, context=None):
@@ -42,6 +43,8 @@ def build_grading_package(answer, question, db, mode, routing_context=None):
     ):
         raise ValueError("Answer evidence does not belong to this assessment.")
     rubric, rubric_id = get_effective_rubric(question, db)
+    if (rubric.get("policy") or {}).get("assessment_scope") == "external":
+        raise ValueError("This question is assessed outside MISRA. No AI grade may be generated.")
     key = resolve_answer_key(question, db, rubric)
     policy = db.query(QuestionGradingPolicy).filter(QuestionGradingPolicy.question_id == question.id).first()
     consistency = definition_consistency(question, rubric, key, policy)
@@ -65,6 +68,15 @@ def build_grading_package(answer, question, db, mode, routing_context=None):
     scoring_rubric.pop("reference_context", None)
     scoring_rubric.pop("acceptable_answers", None)
     routing = _routing_snapshot(answer, question, rubric, policy, mode, db, routing_context)
+    course_references = retrieve_for_question(db, question, rubric)
+    from services.extraction_coverage_service import coverage_report
+    all_sources = db.query(AnswerSource).join(Answer,Answer.id == AnswerSource.answer_id).filter(Answer.submission_id == submission.id).all()
+    coverage = coverage_report(db,submission,all_sources,[item for item in (submission.unmatched_segments or []) if item.get("excluded_reason")])
+    if coverage["issues"]:
+        raise ValueError("Visible student work is not fully accounted for. Re-scan the indicated paper regions before grading; no grade was saved.")
+    if course_references["status"] == "incomplete":
+        consistency["advisories"].append({"code":"reference_retrieval_incomplete",
+            "message":"Optional course retrieval found incomplete context. Verify against the approved key and criteria."})
     package = {
         "schema_version": 1, "institution_id": answer.institution_id, "assessment_id": question.exam_id,
         "submission_id": submission.id, "answer_id": answer.id,
@@ -74,6 +86,8 @@ def build_grading_package(answer, question, db, mode, routing_context=None):
         "policy_version_id": rubric_id, "policy": deepcopy(rubric.get("policy") or {}),
         "answer_key": public_key, "routing": routing,
         "definition_consistency": consistency, "student_evidence": evidence,
+        "course_references": course_references,
+        "extraction_coverage":coverage,
         "student_document_sha256": None,
     }
     path = Path(submission.original_file_path)
@@ -165,7 +179,10 @@ def provider_grading_package(package):
         "definition_consistency": deepcopy(package.get("definition_consistency") or {}),
         "student_evidence": evidence,
     }
+    safe_sources, source_aliases = provider_sources(package.get("course_references") or {})
+    safe_package["course_references"] = safe_sources
     reference_aliases = {provider_key_id: local_key_id} if local_key_id else {}
+    reference_aliases.update(source_aliases)
     return safe_package, evidence_aliases, reference_aliases
 
 
@@ -202,6 +219,7 @@ def reference_images(key):
 
 
 def validate_evidence_references(result, package):
+    from services.grading_errors import CitationValidationError
     student_ids = {item["id"] for item in package["student_evidence"]}
     traceable_ids = {
         item["id"] for item in package["student_evidence"]
@@ -210,13 +228,23 @@ def validate_evidence_references(result, package):
     key_id = package["answer_key"]["reference_id"]
     for criterion in result.criteria_scores:
         if not set(criterion.evidence_refs).issubset(student_ids):
-            raise ValueError("A criterion cites student evidence outside the grading package.")
+            raise CitationValidationError("invalid_student_reference", "A criterion cites student evidence outside the grading package.")
         if traceable_ids and not set(criterion.evidence_refs).intersection(traceable_ids):
-            raise ValueError(
+            raise CitationValidationError("missing_traceable_evidence",
                 "A criterion must cite a tracked source segment or source page when one is available."
             )
         allowed_keys = {key_id} if package["answer_key"]["mode"] != "no_fixed_answer" else set()
+        allowed_keys.update(p["id"] for p in package.get("course_references", {}).get("passages", [])
+            if criterion.criterion_id in p["criterion_ids"])
         if not set(criterion.reference_refs).issubset(allowed_keys):
-            raise ValueError("A criterion cites an unavailable answer-key reference.")
+            raise CitationValidationError("invalid_reference", "A criterion cites an unavailable answer-key or course-source reference.")
+        course_context = package.get('course_references') or {}
+        if course_context.get('mode') == 'required':
+            applicable = {p['id'] for p in course_context.get('passages', [])
+                          if criterion.criterion_id in p['criterion_ids']}
+            if not applicable or not applicable.intersection(criterion.reference_refs):
+                raise CitationValidationError('missing_course_reference',
+                    'Source-grounded grading must cite an approved course passage for every criterion. '
+                    'An answer-key citation alone does not establish lecture grounding.')
         if not set(criterion.policy_applied).issubset(set(package["policy"])):
-            raise ValueError("A criterion cites an unknown marking-policy field.")
+            raise CitationValidationError("invalid_policy", "A criterion cites an unknown marking-policy field.")

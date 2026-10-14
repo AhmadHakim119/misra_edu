@@ -135,6 +135,19 @@ class ExtractionReviewTests(unittest.TestCase):
         )
         self.assertEqual(moved_row["answer"]["raw_ocr_text"], "proof work")
 
+        excluded = bulk_resolve_segments(
+            submission.id, "ignore", None, [wrong_source.id], [], self.db,
+        )
+        self.assertEqual(excluded["readiness"]["unmatched_segment_count"], 0)
+        self.assertEqual(excluded["readiness"]["missing_question_numbers"], ["2d"])
+        self.assertEqual(excluded["excluded_segments"][0]["text"], "proof work")
+        restored = bulk_resolve_segments(
+            submission.id, "assign", question_2d.id, [],
+            [excluded["excluded_segments"][0]["unmatched_index"]], self.db,
+        )
+        self.assertEqual(restored["readiness"]["missing_question_numbers"], [])
+        self.assertTrue(restored["readiness"]["bulk_grading_allowed"])
+
     def test_bulk_segment_resolution_moves_mapped_and_unmatched_fragments(self):
         submission = Submission(
             id="bulk-submission",
@@ -232,6 +245,33 @@ class ExtractionReviewTests(unittest.TestCase):
             row for row in cleaned["questions"] if row["question"]["question_number"] == "1"
         )
         self.assertEqual(question_1_row["answer"]["raw_ocr_text"], "first answer")
+
+    def test_excluded_annotations_do_not_block_and_keep_original_indices(self):
+        submission = Submission(
+            id="excluded-paper", institution_id="institution-1", exam_id="excluded-exam",
+            original_file_path="not-needed.pdf", page_count=2, status="extracted",
+            identity_status="unmatched_blank",
+            unmatched_segments=[
+                {"text": "9/10", "page_index": 0, "excluded_reason": "cover_page_mark"},
+                {"text": "real answer", "page_index": 1, "question_number": None},
+            ],
+        )
+        question = Question(
+            id="excluded-q", institution_id="institution-1", exam_id="excluded-exam",
+            question_number="1", question_text="Answer the question", max_score=2,
+            rubric_json={"criteria": []}, order_index=1,
+        )
+        self.db.add_all([submission, question])
+        self.db.commit()
+        report = build_extraction_review(submission.id, self.db)
+        self.assertEqual(report["readiness"]["unmatched_segment_count"], 1)
+        self.assertEqual(report["unmatched_segments"][0]["unmatched_index"], 1)
+        self.assertEqual(report["excluded_segments"][0]["unmatched_index"], 0)
+        resolved = bulk_resolve_segments(submission.id, "assign", question.id, [], [1], self.db)
+        self.assertEqual(resolved["readiness"]["unmatched_segment_count"], 0)
+        self.assertEqual(resolved["questions"][0]["answer"]["raw_ocr_text"], "real answer")
+        self.assertEqual(len(resolved["excluded_segments"]), 1)
+        self.assertTrue(resolved["readiness"]["bulk_grading_allowed"])
 
     def test_confirmed_page_recovery_is_signed_and_idempotent(self):
         submission = Submission(

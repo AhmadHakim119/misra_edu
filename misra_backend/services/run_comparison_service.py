@@ -17,7 +17,7 @@ def _comparison_context(run: GradingRun) -> dict | None:
     # in a mode audit. All actual definitions and source evidence must match.
     fields = ("schema_version", "institution_id", "assessment_id", "submission_id",
               "answer_id", "question", "rubric_version_id", "rubric",
-              "policy_version_id", "policy", "answer_key", "student_document_sha256")
+              "policy_version_id", "policy", "answer_key", "course_references", "extraction_coverage", "student_document_sha256")
     context = {field: package.get(field) for field in fields}
     context["student_evidence"] = [item for item in package.get("student_evidence", [])
                                    if item.get("kind") != "student_image"]

@@ -6,23 +6,39 @@
   <link rel="icon" type="image/png" href="../assets/logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=25">
+  <link rel="stylesheet" href="../css/tokens.css?v=4"><link rel="stylesheet" href="../css/base.css?v=3"><link rel="stylesheet" href="../css/workspace.css?v=26">
+  <link rel="stylesheet" href="../css/paper-workspace.css?v=1">
 </head>
 <body class="workspace-body" data-page="submissions">
-  <main class="workspace-content" id="workspace-content">
+  <main class="workspace-content paper-workspace" id="workspace-content">
     <header class="page-heading">
-      <div><h1>Extraction results</h1><p>Verify that every expected question has the right OCR segments before any AI grading begins.</p></div>
-      <div class="page-actions"><a class="btn btn-primary" href="upload.html">Upload papers</a></div>
+      <div><h1>Extraction results</h1><p>Your papers, from upload to grading. Open only what needs your attention.</p></div>
+      <div class="page-actions"><a class="btn btn-primary" id="papers-upload" href="upload.html">Upload papers</a></div>
     </header>
-    <section class="workspace-card card-pad">
+    <div class="paper-batch-scope" id="paper-batch-scope" hidden><span>Showing papers from this batch only</span><button class="link-button" type="button" id="paper-clear-batch">Show all assessment papers</button></div>
+    <div class="paper-stages" id="paper-stages" role="group" aria-label="Filter papers by stage">
+      <button class="paper-stage" type="button" data-stage="all" aria-pressed="true"><span>All papers</span><strong>—</strong></button>
+      <button class="paper-stage" type="button" data-stage="processing" aria-pressed="false"><span>Processing</span><strong>—</strong></button>
+      <button class="paper-stage" type="button" data-stage="attention" aria-pressed="false"><span>Needs attention</span><strong>—</strong></button>
+      <button class="paper-stage" type="button" data-stage="ready" aria-pressed="false"><span>Ready to grade</span><strong>—</strong></button>
+      <button class="paper-stage" type="button" data-stage="graded" aria-pressed="false"><span>Grades recorded</span><strong>—</strong></button>
+    </div>
+    <section class="paper-inbox" aria-label="Student papers">
+      <div class="paper-toolbar"><div class="field"><label for="paper-search">Find a paper</label><input class="input" id="paper-search" type="search" placeholder="Student name, ID or assessment" autocomplete="off"></div><button class="btn btn-secondary" id="refresh-papers" type="button">Refresh</button></div>
+      <details class="paper-filter-panel"><summary><strong>Filters</strong><span id="paper-filter-summary">All assessments</span></summary>
       <div class="submission-filters">
         <div class="field"><label for="submission-exam">Assessment</label><select class="input select" id="submission-exam"><option value="">All assessments</option></select></div>
-        <div class="field"><label for="submission-readiness">Mapping status</label><select class="input select" id="submission-readiness"><option value="all">All results</option><option value="attention">Action required</option><option value="ready">Ready to grade</option></select></div>
+        <div class="field"><label for="submission-readiness">Processing stage</label><select class="input select" id="submission-readiness"><option value="all">All stages</option><option value="processing">Processing</option><option value="attention">Needs attention</option><option value="ready">Ready to grade</option><option value="graded">Grades recorded</option><option value="review">Grade review needed</option></select></div>
         <div class="field"><label for="submission-identity">Student identity</label><select class="input select" id="submission-identity"><option value="all">All identities</option><option value="attention">Missing name or ID</option><option value="complete">Name and ID recorded</option></select></div>
       </div>
-      <div id="submissions-result" aria-live="polite"><div class="loading-list"><div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
+      </details>
+      <div id="paper-connection" class="paper-connection" role="alert" hidden></div>
+      <button type="button" class="paper-identity-note" id="paper-identity-note" hidden></button>
+      <div class="paper-list-heading"><strong id="paper-count" aria-live="polite">Loading papers…</strong><span id="paper-sync" role="status">Reading saved progress</span></div>
+      <div id="submissions-result"><div class="loading-list"><div class="skel loading-row"></div><div class="skel loading-row"></div><div class="skel loading-row"></div></div></div>
+      <nav id="paper-pagination" class="paper-pagination" aria-label="Paper list pagination" hidden><button class="btn btn-secondary" type="button" id="paper-prev">Previous</button><span id="paper-page-label" aria-live="polite"></span><button class="btn btn-secondary" type="button" id="paper-next">Next</button></nav>
     </section>
   </main>
-  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=17"></script><script src="../js/submissions.js?v=5"></script>
+  <script src="../js/app.js?v=3"></script><script src="../js/api.js?v=21"></script><script src="../js/workspace.js?v=18"></script><script src="../js/paper-flow.js?v=1"></script><script src="../js/submissions.js?v=6"></script>
 </body>
 </html>

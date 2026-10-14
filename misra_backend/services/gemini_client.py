@@ -9,10 +9,13 @@ load_dotenv()
 DEFAULT_MODEL = "gemini-2.5-flash"
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-if not GEMINI_API_KEY:
-    raise RuntimeError("GEMINI_API_KEY environment variable is not set.")
 
-client = genai.Client(api_key=GEMINI_API_KEY)
+# The Google SDK otherwise prefers GOOGLE_API_KEY whenever both variables are
+# present in the parent shell. MISRA intentionally has one Gemini credential
+# source so billing, quotas, and key rotation remain unambiguous.
+os.environ.pop("GOOGLE_API_KEY", None)
+
+client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 def _is_transient_error(retry_state):
     exception = retry_state.outcome.exception()
@@ -27,6 +30,8 @@ def _is_transient_error(retry_state):
     reraise=True
 )
 def generate(contents, model=DEFAULT_MODEL, json_mode=False):
+    if client is None:
+        raise RuntimeError("This operation needs GEMINI_API_KEY (OCR/setup or Gemini grading). Configure it or use an explicitly supported alternative; no fallback was attempted.")
     config = types.GenerateContentConfig(
         response_mime_type="application/json" if json_mode else "text/plain"
     )

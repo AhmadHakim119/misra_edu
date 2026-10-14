@@ -19,3 +19,5 @@ from .password_reset_token import PasswordResetToken
 from .processing_job import ProcessingJob
 from .answer_key_version import AnswerKeyVersion
 from .instructor_preference_version import InstructorPreferenceVersion
+from .course_material import CourseMaterial, MaterialVersion, MaterialPage, MaterialChunk, QuestionMaterialScopeVersion, AssessmentMaterialScopeVersion
+from .extraction_inventory import ExtractionInventory

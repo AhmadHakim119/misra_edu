@@ -301,6 +301,8 @@ def repeated_decision_suggestions(db, user) -> dict:
         "excluded_reason_codes": [
             "rubric_issue",
             "ocr_or_mapping_error",
+            "unsupported_deduction",
+            "evidence_citation_error",
             "other",
         ],
         "applies_automatically": False,

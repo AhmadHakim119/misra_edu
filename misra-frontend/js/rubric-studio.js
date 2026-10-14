@@ -22,6 +22,8 @@
   let savingQuestion = false;
   let loadedExamId = '';
   let questionRequest = 0;
+  let renderedQuestionId = '';
+  let openPanels = {};
   const state = { exams: [], questions: [], question: null, rubric: null, version: null, versions: [], gradingMode: 'adaptive', instructorProfile: null };
 
   function setRubricBusy(busy) {
@@ -93,7 +95,7 @@
 
   function showComposer(focus = true) {
     if (!loadedExamId || savingQuestion || savingRubric) return;
-    if (!window.MisraAnswerKeys.canLeave()) return;
+    if (!window.MisraMaterials.canLeave() || !window.MisraAnswerKeys.canLeave()) return;
     if (editorDirty && !window.confirm('Discard unsaved rubric edits and add a question?')) return;
     window.MisraAnswerKeys.discard();
     discardRubricEdits();
@@ -119,13 +121,17 @@
   closeComposer.addEventListener('click', () => { hideComposer(); openComposer.focus(); });
   questionForm.addEventListener('input', () => { formDirty = true; formError.hidden = true; });
   window.addEventListener('beforeunload', (event) => {
-    if (formDirty || editorDirty || savingQuestion || savingRubric || window.MisraAnswerKeys.hasUnsaved()) { event.preventDefault(); event.returnValue = ''; }
+    if (formDirty || editorDirty || savingQuestion || savingRubric || window.MisraAnswerKeys.hasUnsaved() || window.MisraMaterials.hasUnsaved() || window.MisraAssessmentSources?.hasUnsaved()) { event.preventDefault(); event.returnValue = ''; }
   });
   workspace.addEventListener('input', event => {
-    if (event.target.matches('[data-reference], [data-policy], [data-key]')) editorDirty = true;
+    if (event.target.matches('[data-reference], [data-policy], [data-key]')) {
+      editorDirty = true;
+      const status = workspace.querySelector('[data-rubric-save-state]');
+      if (status) status.textContent = 'Unsaved changes · save a draft or approve when ready';
+    }
   });
   examSelect.addEventListener('change', event => {
-    if (savingRubric || !window.MisraAnswerKeys.canLeave() || (editorDirty && !window.confirm('Discard unsaved rubric edits and switch assessments?'))) {
+    if (savingRubric || (window.MisraAssessmentSources && !window.MisraAssessmentSources.canLeave()) || !window.MisraMaterials.canLeave() || !window.MisraAnswerKeys.canLeave() || (editorDirty && !window.confirm('Discard unsaved rubric edits and switch assessments?'))) {
       examSelect.value = loadedExamId; event.stopImmediatePropagation(); return;
     }
     // Do not clear dirty state here: a later composer/import guard can still
@@ -163,6 +169,7 @@
       alternative_methods: criterion.alternative_methods || [],
     }));
     rubric.policy = {
+      assessment_scope: rubric.policy?.assessment_scope || 'paper',
       grading_approach: rubric.policy?.grading_approach || rubric.grading_approach || 'balanced',
       method_credit: rubric.policy?.method_credit || 'partial',
       arithmetic_error_policy: rubric.policy?.arithmetic_error_policy || 'single_penalty',
@@ -201,29 +208,46 @@
 
   function renderEditor() {
     if (!state.question || !state.rubric) {
+      renderedQuestionId = '';
       workspace.innerHTML = `<div class="workspace-card">${MisraUI.emptyState('Select a question', 'Choose an assessment and question to inspect its active rubric.', MisraUI.icons.rubric)}</div>`;
       return;
     }
     const draft = state.version?.status === 'draft';
     const total = state.rubric.criteria.reduce((sum, item) => sum + Number(item.points || 0), 0);
+    if (renderedQuestionId === state.question.id) {
+      workspace.querySelectorAll('details[data-rubric-panel]').forEach(panel => { openPanels[panel.dataset.rubricPanel] = panel.open; });
+    } else {
+      openPanels = { criteria: true };
+      renderedQuestionId = state.question.id;
+    }
+    const expanded = name => openPanels[name] ? ' open' : '';
     workspace.innerHTML = `
       <div class="workspace-card rubric-toolbar">
         <div><div class="rubric-toolbar-meta"><strong>Question ${MisraUI.escapeHTML(state.question.question_number)}</strong>${MisraUI.badge(state.version ? `Version ${state.version.version_number}` : 'Legacy rubric', draft ? 'draft' : 'success')}${MisraUI.badge(state.rubric.policy.grading_approach, 'slate')}</div><p class="section-copy">${MisraUI.escapeHTML(state.question.question_text || 'Question text is not available.')}</p></div>
-        <div class="rubric-toolbar-actions">
+        <div><div class="rubric-toolbar-actions">
           ${draft ? '<button class="btn btn-secondary" type="button" data-save-rubric>Save draft</button><button class="btn btn-primary" type="button" data-approve-rubric>Approve</button>' : '<button class="btn btn-secondary" type="button" data-create-draft>Create editable draft</button>'}
-        </div>
+        </div><p class="rubric-edit-state" data-rubric-save-state role="status">${editorDirty ? 'Unsaved changes' : draft ? 'Saved draft · not used for grading yet' : 'Approved · create a draft to change the marking guide'}</p></div>
       </div>
+      <nav class="rubric-shortcuts" aria-label="Rubric sections">${[['criteria', 'Marking criteria'], ['answer-key', 'Answer key'], ['sources', 'Course sources'], ['policy', 'Scoring policy'], ['suggestion', 'AI draft'], ['input', 'Grading input']].map(([target, label]) => `<button class="btn btn-secondary" type="button" data-rubric-jump="${target}">${label}</button>`).join('')}<button class="btn btn-ghost" type="button" data-fold-rubric>Collapse sections</button></nav>
+      <details class="workspace-card card-pad rubric-section" data-rubric-panel="sources"${expanded('sources')}>
+        <summary class="rubric-section-summary"><span><strong>Course sources</strong><small>Approved textbook passages, slides and teaching notes</small></span></summary>
+        <div id="course-material-panel"></div>
+      </details>
 
-      <section class="workspace-card card-pad answer-key-panel" id="answer-key-panel" aria-labelledby="answer-key-title"></section>
-      <section class="workspace-card card-pad rubric-reference">
-        <div class="section-head"><div><h2 class="section-title">Legacy rubric reference</h2><p class="section-copy">Preserved with this rubric. Used until a standalone answer key is approved; approving a key does not delete this reference. Criteria below still decide the marks.</p></div></div>
+      <details class="workspace-card card-pad rubric-section answer-key-section" data-rubric-panel="answer-key"${expanded('answer-key')}>
+        <summary class="rubric-section-summary"><span><strong>Answer key</strong><small>Reference solution and accepted alternatives</small></span></summary>
+        <div id="answer-key-panel" class="answer-key-panel" aria-labelledby="answer-key-title"></div>
+      </details>
+      <details class="workspace-card card-pad rubric-section rubric-reference" data-rubric-panel="legacy"${expanded('legacy')}>
+        <summary class="rubric-section-summary"><span><strong>Legacy rubric reference</strong><small>Used until a standalone answer key is approved</small></span></summary>
+        <p class="section-copy">Preserved with this rubric; approving a standalone key does not delete it. Criteria still decide the marks.</p>
         <div class="field"><label for="rubric-reference">Answer key, worked solution, or supporting context</label><textarea class="input textarea" id="rubric-reference" data-reference="reference_context" rows="6" placeholder="Add your reference solution, shared table data, or the core idea a correct response must reach.">${MisraUI.escapeHTML(state.rubric.reference_context || '')}</textarea></div>
         <div class="field"><label for="rubric-alternatives">Other acceptable answers (one per line)</label><textarea class="input textarea" id="rubric-alternatives" data-reference="acceptable_answers" rows="3" placeholder="Record valid alternatives without requiring an exact wording match.">${MisraUI.escapeHTML((state.rubric.acceptable_answers || []).join('\n'))}</textarea></div>
         <p class="field-hint">${draft ? 'Save draft to keep these references. Approve the draft to use them for future grading.' : 'This reference belongs to the approved version. Create an editable draft to change it.'} For diagrams, also select Image + text required and verify the mapped source pages.</p>
-      </section>
+      </details>
 
-      <details class="workspace-card suggestion-panel">
-        <summary style="cursor:pointer;font-weight:600">Ask AI for a granular draft</summary>
+      <details class="workspace-card card-pad rubric-section suggestion-panel" data-rubric-panel="suggestion"${expanded('suggestion')}>
+        <summary class="rubric-section-summary"><span><strong>Ask AI for a granular draft</strong><small>Optional · never approved automatically</small></span></summary>
         <p class="section-copy" style="margin:7px 0 16px">The suggestion is saved as a new draft version. It never becomes active automatically.</p>
         <form id="suggestion-form">
           <div class="suggestion-fields">
@@ -237,8 +261,8 @@
         </form>
       </details>
 
-      <section class="workspace-card card-pad routing-policy">
-        <div class="section-head"><div><h2 class="section-title">Grading input</h2><p class="section-copy">Choose what the AI can inspect for this question.</p></div></div>
+      <details class="workspace-card card-pad rubric-section routing-policy" data-rubric-panel="input"${expanded('input')}>
+        <summary class="rubric-section-summary"><span><strong>Grading input</strong><small>What the AI can inspect for this question</small></span>${MisraUI.badge(state.gradingMode.replaceAll('_', ' '), 'slate')}</summary>
         <div class="routing-policy-control">
           <div class="field">
             <label for="grading-input-mode">Evidence source</label>
@@ -250,12 +274,14 @@
           </div>
           <p class="field-hint" id="grading-input-help">${MisraUI.escapeHTML(gradingModeHelp[state.gradingMode])}</p>
         </div>
-      </section>
+      </details>
 
-      <section class="workspace-card card-pad">
-        <div class="section-head"><div><h2 class="section-title">Scoring policy</h2><p class="section-copy">Controls how evidence and mistakes affect credit.</p></div>${draft && state.instructorProfile ? `<button class="btn btn-secondary" type="button" data-apply-instructor-profile>Use my profile v${state.instructorProfile.version_number}</button>` : ''}</div>
+      <details class="workspace-card card-pad rubric-section" data-rubric-panel="policy"${expanded('policy')}>
+        <summary class="rubric-section-summary"><span><strong>Scoring policy</strong><small>How evidence and mistakes affect credit</small></span>${MisraUI.badge(state.rubric.policy.grading_approach, 'slate')}</summary>
+        ${draft && state.instructorProfile ? `<button class="btn btn-secondary" type="button" data-apply-instructor-profile>Use my profile v${state.instructorProfile.version_number}</button>` : ''}
         ${state.instructorProfile ? `<p class="field-hint">Your approved profile is only a starting point. Applying it changes this draft in the browser; review and save the rubric to keep it.</p>` : '<p class="field-hint">Optional marking preferences can be set in Settings. They are never applied automatically.</p>'}
         <div class="policy-grid">
+          ${field('Assessment scope', `<select class="input select" id="policy-assessment-scope" data-policy="assessment_scope"><option value="paper" ${state.rubric.policy.assessment_scope === 'paper' ? 'selected' : ''}>Grade from this paper</option><option value="external" ${state.rubric.policy.assessment_scope === 'external' ? 'selected' : ''}>Assessed outside MISRA (computer / practical)</option></select><small>External work is not an AI zero. Approval excludes this question from paper totals, paper exports and evaluation. Historical runs remain available.</small>`, '', 'policy-assessment-scope')}
           ${[['language_quality_policy', 'Language quality', [['criterion_specific', 'Follow each criterion'], ['ignore_unless_assessed', 'Ignore unless assessed'], ['assess', 'Assess language quality']]], ['error_carried_forward', 'Carried-forward errors', [['criterion_specific', 'Follow each criterion'], ['single_penalty', 'Penalize the original error once'], ['penalize_each', 'Penalize each affected step']]], ['handwritten_syntax_policy', 'Handwritten syntax', [['criterion_specific', 'Follow each criterion'], ['accept_unambiguous', 'Accept unambiguous intent'], ['require_correct', 'Require correct syntax']]]].map(([key, label, options]) => `<div class="field"><label for="policy-${key}">${label}</label><select id="policy-${key}" class="input select" data-policy="${key}">${options.map(([value, text]) => `<option value="${value}" ${state.rubric.policy[key] === value ? 'selected' : ''}>${text}</option>`).join('')}</select></div>`).join('')}
           ${field('Approach', `<select class="input select" id="policy-grading-approach" data-policy="grading_approach"><option value="lenient" ${state.rubric.policy.grading_approach === 'lenient' ? 'selected' : ''}>Lenient</option><option value="balanced" ${state.rubric.policy.grading_approach === 'balanced' ? 'selected' : ''}>Balanced</option><option value="strict" ${state.rubric.policy.grading_approach === 'strict' ? 'selected' : ''}>Strict</option><option value="custom" ${state.rubric.policy.grading_approach === 'custom' ? 'selected' : ''}>Custom</option></select>`, '', 'policy-grading-approach')}
           ${field('Method credit', `<select class="input select" id="policy-method-credit" data-policy="method_credit"><option value="none" ${state.rubric.policy.method_credit === 'none' ? 'selected' : ''}>None</option><option value="partial" ${state.rubric.policy.method_credit === 'partial' ? 'selected' : ''}>Partial</option><option value="full_if_valid" ${state.rubric.policy.method_credit === 'full_if_valid' ? 'selected' : ''}>Full if valid</option></select>`, '', 'policy-method-credit')}
@@ -263,16 +289,20 @@
           ${field('Units', `<select class="input select" id="policy-units" data-policy="units_policy"><option value="required" ${state.rubric.policy.units_policy === 'required' ? 'selected' : ''}>Required</option><option value="required_when_applicable" ${state.rubric.policy.units_policy === 'required_when_applicable' ? 'selected' : ''}>Required when applicable</option><option value="do_not_penalize" ${state.rubric.policy.units_policy === 'do_not_penalize' ? 'selected' : ''}>Do not penalize</option></select>`, '', 'policy-units')}
           ${field('Custom instructions', `<textarea class="input textarea" id="policy-custom-instructions" data-policy="custom_instructions" placeholder="Only needed for a custom approach.">${MisraUI.escapeHTML(state.rubric.policy.custom_instructions || '')}</textarea>`, 'policy-note', 'policy-custom-instructions')}
         </div>
-      </section>
+      </details>
 
-      <section class="workspace-card card-pad">
-        <div class="section-head"><div><h2 class="section-title">Criteria</h2><p class="section-copy"><span data-points-total>${total}</span> of ${state.rubric.max_score} points assigned</p></div>${draft ? '<button class="btn btn-secondary" type="button" data-add-criterion>Add criterion</button>' : ''}</div>
+      <details class="workspace-card card-pad rubric-section" data-rubric-panel="criteria"${expanded('criteria')}>
+        <summary class="rubric-section-summary"><span><strong>Criteria</strong><small><span data-points-total>${total}</span> of ${state.rubric.max_score} points assigned · ${state.rubric.criteria.length} item${state.rubric.criteria.length === 1 ? '' : 's'}</small></span></summary>
+        ${draft ? '<div class="rubric-section-actions"><button class="btn btn-secondary" type="button" data-add-criterion>Add criterion</button></div>' : ''}
         <div class="criterion-list">${state.rubric.criteria.map(renderCriterion).join('')}</div>
-      </section>
+      </details>
 
-      <section class="workspace-card card-pad"><div class="section-head"><div><h2 class="section-title">Version history</h2><p class="section-copy">Approved versions remain immutable and grading runs keep their snapshots.</p></div></div><div class="version-list">${state.versions.map((version) => `<div class="version-row"><div><strong>Version ${version.version_number}</strong><small>${MisraUI.escapeHTML(version.change_summary || `${version.source} rubric`)}</small></div>${MisraUI.badge(version.status, version.status === 'approved' ? 'success' : 'draft')}</div>`).join('')}</div></section>`;
+      <details class="workspace-card card-pad rubric-section" data-rubric-panel="history"${expanded('history')}><summary class="rubric-section-summary"><span><strong>Version history</strong><small>${state.versions.length} version${state.versions.length === 1 ? '' : 's'} · approved versions stay immutable</small></span></summary><div class="version-list">${state.versions.map((version) => `<div class="version-row"><div><strong>Version ${version.version_number}</strong><small>${MisraUI.escapeHTML(version.change_summary || `${version.source} rubric`)}</small></div>${MisraUI.badge(version.status, version.status === 'approved' ? 'success' : 'draft')}</div>`).join('')}</div></details>`;
     bindEditor();
     window.MisraAnswerKeys.mount(document.getElementById('answer-key-panel'));
+    window.MisraMaterials.mount(document.getElementById('course-material-panel'));
+    const criteriaPanel = workspace.querySelector('[data-rubric-panel="criteria"]');
+    workspace.querySelector('.rubric-shortcuts').after(criteriaPanel);
     if (!draft) workspace.querySelectorAll('[data-key], [data-policy], [data-reference], [data-remove-criterion]').forEach((control) => { control.disabled = true; });
   }
 
@@ -298,15 +328,17 @@
 
   function validateRubric() {
     syncEditor();
-    if (!state.rubric.criteria.length) throw new Error('Add at least one criterion.');
-    if (state.rubric.criteria.some((criterion) => !criterion.title.trim() || !criterion.description.trim() || criterion.points <= 0)) throw new Error('Every criterion needs a title, credit description, and positive point value.');
+    const reveal = name => { const panel = workspace.querySelector(`[data-rubric-panel="${name}"]`); if (panel) panel.open = true; };
+    if (!state.rubric.criteria.length) { reveal('criteria'); throw new Error('Add at least one criterion.'); }
+    if (state.rubric.criteria.some((criterion) => !criterion.title.trim() || !criterion.description.trim() || criterion.points <= 0)) { reveal('criteria'); throw new Error('Every criterion needs a title, credit description, and positive point value.'); }
     const total = state.rubric.criteria.reduce((sum, criterion) => sum + criterion.points, 0);
-    if (Math.abs(total - Number(state.rubric.max_score)) > 0.01) throw new Error(`Criterion points total ${total}, but this question is worth ${state.rubric.max_score}.`);
-    if (state.rubric.policy.grading_approach === 'custom' && !state.rubric.policy.custom_instructions) throw new Error('Add custom instructions for the custom grading approach.');
+    if (Math.abs(total - Number(state.rubric.max_score)) > 0.01) { reveal('criteria'); throw new Error(`Criterion points total ${total}, but this question is worth ${state.rubric.max_score}.`); }
+    if (state.rubric.policy.grading_approach === 'custom' && !state.rubric.policy.custom_instructions) { reveal('policy'); throw new Error('Add custom instructions for the custom grading approach.'); }
   }
 
   async function saveDraft(button) {
     if (savingRubric) return;
+    if (window.MisraMaterials.isBusy()) { window.showToast('Wait for the course-source operation to finish.','info'); return; }
     try {
       validateRubric();
       setRubricBusy(true);
@@ -320,6 +352,15 @@
   }
 
   function bindEditor() {
+    workspace.querySelectorAll('[data-rubric-jump]').forEach(button => button.addEventListener('click', () => {
+      const panel = workspace.querySelector(`[data-rubric-panel="${button.dataset.rubricJump}"]`);
+      panel.open = true;
+      panel.scrollIntoView({ block: 'start', behavior: 'auto' });
+      panel.querySelector('summary').focus({ preventScroll: true });
+    }));
+    workspace.querySelector('[data-fold-rubric]')?.addEventListener('click', () => {
+      workspace.querySelectorAll('[data-rubric-panel]').forEach(panel => { panel.open = false; });
+    });
     workspace.querySelector('[data-apply-instructor-profile]')?.addEventListener('click', () => {
       if (savingRubric || state.version?.status !== 'draft') return;
       if (!window.confirm('Apply your approved preference profile to this rubric draft? Existing draft policy values will be replaced, but nothing is saved until you choose Save draft or Approve.')) return;
@@ -350,11 +391,12 @@
         select.disabled = false;
       }
     });
-    workspace.querySelector('[data-add-criterion]')?.addEventListener('click', () => { if (savingRubric) return; syncEditor(); editorDirty = true; state.rubric.criteria.push(blankCriterion()); renderEditor(); });
+    workspace.querySelector('[data-add-criterion]')?.addEventListener('click', () => { if (savingRubric) return; syncEditor(); editorDirty = true; state.rubric.criteria.push(blankCriterion()); renderEditor(); workspace.querySelector(`[data-criterion-index="${state.rubric.criteria.length - 1}"] [data-key="title"]`)?.focus(); });
     workspace.querySelectorAll('[data-remove-criterion]').forEach((button) => button.addEventListener('click', () => { if (savingRubric) return; syncEditor(); editorDirty = true; state.rubric.criteria.splice(Number(button.closest('[data-criterion-index]').dataset.criterionIndex), 1); renderEditor(); }));
     workspace.querySelector('[data-save-rubric]')?.addEventListener('click', (event) => saveDraft(event.currentTarget));
     workspace.querySelector('[data-create-draft]')?.addEventListener('click', async (event) => {
       if (savingRubric) return;
+      if (window.MisraMaterials.isBusy()) { window.showToast('Wait for the course-source operation to finish.','info'); return; }
       const button = event.currentTarget;
       setRubricBusy(true); button.textContent = 'Creating…';
       try {
@@ -366,6 +408,7 @@
     });
     workspace.querySelector('[data-approve-rubric]')?.addEventListener('click', async (event) => {
       if (savingRubric) return;
+      if (window.MisraMaterials.isBusy()) { window.showToast('Wait for the course-source operation to finish.','info'); return; }
       const button = event.currentTarget;
       try {
         validateRubric();
@@ -382,6 +425,7 @@
     workspace.querySelector('#suggestion-form')?.addEventListener('submit', async (event) => {
       event.preventDefault(); const button = event.currentTarget.querySelector('[type="submit"]'); const form = new FormData(event.currentTarget);
       if (savingRubric || (editorDirty && !window.confirm('Generate a new draft without saving your current rubric edits?'))) return;
+      if (window.MisraMaterials.isBusy()) { window.showToast('Wait for the course-source operation to finish.','info'); return; }
       setRubricBusy(true);
       button.disabled = true; button.textContent = 'Generating…';
       try {
@@ -396,8 +440,9 @@
 
   async function loadQuestion(questionId) {
     if (savingQuestion || savingRubric) return;
-    if (!window.MisraAnswerKeys.canLeave()) return;
+    if (!window.MisraMaterials.canLeave() || !window.MisraAnswerKeys.canLeave()) return;
     if (editorDirty && !window.confirm('Discard unsaved rubric edits and open this question?')) return;
+    if (renderedQuestionId === questionId) workspace.querySelectorAll('details[data-rubric-panel]').forEach(panel => { openPanels[panel.dataset.rubricPanel] = panel.open; });
     editorDirty = false;
     hideComposer();
     const request = ++questionRequest;
@@ -423,15 +468,20 @@
       persistedRubric = structuredClone(state.rubric);
       state.gradingMode = simpleGradingMode(gradingPolicy?.mode);
       renderEditor();
+      const exam = state.exams.find(item => item.id === loadedExamId);
+      window.MisraMaterials.load(exam?.course_id, questionId, state.rubric.criteria);
     } catch (error) { if (request === questionRequest) workspace.innerHTML = `<div class="workspace-card card-pad">${MisraUI.errorState(error.message)}</div>`; }
   }
 
   async function loadExam(examId, preferredQuestionId = null) {
     window.MisraAnswerKeys.reset();
+    window.MisraMaterials.reset();
+    renderedQuestionId = '';
+    openPanels = {};
     editorDirty = false;
     persistedRubric = null;
     loadedExamId = examId;
-    window.dispatchEvent(new CustomEvent('misra:assessment-loaded', { detail: { examId } }));
+    window.dispatchEvent(new CustomEvent('misra:assessment-loaded', { detail: { examId, courseId: state.exams.find(item => item.id === examId)?.course_id } }));
     questionRequest++;
     state.question = null;
     state.rubric = null;
@@ -445,14 +495,29 @@
       const questions = await MisraAPI.questions(examId);
       if (loadedExamId !== examId) return;
       state.questions = questions;
+      document.getElementById('setup-source-library').hidden = Boolean(questions.length);
+      if (!document.getElementById('workspace-content').dataset.setupReview || document.getElementById('workspace-content').dataset.setupReview === 'false') {
+        document.getElementById('setup-upload-details').open = !questions.length;
+      }
       openComposer.disabled = false;
       questionCount.textContent = `${state.questions.length} question${state.questions.length === 1 ? '' : 's'}`;
       questionList.innerHTML = state.questions.length ? state.questions.map((question) => `<button class="question-button" type="button" data-question-id="${question.id}" aria-current="false"><span class="question-number">${MisraUI.escapeHTML(question.question_number)}</span><span class="question-summary">${MisraUI.escapeHTML(question.question_text || 'Question text unavailable')}</span><span class="question-points">${question.max_score} pt</span></button>`).join('') : '<p class="field-hint">Your questions will appear here as you add them.</p>';
-      questionList.querySelectorAll('[data-question-id]').forEach((button) => button.addEventListener('click', () => loadQuestion(button.dataset.questionId)));
+      questionList.querySelectorAll('[data-question-id]').forEach((button) => button.addEventListener('click', async () => {
+        const questionId = button.dataset.questionId;
+        await loadQuestion(questionId);
+        if (state.question?.id === questionId && workspace.querySelector('.rubric-toolbar')) workspace.scrollIntoView({ block: 'start' });
+      }));
       if (state.questions.length) {
         const requested = preferredQuestionId || MisraUI.getParam('question_id');
         await loadQuestion(state.questions.some((item) => item.id === requested) ? requested : state.questions[0].id);
-      } else { renderEditor(); showComposer(false); }
+      } else {
+        renderEditor(); showComposer(false);
+        const courseId = state.exams.find(item => item.id === examId)?.course_id;
+        if (courseId) {
+          window.MisraMaterials.mount(document.getElementById('setup-library-host'));
+          window.MisraMaterials.load(courseId, null, []);
+        }
+      }
     } catch (error) { if (loadedExamId === examId) { questionList.innerHTML = MisraUI.errorState(error.message); workspace.innerHTML = ''; } }
   }
 
@@ -531,7 +596,8 @@
         state.instructorProfile = (Array.isArray(profiles) ? profiles : []).find(profile => profile.status === 'approved') || null;
       } catch (_) { state.instructorProfile = null; }
       examSelect.innerHTML = state.exams.length ? state.exams.map((exam) => `<option value="${exam.id}">${MisraUI.escapeHTML(exam.course_code ? `${exam.course_code} · ${exam.title}` : exam.title)}</option>`).join('') : '<option value="">No assessments found</option>';
-      const requested = MisraUI.getParam('exam_id') || context.selectedId;
+      const courseId = MisraUI.getParam('course_id');
+      const requested = MisraUI.getParam('exam_id') || (courseId ? state.exams.find(exam => exam.course_id === courseId)?.id : context.selectedId);
       if (state.exams.some((exam) => exam.id === requested)) examSelect.value = requested;
       if (examSelect.value) await loadExam(examSelect.value);
       else renderEditor();
@@ -543,5 +609,6 @@
     } catch (error) { examSelect.innerHTML = '<option value="">Engine unavailable</option>'; workspace.innerHTML = `<div class="workspace-card card-pad">${MisraUI.errorState(error.message)}</div>`; }
   }
 
+  window.MisraRubricEditor = { hasUnsaved: () => editorDirty || formDirty || savingQuestion || savingRubric || window.MisraAssessmentSources?.hasUnsaved() };
   init();
 })();

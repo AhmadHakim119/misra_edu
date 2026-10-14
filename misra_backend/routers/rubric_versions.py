@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -21,6 +22,50 @@ from services.rubric_version_service import (
 
 
 router = APIRouter(prefix="/api", tags=["rubric-versions"])
+
+
+class AssessmentGuideApprovalRequest(BaseModel):
+    review_token: str = Field(pattern=r'^[a-f0-9]{64}$')
+    confirm_reviewed: bool
+
+
+def _guide_exam(db, exam_id, user):
+    exam = db.query(Exam).filter(Exam.id == exam_id, Exam.institution_id == user.institution_id).first()
+    if not exam:
+        raise HTTPException(404, 'Assessment not found')
+    return exam
+
+
+@router.get('/exams/{exam_id}/marking-guide')
+def review_assessment_guide(exam_id: str, db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    from services.assessment_guide_service import review_guide
+    try:
+        return review_guide(db, _guide_exam(db, exam_id, user))
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
+
+
+@router.post('/exams/{exam_id}/marking-guide/approve')
+def approve_assessment_guide(exam_id: str, payload: AssessmentGuideApprovalRequest,
+    db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    from services.assessment_guide_service import approve_guide
+    if not payload.confirm_reviewed:
+        raise HTTPException(422, 'Confirm that you reviewed the whole guide before approval.')
+    exam = _guide_exam(db, exam_id, user)
+    try:
+        changed = approve_guide(db, exam, user, payload.review_token)
+        record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
+            action='assessment_guide_approved', entity_type='exam', entity_id=exam.id,
+            details={'review_token':payload.review_token, 'approved_version_ids':changed})
+        db.commit()
+        return {'exam_id':exam.id, 'approved_version_ids':changed,
+            'message':'Assessment guide approved. Existing grades and historical snapshots are unchanged.'}
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(409, str(error)) from error
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _owned_question(db: Session, question_id: str, user: User) -> Question:
@@ -86,25 +131,40 @@ def suggest_existing_question_rubric_version(
             detail="A custom grading approach requires an explicit policy",
         )
 
+    draft = db.query(RubricVersion).filter(RubricVersion.question_id == question_id,
+        RubricVersion.status == 'draft').order_by(RubricVersion.version_number.desc()).first()
+    if draft:
+        current_rubric = draft.rubric_json
+    else:
+        try:
+            current_rubric, _ = get_effective_rubric(question, db)
+        except ValueError:
+            current_rubric = {}
     try:
-        current_rubric, _ = get_effective_rubric(question, db)
-    except ValueError:
-        draft = db.query(RubricVersion).filter(RubricVersion.question_id == question_id,
-            RubricVersion.status == 'draft').order_by(RubricVersion.version_number.desc()).first()
-        current_rubric = draft.rubric_json if draft else {}
-    try:
+        from services.assessment_guide_service import review_guide
+        from services.material_retrieval_service import retrieve_for_question, provider_sources
+        from models import QuestionMaterialScopeVersion, AssessmentMaterialScopeVersion
+        guide = review_guide(db, exam)
+        guide_row = next(row for row in guide['questions'] if row['question_id'] == question.id)
+        scope_data = guide_row['sources']
+        context = None
+        if scope_data and scope_data['mode'] != 'disabled':
+            model = QuestionMaterialScopeVersion if guide_row['source_exception'] and guide_row['source_exception']['mode'] != 'inherit' else AssessmentMaterialScopeVersion
+            context = provider_sources(retrieve_for_question(db, question, current_rubric,
+                proposal_scope=db.get(model, scope_data['id'])))[0]
         rubric = suggest_rubric(
             question_text=question.question_text,
             subject=exam.title,
             max_score=float(question.max_score),
             language=question.language,
-            answer_key=payload.answer_key,
+            answer_key=payload.answer_key or guide_row['answer_key']['reference_text'],
             course_level=payload.course_level,
             expected_method=payload.expected_method,
             instructor_notes=payload.instructor_notes,
             grading_approach=payload.grading_approach,
             policy=payload.policy,
             current_rubric=current_rubric,
+            course_sources=context,
         )
     except ValueError as error:
         raise HTTPException(

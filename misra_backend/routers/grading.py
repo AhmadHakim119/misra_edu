@@ -7,6 +7,7 @@ from services.extraction_review_service import build_extraction_review
 from services.auth_dependencies import require_instructor
 from services.job_queue_service import create_processing_job, job_to_dict
 from services.audit_service import record_audit_event
+from services.grading_scope_service import is_external_question
 from models import Answer, GradingRun, Question, Submission, User
 
 router = APIRouter(prefix="/api", tags=["grading"])
@@ -38,6 +39,9 @@ async def grading_endpoint(
     ).first()
     if not answer:
         raise HTTPException(status_code=404, detail="Answer not found")
+    question = db.query(Question).filter(Question.id == answer.question_id).first()
+    if question and is_external_question(question):
+        raise HTTPException(status_code=409, detail="This question is assessed outside MISRA; it is not an AI zero.")
     _require_verified_mapping(answer.submission_id, db)
     try:
         if payload.mode == "auto":
@@ -74,7 +78,7 @@ def grade_submission(
     )
     if not submission:
         raise HTTPException(status_code=404, detail="Submission not found")
-    _require_verified_mapping(submission.id, db)
+    report = _require_verified_mapping(submission.id, db)
 
     answers = (
         db.query(Answer)
@@ -89,7 +93,7 @@ def grade_submission(
         requested_by=user.id,
         job_type="grade_submission",
         submission_id=submission.id,
-        progress_total=len(answers),
+        progress_total=report["readiness"]["expected_question_count"],
         payload={"mode": payload.mode, "completed_answer_ids": []},
     )
     if created:

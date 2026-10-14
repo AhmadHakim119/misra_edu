@@ -253,7 +253,7 @@ CREATE TABLE `processing_jobs` (
   `requested_by` char(36) DEFAULT NULL,
   `submission_id` char(36) DEFAULT NULL,
   `batch_id` char(36) DEFAULT NULL,
-  `job_type` enum('ocr_submission','ocr_batch','grade_submission','exam_setup') NOT NULL,
+  `job_type` enum('ocr_submission','ocr_batch','grade_submission','exam_setup','material_ingestion') NOT NULL,
   `status` enum('queued','processing','completed','failed','retrying') NOT NULL DEFAULT 'queued',
   `rq_job_id` varchar(255) DEFAULT NULL,
   `progress_current` int(11) NOT NULL DEFAULT 0,
@@ -581,6 +581,137 @@ CREATE TABLE IF NOT EXISTS `answer_key_versions` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Dump completed
+
+-- Immutable OCR page/region inventories. Existing databases use the additive
+-- scripts/upgrade_extraction_coverage.py upgrade, not schema re-import.
+CREATE TABLE IF NOT EXISTS `extraction_inventories` (
+  `id` char(36) NOT NULL,
+  `submission_id` char(36) NOT NULL,
+  `institution_id` char(36) NOT NULL,
+  `version_number` int NOT NULL,
+  `schema_version` int NOT NULL,
+  `page_count` int NOT NULL,
+  `document_sha256` char(64) NOT NULL,
+  `manifest_sha256` char(64) NOT NULL,
+  `pages` JSON NOT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_extraction_inventory_version` (`submission_id`,`version_number`),
+  KEY `ix_extraction_inventories_submission_id` (`submission_id`),
+  KEY `ix_extraction_inventories_institution_id` (`institution_id`),
+  CONSTRAINT `fk_extraction_inventory_submission` FOREIGN KEY (`submission_id`) REFERENCES `submissions` (`id`) ON DELETE CASCADE,
+  CONSTRAINT `fk_extraction_inventory_institution` FOREIGN KEY (`institution_id`) REFERENCES `institutions` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Approved course material library. Fresh installations only; existing data uses
+-- scripts/upgrade_course_materials.py, never a full schema re-import.
+CREATE TABLE IF NOT EXISTS `course_materials` (
+  `id` char(36) NOT NULL,
+  `institution_id` char(36) NOT NULL,
+  `course_id` char(36) NOT NULL,
+  `title` varchar(255) NOT NULL,
+  `created_by` char(36) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `ix_course_materials_institution_id` (`institution_id`),
+  KEY `ix_course_materials_course_id` (`course_id`),
+  CONSTRAINT `fk_course_materials_institution` FOREIGN KEY (`institution_id`) REFERENCES `institutions` (`id`),
+  CONSTRAINT `fk_course_materials_course` FOREIGN KEY (`course_id`) REFERENCES `courses` (`id`),
+  CONSTRAINT `fk_course_materials_creator` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS `material_versions` (
+  `id` char(36) NOT NULL,
+  `material_id` char(36) NOT NULL,
+  `version_number` int NOT NULL,
+  `status` varchar(20) NOT NULL,
+  `ingestion_status` varchar(30) NOT NULL,
+  `original_file_path` text DEFAULT NULL,
+  `media_type` varchar(80) NOT NULL,
+  `document_sha256` char(64) NOT NULL,
+  `content_sha256` char(64) DEFAULT NULL,
+  `page_count` int NOT NULL,
+  `approved_page_indices` JSON NOT NULL,
+  `parser_version` varchar(100) NOT NULL,
+  `processing_job_id` char(36) DEFAULT NULL,
+  `error_message` text DEFAULT NULL,
+  `created_by` char(36) DEFAULT NULL,
+  `approved_by` char(36) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `approved_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_material_version_number` (`material_id`,`version_number`),
+  KEY `ix_material_versions_material_id` (`material_id`),
+  CONSTRAINT `fk_material_version_material` FOREIGN KEY (`material_id`) REFERENCES `course_materials` (`id`),
+  CONSTRAINT `fk_material_version_job` FOREIGN KEY (`processing_job_id`) REFERENCES `processing_jobs` (`id`),
+  CONSTRAINT `fk_material_version_creator` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`),
+  CONSTRAINT `fk_material_version_approver` FOREIGN KEY (`approved_by`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS `material_pages` (
+  `id` char(36) NOT NULL,
+  `version_id` char(36) NOT NULL,
+  `page_index` int NOT NULL,
+  `printed_page_label` varchar(30) DEFAULT NULL,
+  `text` longtext NOT NULL,
+  `text_sha256` char(64) NOT NULL,
+  `origin` varchar(30) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_material_page_index` (`version_id`,`page_index`),
+  KEY `ix_material_pages_version_id` (`version_id`),
+  CONSTRAINT `fk_material_page_version` FOREIGN KEY (`version_id`) REFERENCES `material_versions` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS `material_chunks` (
+  `id` char(36) NOT NULL,
+  `version_id` char(36) NOT NULL,
+  `page_index` int NOT NULL,
+  `ordinal` int NOT NULL,
+  `char_start` int NOT NULL,
+  `char_end` int NOT NULL,
+  `text` text NOT NULL,
+  `text_sha256` char(64) NOT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_material_chunk_position` (`version_id`,`page_index`,`ordinal`),
+  KEY `ix_material_chunks_version_id` (`version_id`),
+  CONSTRAINT `fk_material_chunk_version` FOREIGN KEY (`version_id`) REFERENCES `material_versions` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+CREATE TABLE IF NOT EXISTS `question_material_scope_versions` (
+  `id` char(36) NOT NULL,
+  `question_id` char(36) NOT NULL,
+  `version_number` int NOT NULL,
+  `status` varchar(20) NOT NULL,
+  `mode` varchar(20) NOT NULL,
+  `bindings` JSON NOT NULL,
+  `scope_sha256` char(64) DEFAULT NULL,
+  `created_by` char(36) DEFAULT NULL,
+  `approved_by` char(36) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `approved_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_question_material_scope_version` (`question_id`,`version_number`),
+  KEY `ix_question_material_scope_versions_question_id` (`question_id`),
+  CONSTRAINT `fk_material_scope_question` FOREIGN KEY (`question_id`) REFERENCES `questions` (`id`),
+  CONSTRAINT `fk_material_scope_creator` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`),
+  CONSTRAINT `fk_material_scope_approver` FOREIGN KEY (`approved_by`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS `assessment_material_scope_versions` (
+  `id` char(36) NOT NULL,
+  `exam_id` char(36) NOT NULL,
+  `version_number` int NOT NULL,
+  `status` varchar(20) NOT NULL,
+  `mode` varchar(20) NOT NULL,
+  `bindings` JSON NOT NULL,
+  `scope_sha256` char(64) DEFAULT NULL,
+  `created_by` char(36) DEFAULT NULL,
+  `approved_by` char(36) DEFAULT NULL,
+  `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  `approved_at` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_assessment_material_scope_version` (`exam_id`,`version_number`),
+  KEY `ix_assessment_material_scope_versions_exam_id` (`exam_id`),
+  CONSTRAINT `fk_assessment_material_scope_exam` FOREIGN KEY (`exam_id`) REFERENCES `exams` (`id`),
+  CONSTRAINT `fk_assessment_material_scope_creator` FOREIGN KEY (`created_by`) REFERENCES `users` (`id`),
+  CONSTRAINT `fk_assessment_material_scope_approver` FOREIGN KEY (`approved_by`) REFERENCES `users` (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Optional instructor-owned preference proposals. Approval records history only;
 -- it does not modify assessment rubrics or grading runs.

@@ -42,12 +42,12 @@
       const error = new Error(message);
       error.status = response.status;
       error.detail = detail;
-      if (response.status === 401 && window.location.pathname.includes('/app/pages/') && !window.location.pathname.endsWith('/login.html')) {
-        const returnTo = `${window.location.pathname}${window.location.search}`;
-        window.location.replace(`login.html?next=${encodeURIComponent(returnTo)}`);
+      if (response.status === 401 && (window.location.pathname.includes('/app/pages/') || window.location.pathname.includes('/app/next/')) && !window.location.pathname.endsWith('/login.html')) {
+        const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        window.location.replace(`/app/${window.location.pathname.includes('/app/next/') ? 'next' : 'pages'}/login.html?next=${encodeURIComponent(returnTo)}`);
       }
       if (response.status === 403 && detail?.code === 'password_change_required' && !window.location.pathname.endsWith('/account.html')) {
-        window.location.replace('account.html?required=1');
+        window.location.replace(`/app/${window.location.pathname.includes('/app/next/') ? 'next' : 'pages'}/account.html?required=1`);
       }
       throw error;
     }
@@ -84,6 +84,22 @@
     adminHealth: () => request('/admin/operations/health'),
     recoverOrphanedJobs: () => request('/admin/operations/jobs/recover', { method: 'POST', body: '{}' }),
     courses: () => request('/courses'),
+    courseMaterials: (courseId) => request(`/courses/${encodeURIComponent(courseId)}/materials`),
+    createMaterialText: (courseId, body) => request(`/courses/${encodeURIComponent(courseId)}/materials/text`, { method: 'POST', body: JSON.stringify(body) }),
+    uploadMaterial: (courseId, body) => request(`/courses/${encodeURIComponent(courseId)}/materials`, { method: 'POST', body }),
+    uploadMaterialRevision: (materialId, body) => request(`/materials/${encodeURIComponent(materialId)}/versions`, { method: 'POST', body }),
+    materialPages: (materialId, versionId, offset = 0, limit = 1) => request(`/materials/${encodeURIComponent(materialId)}/versions/${encodeURIComponent(versionId)}/pages${queryString({ offset, limit })}`),
+    editMaterialPage: (materialId, versionId, pageIndex, body) => request(`/materials/${encodeURIComponent(materialId)}/versions/${encodeURIComponent(versionId)}/pages/${pageIndex}`, { method: 'PUT', body: JSON.stringify(body) }),
+    approveMaterial: (materialId, versionId, body) => request(`/materials/${encodeURIComponent(materialId)}/versions/${encodeURIComponent(versionId)}/approve`, { method: 'POST', body: JSON.stringify(body) }),
+    materialDocumentUrl: (materialId, versionId) => `${API_BASE}/materials/${encodeURIComponent(materialId)}/versions/${encodeURIComponent(versionId)}/document`,
+    materialScopes: (questionId) => request(`/questions/${encodeURIComponent(questionId)}/material-scopes`),
+    createMaterialScope: (questionId, body) => request(`/questions/${encodeURIComponent(questionId)}/material-scopes`, { method: 'POST', body: JSON.stringify(body) }),
+    approveMaterialScope: (questionId, scopeId) => request(`/questions/${encodeURIComponent(questionId)}/material-scopes/${encodeURIComponent(scopeId)}/approve`, { method: 'POST', body: '{}' }),
+    materialRetrievalPreview: (questionId) => request(`/questions/${encodeURIComponent(questionId)}/material-retrieval-preview`),
+    effectiveMaterialScope: (questionId) => request(`/questions/${encodeURIComponent(questionId)}/effective-material-scope`),
+    assessmentMaterialScopes: (examId) => request(`/exams/${encodeURIComponent(examId)}/material-scopes`),
+    createAssessmentMaterialScope: (examId, body) => request(`/exams/${encodeURIComponent(examId)}/material-scopes`, { method: 'POST', body: JSON.stringify(body) }),
+    approveAssessmentMaterialScope: (examId, scopeId) => request(`/exams/${encodeURIComponent(examId)}/material-scopes/${encodeURIComponent(scopeId)}/approve`, { method: 'POST', body: '{}' }),
     createCourse: (body) => request('/courses', { method: 'POST', body: JSON.stringify(body) }),
     exams: () => request('/exams'),
     createExam: (body) => request('/exams', { method: 'POST', body: JSON.stringify(body) }),
@@ -91,6 +107,7 @@
     questions: (examId) => request(`/exams/${encodeURIComponent(examId)}/questions`),
     setupReadiness: (examId) => request(`/exams/${encodeURIComponent(examId)}/setup-readiness`),
     setupImports: (examId) => request(`/exams/${encodeURIComponent(examId)}/setup-imports`),
+    learningInsights: (examId) => request(`/exams/${encodeURIComponent(examId)}/learning-insights`),
     setupImport: (examId, jobId) => request(`/exams/${encodeURIComponent(examId)}/setup-imports/${encodeURIComponent(jobId)}`),
     uploadSetup: (examId, body) => request(`/exams/${encodeURIComponent(examId)}/setup-imports`, { method: 'POST', body }),
     confirmSetup: (examId, jobId, body) => request(`/exams/${encodeURIComponent(examId)}/setup-imports/${encodeURIComponent(jobId)}/confirm`, { method: 'POST', body: JSON.stringify(body) }),
@@ -107,6 +124,8 @@
     suggestRubric: (questionId, body) => request(`/questions/${encodeURIComponent(questionId)}/suggest-rubric-version`, { method: 'POST', body: JSON.stringify(body) }),
     updateRubric: (versionId, body) => request(`/rubric-versions/${encodeURIComponent(versionId)}`, { method: 'PUT', body: JSON.stringify(body) }),
     approveRubric: (versionId) => request(`/rubric-versions/${encodeURIComponent(versionId)}/approve`, { method: 'POST', body: '{}' }),
+    assessmentGuide: (examId) => request(`/exams/${encodeURIComponent(examId)}/marking-guide`),
+    approveAssessmentGuide: (examId, body) => request(`/exams/${encodeURIComponent(examId)}/marking-guide/approve`, { method: 'POST', body: JSON.stringify(body) }),
     gradingPolicy: (questionId) => request(`/questions/${encodeURIComponent(questionId)}/grading-policy`),
     updateGradingPolicy: (questionId, body) => request(`/questions/${encodeURIComponent(questionId)}/grading-policy`, { method: 'PUT', body: JSON.stringify(body) }),
     uploadExam: (formData) => request('/upload-exam', { method: 'POST', body: formData }),
@@ -122,12 +141,15 @@
     results: (submissionId) => request(`/results/${encodeURIComponent(submissionId)}`),
     gradingRuns: (answerId) => request(`/answers/${encodeURIComponent(answerId)}/grading-runs`),
     extractionReview: (submissionId) => request(`/submissions/${encodeURIComponent(submissionId)}/extraction-review`),
+    sourceLocations: (submissionId, pageIndex) => request(`/submissions/${encodeURIComponent(submissionId)}/source-locations${queryString({ page_index: pageIndex })}`),
+    reprocessExtraction: (submissionId) => request(`/submissions/${encodeURIComponent(submissionId)}/reprocess-extraction`, { method: 'POST', body: '{}' }),
     updateSubmissionMetadata: (submissionId, body) => request(`/submissions/${encodeURIComponent(submissionId)}/metadata`, { method: 'PATCH', body: JSON.stringify(body) }),
     resolveUnmatchedSegment: (submissionId, index, body) => request(`/submissions/${encodeURIComponent(submissionId)}/unmatched-segments/${index}`, { method: 'PUT', body: JSON.stringify(body) }),
     bulkResolveSegments: (submissionId, body) => request(`/submissions/${encodeURIComponent(submissionId)}/segments/bulk-resolve`, { method: 'PUT', body: JSON.stringify(body) }),
     submissionPageUrl: (submissionId, pageIndex) => `${API_BASE}/submissions/${encodeURIComponent(submissionId)}/pages/${pageIndex}`,
     moveAnswerSource: (sourceId, questionId) => request(`/answer-sources/${encodeURIComponent(sourceId)}/question`, { method: 'PUT', body: JSON.stringify({ question_id: questionId }) }),
     removeAnswerSource: (sourceId) => request(`/answer-sources/${encodeURIComponent(sourceId)}`, { method: 'DELETE' }),
+    sourceQuestionDrafts: (examId, body) => request(`/exams/${encodeURIComponent(examId)}/source-question-drafts`, { method: 'POST', body: JSON.stringify(body) }),
     previewPageRecovery: (submissionId, pageIndex, questionNumbers) => request(`/submissions/${encodeURIComponent(submissionId)}/pages/${pageIndex}/reextract`, { method: 'POST', body: JSON.stringify({ question_numbers: questionNumbers }) }),
     confirmPageRecovery: (submissionId, pageIndex, preview) => request(`/submissions/${encodeURIComponent(submissionId)}/pages/${pageIndex}/confirm-reextract`, { method: 'POST', body: JSON.stringify({ question_numbers: preview.question_numbers, segments: preview.segments, preview_signature: preview.preview_signature }) }),
     gradeAnswer: (answerId, mode = 'auto') => request(`/grade/${encodeURIComponent(answerId)}`, { method: 'POST', body: JSON.stringify({ mode }) }),
