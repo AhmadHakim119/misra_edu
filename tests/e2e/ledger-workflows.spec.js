@@ -1,6 +1,6 @@
 const {test,expect}=require('@playwright/test');
 const file=name=>({name,mimeType:'application/pdf',buffer:Buffer.from('Synthetic API upload fixture; not a real PDF')});
-async function fixture(page,{blocked=false,uploadStatus=202,holdUpload=false,holdSources=false,pollFails=false}={}) {
+async function fixture(page,{blocked=false,uploadStatus=202,holdUpload=false,holdSources=false,pollFails=false,uploadShape='normal'}={}) {
   const writes=[];let releaseUpload,releaseSources,knownJobs=[];
   const uploadGate=new Promise(r=>releaseUpload=r),sourceGate=new Promise(r=>releaseSources=r);
   const versions={e:[],e2:[]};
@@ -25,11 +25,14 @@ async function fixture(page,{blocked=false,uploadStatus=202,holdUpload=false,hol
       writes.push({kind:'upload',path:p,body:request.postData()});if(holdUpload) await uploadGate;
       if(uploadStatus!==202) return route.fulfill({status:uploadStatus,json:{detail:'Synthetic upload rejection'}});
       body=p==='/upload-exam' ? {submission:{id:'s'},job:{id:'j',submission_id:'s',status:'queued'}} : {batch_id:'b',job:{id:'j',batch_id:'b',status:'queued'}};
+      if(uploadShape==='expired')body.submission={};
+      if(uploadShape==='missing'){body.submission={};delete body.job.submission_id;}
+      if(uploadShape==='conflict')body.submission={id:'other'};
       knownJobs=[{...body.job,exam_id:'e',job_type:p==='/upload-exam' ? 'ocr_submission' : 'ocr_batch',status:'completed'}];
     } else if(p==='/jobs/j') {if(pollFails) return route.fulfill({status:503,json:{detail:'Synthetic progress outage'}});body={id:'j',status:'completed',progress_percent:100,progress_message:'Inspect the saved results.'};}
     await route.fulfill({json:body});
   });
-  await page.goto('/next/index.html?exam_id=e');await expect(page.locator('#exam-title')).toHaveText('Work & energy');
+  await page.goto('/app/index.html?exam_id=e');await expect(page.locator('#exam-title')).toHaveText('Work & energy');
   return {writes,releaseUpload,releaseSources};
 }
 test('single upload stays in ledger, locks selection and does not upload again after acceptance',async({page})=>{
@@ -54,6 +57,21 @@ test('batch upload sends named files and accepts splitting only one combined PDF
   await page.locator('#ledger-split').fill('');await page.locator('#ledger-upload-submit').click();
   await expect(page.locator('#upload-accepted')).toContainText('Extraction job completed');
   expect(state.writes[0].path).toBe('/upload-batch');expect(state.writes[0].body).toContain('name="files"');expect(state.writes[0].body).toContain('name="exam_id"');
+});
+
+test('a durable OCR job confirms acceptance when the submission record is empty',async({page})=>{
+  const state=await fixture(page,{uploadShape:'expired'});await page.locator('#upload-link').click();
+  await page.locator('#ledger-files').setInputFiles(file('synthetic.pdf'));await page.locator('#ledger-upload-submit').click();
+  await expect(page.locator('#upload-accepted')).toContainText('Extraction job completed');
+  await expect(page.locator('#upload-error')).toBeHidden();await expect(page.locator('#ledger-upload-submit')).toBeDisabled();
+  await expect(page).toHaveURL(/job_id=j/);expect(state.writes.filter(w=>w.kind==='upload')).toHaveLength(1);
+});
+
+for(const uploadShape of ['missing','conflict'])test(`unconfirmed ${uploadShape} record blocks duplicate upload`,async({page})=>{
+  const state=await fixture(page,{uploadShape});await page.locator('#upload-link').click();
+  await page.locator('#ledger-files').setInputFiles(file('synthetic.pdf'));await page.locator('#ledger-upload-submit').click();
+  await expect(page.locator('#upload-error')).toContainText('Could not confirm acceptance');
+  await expect(page.locator('#ledger-upload-submit')).toBeDisabled();expect(state.writes.filter(w=>w.kind==='upload')).toHaveLength(1);
 });
 test('pending upload prevents assessment switches and duplicate posts',async({page})=>{
   const state=await fixture(page,{holdUpload:true});await page.locator('#upload-link').click();await page.locator('#ledger-files').setInputFiles(file('paper.pdf'));await page.locator('#ledger-upload-submit').click();

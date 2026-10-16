@@ -125,7 +125,7 @@ def new_version(db, material, user, *, media_type, document_sha256, page_count, 
 
 
 def ingest_material_job(job, db, progress):
-    """Retry replaces only a draft's derived pages; it never invokes an AI provider."""
+    """Native reading is local. Explicit scan reading resumes verified saved pages."""
     version = db.query(MaterialVersion).filter(MaterialVersion.id == (job.payload or {}).get("material_version_id")).with_for_update().first()
     material = db.get(CourseMaterial, version.material_id) if version else None
     course = db.get(Course, material.course_id) if material else None
@@ -139,23 +139,37 @@ def ingest_material_job(job, db, progress):
             return
         raise ValueError("Approved reference versions cannot be re-ingested.")
     path = document_path(version)
-    reader = pypdf.PdfReader(path)
-    if len(reader.pages) != version.page_count or reader.is_encrypted:
+    from services.presentation_material_service import PPTX_TYPE,read_slides
+    presentation=version.media_type==PPTX_TYPE
+    reader=None if presentation else pypdf.PdfReader(path)
+    source_pages=read_slides(path) if presentation else reader.pages
+    if len(source_pages) != version.page_count or (reader and reader.is_encrypted):
         raise ValueError("Reference PDF page inventory changed.")
     version.ingestion_status = "processing"
-    db.query(MaterialChunk).filter(MaterialChunk.version_id == version.id).delete(synchronize_session=False)
-    db.query(MaterialPage).filter(MaterialPage.version_id == version.id).delete(synchronize_session=False)
+    scan_reading=(job.payload or {}).get('ocr_scans') is True
+    existing={page.page_index:page for page in db.query(MaterialPage).filter_by(version_id=version.id).all()} if scan_reading else {}
+    if not scan_reading:
+        db.query(MaterialChunk).filter(MaterialChunk.version_id == version.id).delete(synchronize_session=False)
+        db.query(MaterialPage).filter(MaterialPage.version_id == version.id).delete(synchronize_session=False)
     total_chars, nonempty = 0, 0
-    for index, source_page in enumerate(reader.pages):
-        text = source_page.extract_text() or ""
+    for index, source_page in enumerate(source_pages):
+        saved=existing.get(index)
+        if saved and saved.text_sha256!=text_hash(saved.text):
+            raise ValueError('Saved reference transcription changed. Correct the draft before retrying.')
+        keep=saved and (saved.text.strip() or saved.origin in {'ocr_text_unverified','instructor_corrected'})
+        text=saved.text if keep else source_page if presentation else source_page.extract_text() or ''
+        origin=saved.origin if keep else 'slide_text_unverified' if presentation else 'native_text_unverified'
+        if scan_reading and not presentation and not keep and not text.strip():
+            from services.material_ocr_service import read_page
+            text=read_page(path,index);origin='ocr_text_unverified'
         total_chars += len(text)
         if total_chars > MAX_EXTRACTED_CHARS:
             raise ValueError("Reference text exceeds the ingestion limit. Import chapter-sized files.")
         nonempty += bool(text.strip())
-        replace_page(db, version, index, text, origin="native_text_unverified")
+        if not keep:replace_page(db, version, index, text, origin=origin)
         progress(index + 1, version.page_count, f"Reading reference page {index + 1} of {version.page_count}")
     version.ingestion_status = "ready" if nonempty == version.page_count else "needs_transcription"
-    version.parser_version = f"pypdf-{pypdf.__version__}/page-chars-v1"
+    version.parser_version = 'pptx-xml/slides-v1' if presentation else f"pypdf-{pypdf.__version__}/page-chars-v1"+('/scan-ocr-v1' if scan_reading else '')
     version.error_message = None
     version.content_sha256 = content_hash(db, version)
     db.flush()
@@ -192,7 +206,7 @@ def validate_bindings(db, question, request, rubric):
     validate_exam_bindings(db, exam, request, rubric)
 
 
-def validate_exam_bindings(db, exam, request, rubric=None):
+def validate_exam_bindings(db, exam, request, rubric=None, *, allow_pending_sources=False):
     if request.bindings and not db.query(Course).filter(Course.id == exam.course_id, Course.institution_id == exam.institution_id).first():
         raise ValueError("Question course is unavailable in this workspace.")
     criteria = {c["id"] for c in (rubric or {}).get("criteria", [])}
@@ -203,9 +217,19 @@ def validate_exam_bindings(db, exam, request, rubric=None):
         if not row:
             raise ValueError("Reference version is not available in this assessment's course.")
         version, material = row
-        verify_approved_version(db, version)
-        if not set(binding.page_indices).issubset(set(version.approved_page_indices)):
-            raise ValueError("Select only pages included in the source approval.")
+        from services.material_library_service import attachment_exam
+        attached_exam = attachment_exam(db,material.id)
+        if attached_exam and attached_exam != exam.id:
+            raise ValueError('Extra assessment material belongs to another assessment.')
+        if allow_pending_sources and version.status == 'draft':
+            if version.ingestion_status not in {'ready','needs_transcription'} or version.page_count < 1:
+                raise ValueError('Wait for this material to finish reading before selecting its chapters.')
+            if any(index >= version.page_count for index in binding.page_indices):
+                raise ValueError('Selected source pages exceed the document page count.')
+        else:
+            verify_approved_version(db, version)
+            if not set(binding.page_indices).issubset(set(version.approved_page_indices)):
+                raise ValueError("Select only pages included in the source approval.")
         if binding.criterion_id is not None and binding.criterion_id not in criteria:
             raise ValueError("Reference binding cites an unknown criterion. Review the current rubric.")
         if binding.chunk_ids:

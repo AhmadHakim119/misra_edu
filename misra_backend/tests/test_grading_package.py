@@ -19,10 +19,12 @@ from services.grading_package_service import (
 from services.grading_service import GradingResult, process_grading, process_grading_with_policy
 from services.grading_errors import GradingResponseValidationError
 from services.run_comparison_service import apply_material_disagreement_gate
+from tests.inference_fixtures import isolate_grading_provider
 
 
 class GradingPackageTests(unittest.TestCase):
     def setUp(self):
+        isolate_grading_provider(self)
         self.engine = create_engine("sqlite://")
         Base.metadata.create_all(self.engine)
         self.db = sessionmaker(bind=self.engine)()
@@ -157,12 +159,58 @@ class GradingPackageTests(unittest.TestCase):
             "internal-pair-id",
         )
 
+    def test_no_fixed_key_does_not_advertise_a_citable_key(self):
+        package, *_ = build_grading_package(self.answer, self.q, self.db, 'text_only')
+        package['answer_key']['mode'] = 'no_fixed_answer'
+        before = deepcopy(package)
+        safe, _, refs = provider_grading_package(package)
+        self.assertIsNone(safe['answer_key']['reference_id'])
+        self.assertNotIn('instructor:answer_key', refs)
+        self.assertEqual(safe['citation_contract']['criteria'], [{
+            'criterion_id':'logic', 'reference_refs':[], 'required_course_reference_refs':[]}])
+        self.assertEqual(safe['citation_contract']['tracked_evidence_refs'], ['student:segment:1'])
+        self.assertEqual(package, before)
+        # A forbidden key citation must still fail: do not repair it by erasure.
+        with self.assertRaisesRegex(ValueError, 'unavailable answer-key'):
+            validate_evidence_references(GradingResult(**self.result()), package)
+
+    def test_citation_contract_limits_course_references_to_each_criterion(self):
+        package, *_ = build_grading_package(self.answer, self.q, self.db, 'text_only')
+        package['answer_key']['mode'] = 'no_fixed_answer'
+        package['course_references'] = {'mode':'required','passages':[
+            {'id':'material:one','title':'Synthetic chapter','page_index':0,
+             'printed_page_label':'1','text':'Approved concept','criterion_ids':['logic']},
+            {'id':'material:two','title':'Synthetic chapter','page_index':1,
+             'printed_page_label':'2','text':'Different concept','criterion_ids':['other']}]}
+        safe, _, _ = provider_grading_package(package)
+        self.assertEqual(safe['citation_contract']['criteria'], [{
+            'criterion_id':'logic','reference_refs':['instructor:source:1'],
+            'required_course_reference_refs':['instructor:source:1']}])
+
+    def test_no_fixed_key_citation_repair_uses_empty_reference_list(self):
+        key = AnswerKeyVersion(id='no-key',question_id='q',version_number=1,
+            status='approved',mode='no_fixed_answer',reference_text='',
+            acceptable_answers=[],document_refs=[])
+        self.db.add(key)
+        self.db.commit()
+        first=self.result(evidence_refs=['student:segment:1'],reference_refs=['instructor:answer_key'])
+        second=self.result(evidence_refs=['student:segment:1'],reference_refs=[])
+        with patch('services.grading_service.generate',side_effect=[json.dumps(first),json.dumps(second)]) as generate:
+            process_grading('a',self.db)
+        self.assertEqual(generate.call_count,2)
+        self.assertIn('"reference_id": null',generate.call_args_list[0].kwargs['contents'])
+        self.assertIn('allowed reference_refs list is empty',generate.call_args_list[1].kwargs['contents'])
+        run=self.db.query(GradingRun).one()
+        self.assertEqual(run.criteria_scores[0]['reference_refs'],[])
+        self.assertEqual(float(run.score),2)
+        self.assertTrue(run.needs_review)
+
     def test_real_processing_saves_snapshot_unchanged_after_edits(self):
         with patch("services.grading_service.generate", return_value=json.dumps(self.result())) as generate:
             process_grading("a", self.db)
         run = self.db.query(GradingRun).one()
         original = deepcopy(run.response_json["grading_package"])
-        self.assertEqual(run.prompt_version, "v7-course-grounded-citations")
+        self.assertEqual(run.prompt_version, "v8-explicit-citation-contract")
         self.assertIn("GRADING PACKAGE JSON", generate.call_args.kwargs["contents"])
         self.q.question_text = "Changed question"
         self.db.query(RubricVersion).first().rubric_json = {**self.rubric, "reference_context": "Changed reference"}

@@ -73,6 +73,7 @@ _TYPE_DETAILS = {
     "png": (".png", "image/png", {".png"}),
     "jpeg": (".jpg", "image/jpeg", {".jpg", ".jpeg"}),
     "webp": (".webp", "image/webp", {".webp"}),
+    "pptx": (".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation", {".pptx"}),
 }
 
 
@@ -159,6 +160,7 @@ async def store_validated_upload(
     upload_dir: str | Path,
     *,
     limits: UploadLimits | None = None,
+    allow_pptx: bool = False,
 ) -> StoredUpload:
     limits = limits or upload_limits()
     destination_dir = Path(upload_dir)
@@ -192,12 +194,21 @@ async def store_validated_upload(
             raise UploadValidationError(422, "Uploaded file is empty")
 
         detected_type = _detect_type(bytes(header))
+        if allow_pptx and bytes(header).startswith(b'PK\x03\x04') and Path(original_filename).suffix.lower()=='.pptx':
+            detected_type='pptx'
         if not detected_type:
             raise UploadValidationError(415, "Only PDF, PNG, JPEG, and WebP files are accepted")
         _validate_extension(original_filename, detected_type)
 
         extension, media_type, _ = _TYPE_DETAILS[detected_type]
-        page_count = (
+        if detected_type=='pptx':
+            try:
+                from services.presentation_material_service import read_slides
+                slide_count=len(read_slides(temporary_path))
+                if slide_count>limits.max_pdf_pages:raise ValueError('Presentation exceeds the configured slide limit.')
+            except Exception as error:
+                raise UploadValidationError(422,'PowerPoint file is invalid, unsafe or exceeds its content limits.') from error
+        page_count = slide_count if detected_type=='pptx' else (
             _validate_pdf(temporary_path, limits.max_pdf_pages)
             if detected_type == "pdf"
             else _validate_image(temporary_path, detected_type, limits.max_image_pixels)

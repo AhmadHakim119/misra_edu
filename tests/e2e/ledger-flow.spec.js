@@ -22,29 +22,120 @@ async function fixture(page,{preflightFails=false}={}){
     await route.fulfill({json:body});});return calls;
 }
 test('start is a clear paper list; selected paper enters focused mode with the real logo',async({page},info)=>{
-  await fixture(page);await page.goto('/next/index.html?exam_id=e');await expect(page.locator('#paper-list')).toContainText('Synthetic A');await expect(page.locator('.evidence-panel')).toBeHidden();await expect(page.locator('#next-action')).toHaveText('Check export');await expect(page.locator('.logo-light')).toHaveAttribute('src','../assets/logo-transparent.png');
+  await fixture(page);await page.goto('/app/index.html?exam_id=e');await expect(page.locator('#paper-list')).toContainText('Synthetic A');await expect(page.locator('.evidence-panel')).toBeHidden();await expect(page.locator('#next-action')).toHaveText('Check export');await expect(page.locator('.logo-light')).toHaveAttribute('src','../assets/logo-transparent.png');
   await page.locator('[data-paper="s"]').click();await expect(page.locator('#paper-picker')).not.toHaveAttribute('open','');await expect(page.locator('.evidence-panel')).toBeVisible();await page.locator('#toggle-assessments').click();await expect(page.locator('#assessment-index')).toBeHidden();await page.locator('#papers-tab').click();await expect(page.locator('#paper-picker')).toHaveAttribute('open','');
   await page.locator('#paper-picker>summary').click();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/ledger-focus-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#theme').click();await page.screenshot({path:`.impeccable/review/ledger-focus-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
 });
 test('native export makes zero marks and exclusions clear and downloads once',async({page},info)=>{
-  const calls=await fixture(page);await page.goto('/next/index.html?exam_id=e');await page.locator('#export-link').click();await expect(page.locator('#native-export-checks')).toContainText('1 included · 1 excluded');await expect(page.locator('#native-export-checks')).toContainText('0 / 2');await expect(page.locator('#native-export-note')).toContainText('Username');const download=page.waitForEvent('download');await page.locator('#native-export-csv').click();expect((await download).suggestedFilename()).toBe('synthetic.csv');expect(calls.filter(c=>c.p.endsWith('/grades.csv'))).toHaveLength(1);await page.locator('#native-export-profile').selectOption('generic');await expect(page.locator('#native-export-checks')).toContainText('2 included · 0 excluded');
+  const calls=await fixture(page);await page.goto('/app/index.html?exam_id=e');await page.locator('#export-link').click();await expect(page.locator('#native-export-checks')).toContainText('1 included · 1 excluded');await expect(page.locator('#native-export-checks')).toContainText('0 / 2');await expect(page.locator('#native-export-note')).toContainText('Username');const download=page.waitForEvent('download');await page.locator('#native-export-csv').click();expect((await download).suggestedFilename()).toBe('synthetic.csv');expect(calls.filter(c=>c.p.endsWith('/grades.csv'))).toHaveLength(1);await page.locator('#native-export-profile').selectOption('generic');await expect(page.locator('#native-export-checks')).toContainText('2 included · 0 excluded');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();const action=await page.locator('#native-export-checks [data-open-saved-paper="x"]').boundingBox();expect(action.x).toBeGreaterThanOrEqual(0);expect(action.x+action.width).toBeLessThanOrEqual((await page.viewportSize()).width);await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/ledger-export-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#theme').click();await page.screenshot({path:`.impeccable/review/ledger-export-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
 });
-test('preflight outage keeps CSV closed and provides a recovery',async({page})=>{await fixture(page,{preflightFails:true});await page.goto('/next/index.html?exam_id=e&view=export');await expect(page.locator('#native-export-checks')).toContainText('Synthetic preflight outage');await expect(page.locator('#native-export-csv')).toBeDisabled();await expect(page.locator('#refresh-export')).toBeEnabled();});
+test('preflight outage keeps CSV closed and provides a recovery',async({page})=>{await fixture(page,{preflightFails:true});await page.goto('/app/index.html?exam_id=e&view=export');await expect(page.locator('#native-export-checks')).toContainText('Synthetic preflight outage');await expect(page.locator('#native-export-csv')).toBeDisabled();await expect(page.locator('#refresh-export')).toBeEnabled();});
 test('native sign in returns to native workspace and reset does not expose accounts',async({page},info)=>{
-  await fixture(page);await page.goto('/next/login.html');await page.locator('#login-email').fill('synthetic@example.edu');await page.locator('#login-password').fill('Synthetic test password');await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page).toHaveURL(/\/next\/index.html/);await page.goto('/next/forgot-password.html');await page.locator('#forgot-email').fill('synthetic@example.edu');await page.getByRole('button',{name:'Send reset link'}).click();await expect(page.locator('[data-forgot-confirmation]')).toContainText('If an account exists');await page.goto('/next/login.html');
+  await fixture(page);await page.goto('/app/login.html');await page.locator('#login-email').fill('synthetic@example.edu');await page.locator('#login-password').fill('Synthetic test password');await page.getByRole('button',{name:'Sign in',exact:true}).click();await expect(page).toHaveURL(/\/app\/dashboard.html/);await page.goto('/app/forgot-password.html');await page.locator('#forgot-email').fill('synthetic@example.edu');await page.getByRole('button',{name:'Send reset link'}).click();await expect(page.locator('[data-forgot-confirmation]')).toContainText('If an account exists');await page.goto('/app/login.html');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.screenshot({path:`.impeccable/review/ledger-signin-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.evaluate(()=>MisraTheme.set('dark'));await page.screenshot({path:`.impeccable/review/ledger-signin-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
 });
 test('native assessment list opens exact assessment, and settings retain optional preferences',async({page},info)=>{
-  await fixture(page);await page.goto('/next/assessments.html');await expect(page.locator('#manager-list')).toContainText('Synthetic physics assessment');await expect(page.getByRole('link',{name:'Open assessment',exact:true})).toHaveAttribute('href','index.html?exam_id=e');await page.locator('#open-creation').click();await expect(page.locator('#manager-course')).toHaveValue('c');
-  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.screenshot({path:`.impeccable/review/ledger-manager-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.evaluate(()=>MisraTheme.set('dark'));await page.screenshot({path:`.impeccable/review/ledger-manager-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.goto('/next/account.html');await expect(page.locator('#native-account-facts')).toContainText('Synthetic instructor');await page.locator('[data-theme-option][value=light]').check();await page.screenshot({path:`.impeccable/review/ledger-settings-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('[data-theme-option][value=dark]').check();await expect(page.locator('html')).toHaveAttribute('data-theme','dark');await expect(page.locator('#marking-preferences')).toBeHidden();await expect(page.locator('#native-settings-status')).toContainText('Theme saved');await page.screenshot({path:`.impeccable/review/ledger-settings-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  await fixture(page);await page.goto('/app/assessments.html');await expect(page.locator('#manager-list')).toContainText('Synthetic physics assessment');await expect(page.getByRole('link',{name:'Open assessment',exact:true})).toHaveAttribute('href','grading.html?exam_id=e');await page.locator('#open-creation').click();await expect(page.locator('#manager-course')).toHaveValue('c');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.screenshot({path:`.impeccable/review/ledger-manager-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.evaluate(()=>MisraTheme.set('dark'));await page.screenshot({path:`.impeccable/review/ledger-manager-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.goto('/app/account.html');await expect(page.locator('#native-account-facts')).toContainText('Synthetic instructor');await page.locator('[data-theme-option][value=light]').check();await page.screenshot({path:`.impeccable/review/ledger-settings-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('[data-theme-option][value=dark]').check();await expect(page.locator('html')).toHaveAttribute('data-theme','dark');await expect(page.locator('#marking-preferences')).toBeHidden();await expect(page.locator('#native-settings-status')).toContainText('Theme saved');await page.screenshot({path:`.impeccable/review/ledger-settings-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
 });
 test('identity can be corrected beside the paper without losing an unsaved grade',async({page})=>{
-  await fixture(page);await page.goto('/next/index.html?exam_id=e&submission_id=s');await expect(page.locator('#instructor-score')).toHaveValue('0');await page.locator('#instructor-score').fill('1');await page.locator('.identity-inline>summary').click();await page.locator('#native-student-name').fill('Synthetic corrected');await page.locator('#native-student-number').fill('TEST2');await page.getByRole('button',{name:'Save student details',exact:true}).click();await expect(page.locator('#identity-save-state')).toContainText('saved');await expect(page.locator('#instructor-score')).toHaveValue('1');await expect(page.locator('#save-status')).toContainText('Unsaved');await page.locator('#export-link').click();await expect(page.locator('#error')).toContainText('unsaved edits');await expect(page.locator('#ledger-export')).toBeHidden();
+  await fixture(page);await page.goto('/app/index.html?exam_id=e&submission_id=s');await expect(page.locator('#instructor-score')).toHaveValue('0');await page.locator('#instructor-score').fill('1');await page.locator('.identity-inline>summary').click();await page.locator('#native-student-name').fill('Synthetic corrected');await page.locator('#native-student-number').fill('TEST2');await page.getByRole('button',{name:'Save student details',exact:true}).click();await expect(page.locator('#identity-save-state')).toContainText('saved');await expect(page.locator('#instructor-score')).toHaveValue('1');await expect(page.locator('#save-status')).toContainText('Unsaved');await page.locator('#export-link').click();await expect(page.locator('#error')).toContainText('unsaved edits');await expect(page.locator('#ledger-export')).toBeHidden();
 });
 test('cancelled sign out preserves assessment entries and never calls logout',async({page})=>{
-  const calls=await fixture(page);await page.goto('/next/assessments.html');await page.locator('#open-creation').click();await page.locator('#manager-title').fill('Synthetic unsaved assessment');page.once('dialog',dialog=>dialog.dismiss());await page.locator('#native-sign-out').click();await expect(page.locator('#manager-title')).toHaveValue('Synthetic unsaved assessment');await expect(page).toHaveURL(/assessments.html/);expect(calls.filter(c=>c.p==='/auth/logout')).toHaveLength(0);
+  const calls=await fixture(page);await page.goto('/app/assessments.html');await page.locator('#open-creation').click();await page.locator('#manager-title').fill('Synthetic unsaved assessment');page.once('dialog',dialog=>dialog.dismiss());await page.locator('#native-sign-out').click();await expect(page.locator('#manager-title')).toHaveValue('Synthetic unsaved assessment');await expect(page).toHaveURL(/assessments.html/);expect(calls.filter(c=>c.p==='/auth/logout')).toHaveLength(0);
 });
 test('pending assessment creation blocks sign out before session invalidation',async({page})=>{
-  const calls=await fixture(page);let release,started;const gate=new Promise(resolve=>release=resolve),saving=new Promise(resolve=>started=resolve);await page.route('**/api/exams',async(route)=>{if(route.request().method()!=='POST')return route.fallback();started();await gate;await route.fulfill({status:422,json:{detail:'Synthetic validation error'}});});await page.goto('/next/assessments.html');await page.locator('#open-creation').click();await page.locator('#manager-title').fill('Synthetic pending assessment');await page.getByRole('button',{name:'Create & prepare assessment'}).click();await saving;await expect(page.locator('#native-sign-out')).toBeDisabled();await page.evaluate(()=>document.getElementById('native-sign-out').dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})));expect(calls.filter(c=>c.p==='/auth/logout')).toHaveLength(0);release();await expect(page.locator('#manager-status')).toContainText('Synthetic validation error');await expect(page.locator('#manager-title')).toHaveValue('Synthetic pending assessment');
+  const calls=await fixture(page);let release,started;const gate=new Promise(resolve=>release=resolve),saving=new Promise(resolve=>started=resolve);await page.route('**/api/exams',async(route)=>{if(route.request().method()!=='POST')return route.fallback();started();await gate;await route.fulfill({status:422,json:{detail:'Synthetic validation error'}});});await page.goto('/app/assessments.html');await page.locator('#open-creation').click();await page.locator('#manager-title').fill('Synthetic pending assessment');await page.getByRole('button',{name:'Create & prepare assessment'}).click();await saving;await expect(page.locator('#native-sign-out')).toBeDisabled();await page.evaluate(()=>document.getElementById('native-sign-out').dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})));expect(calls.filter(c=>c.p==='/auth/logout')).toHaveLength(0);release();await expect(page.locator('#manager-status')).toContainText('Synthetic validation error');await expect(page.locator('#manager-title')).toHaveValue('Synthetic pending assessment');
+});
+
+test('assessment create link waits for courses and keeps optional course creation closed',async({page},info)=>{
+  await fixture(page);
+  let release,started;
+  const gate=new Promise(resolve=>release=resolve),loading=new Promise(resolve=>started=resolve);
+  await page.route('**/api/courses',async route=>{
+    started();await gate;await route.fulfill({json:[{id:'c',course_code:'TEST',title:'Synthetic physics'}]});
+  });
+  await page.goto('/app/assessments.html?create=1');await loading;
+  await expect(page.locator('#open-creation')).toBeDisabled();
+  await expect(page.locator('#create-course')).toBeHidden();
+  release();await expect(page.locator('#creation')).toBeVisible();
+  await expect(page.locator('#manager-course')).toHaveValue('c');
+  await expect(page.locator('#create-course')).toBeHidden();
+  await page.locator('#manager-title').fill('Synthetic grading test');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  await page.screenshot({path:`.impeccable/review/assessment-create-light-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  await page.evaluate(()=>MisraTheme.set('dark'));
+  await page.screenshot({path:`.impeccable/review/assessment-create-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  await page.locator('#add-course').click();await expect(page.locator('#create-course')).toBeVisible();
+  await page.locator('#manager-code').fill('DRAFT');
+  page.once('dialog',dialog=>dialog.dismiss());await page.locator('#close-creation').click();
+  await expect(page.locator('#manager-code')).toHaveValue('DRAFT');
+  page.once('dialog',dialog=>dialog.accept());await page.locator('#close-creation').click();
+  await page.locator('#open-creation').click();
+  await expect(page.locator('#create-course')).toBeHidden();
+  await expect(page.locator('#manager-title')).toBeEmpty();
+});
+
+test('assessment creation exposes course setup only when no saved courses exist',async({page})=>{
+  await fixture(page);await page.route('**/api/courses',route=>route.fulfill({json:[]}));
+  await page.goto('/app/assessments.html?create=1');
+  await expect(page.locator('#create-course')).toBeVisible();
+  await expect(page.locator('#manager-course')).toHaveValue('');
+  await expect(page.locator('#manager-title')).toBeFocused();
+});
+
+test('failed course creation retains both course and assessment entries',async({page})=>{
+  await fixture(page);
+  let payload;
+  await page.route('**/api/courses',route=>{
+    if(route.request().method()!=='POST')return route.fallback();
+    payload=route.request().postDataJSON();
+    return route.fulfill({status:422,json:{detail:'Synthetic course validation error'}});
+  });
+  await page.goto('/app/assessments.html?create=1');
+  await page.locator('#manager-title').fill('Synthetic grading test');
+  await page.locator('#add-course').click();
+  await page.locator('#manager-code').fill('TEST2');
+  await page.locator('#manager-course-title').fill('Synthetic course draft');
+  await page.locator('#manager-instructor').fill('Synthetic instructor');
+  await page.getByRole('button',{name:'Save course',exact:true}).click();
+  await expect(page.locator('#manager-status')).toContainText('Synthetic course validation error');
+  await expect(page.locator('#manager-title')).toHaveValue('Synthetic grading test');
+  await expect(page.locator('#manager-code')).toHaveValue('TEST2');
+  await expect(page.locator('#manager-course-title')).toHaveValue('Synthetic course draft');
+  await expect(page.locator('#create-course')).toBeVisible();
+  await expect(page.getByRole('button',{name:'Save course',exact:true})).toBeEnabled();
+  expect(payload).toEqual({course_code:'TEST2',term:null,title:'Synthetic course draft',instructor_name:'Synthetic instructor'});
+});
+
+test('assessment creation sends selected course and entered title before locking controls',async({page})=>{
+  await fixture(page);let payload;
+  await page.route('**/api/exams',route=>{
+    if(route.request().method()!=='POST')return route.fallback();
+    payload=route.request().postDataJSON();
+    return route.fulfill({status:422,json:{detail:'Synthetic assessment validation error'}});
+  });
+  await page.goto('/app/assessments.html?create=1');
+  await page.locator('#manager-title').fill('Synthetic grading test');
+  await page.getByRole('button',{name:'Create & prepare assessment',exact:true}).click();
+  await expect(page.locator('#manager-status')).toContainText('Synthetic assessment validation error');
+  expect(payload).toEqual({course_id:'c',title:'Synthetic grading test',language:'en'});
+  await expect(page.locator('#manager-title')).toHaveValue('Synthetic grading test');
+  await expect(page.getByRole('button',{name:'Create & prepare assessment',exact:true})).toBeEnabled();
+});
+
+test('assessment validation names rejected fields and retains unsaved entries',async({page})=>{
+  await fixture(page);
+  await page.route('**/api/exams',route=>route.request().method()==='POST'
+    ? route.fulfill({status:422,json:{detail:[{type:'missing',loc:['body','course_id'],msg:'Field required'},{type:'string_too_short',loc:['body','title'],msg:'String should have at least 1 character',input:''}]}})
+    : route.fallback());
+  await page.goto('/app/assessments.html?create=1');
+  await page.locator('#manager-title').fill('Synthetic grading test');
+  await page.getByRole('button',{name:'Create & prepare assessment',exact:true}).click();
+  await expect(page.locator('#manager-status')).toContainText('Course: This field was not sent. Refresh this page and try again.');
+  await expect(page.locator('#manager-status')).toContainText('Title: String should have at least 1 character');
+  await expect(page.locator('#manager-status')).not.toContainText('Request failed (422)');
+  await expect(page.locator('#manager-title')).toHaveValue('Synthetic grading test');
+  await expect(page.getByRole('button',{name:'Create & prepare assessment',exact:true})).toBeEnabled();
 });

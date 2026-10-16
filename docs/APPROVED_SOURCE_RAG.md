@@ -25,7 +25,9 @@ Approved question + rubric criteria
 
 Redis delivers work; MariaDB owns document versions, approvals, progress,
 passages, source scope, runs and review labels. Course-material ingestion does
-not create a student submission and does not invoke an AI provider.
+not create a student submission. Native PDF and PPTX text reading is local.
+Explicit scanned-PDF reading can invoke the configured extraction provider; its
+output still requires instructor source-page approval. See [Course library](COURSE_LIBRARY.md).
 
 ## Boundaries
 

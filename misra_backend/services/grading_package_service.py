@@ -132,8 +132,10 @@ def provider_grading_package(package):
         evidence.append(safe_item)
 
     local_key_id = package.get("answer_key", {}).get("reference_id")
-    provider_key_id = "instructor:answer_key"
     key = package.get("answer_key", {})
+    # A no-fixed-answer rubric has no citable answer key. Advertising a key ID
+    # here invites a citation which the local validator must then reject.
+    provider_key_id = "instructor:answer_key" if key.get("mode") != "no_fixed_answer" and local_key_id else None
     safe_key = {
         "reference_id": provider_key_id,
         "version": key.get("version"),
@@ -181,8 +183,25 @@ def provider_grading_package(package):
     }
     safe_sources, source_aliases = provider_sources(package.get("course_references") or {})
     safe_package["course_references"] = safe_sources
-    reference_aliases = {provider_key_id: local_key_id} if local_key_id else {}
+    reference_aliases = {provider_key_id: local_key_id} if provider_key_id else {}
     reference_aliases.update(source_aliases)
+    safe_package["citation_contract"] = {
+        "evidence_refs": [item["id"] for item in evidence],
+        "tracked_evidence_refs": [item["id"] for item in evidence
+                                  if item["kind"] in {"ocr_segment", "student_image"}],
+        "policy_applied": list(safe_package["policy"]),
+        "criteria": [
+            {"criterion_id": criterion["id"],
+             "reference_refs": ([provider_key_id] if provider_key_id else []) + [
+                 passage["id"] for passage in safe_sources["passages"]
+                 if criterion["id"] in passage["criterion_ids"]],
+             "required_course_reference_refs": [
+                 passage["id"] for passage in safe_sources["passages"]
+                 if criterion["id"] in passage["criterion_ids"]]
+                 if safe_sources["mode"] == "required" else []}
+            for criterion in safe_package["rubric"].get("criteria", [])
+        ],
+    }
     return safe_package, evidence_aliases, reference_aliases
 
 

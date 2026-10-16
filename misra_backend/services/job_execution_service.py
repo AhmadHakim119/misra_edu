@@ -67,6 +67,8 @@ def _grade_submission(job: ProcessingJob, db: Session) -> None:
         ).delete(synchronize_session=False)
         db.commit()
 
+        job.progress_message = f"Assessment and verification agents: answer {index + 1} of {len(answers)}"
+        db.commit()
         if mode == "auto":
             process_grading_with_policy(answer.id, db, processing_job_id=job.id)
         else:

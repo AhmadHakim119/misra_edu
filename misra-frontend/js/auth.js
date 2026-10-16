@@ -104,7 +104,9 @@
           return;
         }
         const requested = new URLSearchParams(window.location.search).get('next');
-        window.location.href = requested && (requested.startsWith('/app/pages/') || requested.startsWith('/app/next/')) ? requested : window.location.pathname.includes('/next/') ? 'index.html' : 'dashboard.html';
+        const native=window.location.pathname.startsWith('/app/')&&!window.location.pathname.startsWith('/app/pages/');
+        const prefix=native?'/app/':window.location.pathname.startsWith('/legacy/')?'/legacy/pages/':'/app/pages/';
+        window.location.href = requested && requested.startsWith(prefix) ? requested : native ? 'index.html' : 'dashboard.html';
       }, 700);
     });
   }

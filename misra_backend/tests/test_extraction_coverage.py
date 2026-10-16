@@ -19,6 +19,7 @@ from services.grading_service import process_grading
 from services.page_recovery_service import confirm_page_recovery, preview_page_recovery, RecoveryPageResult, _sign_preview
 from schemas.page_recovery_input import RecoverySegmentInput
 from scripts.upgrade_extraction_coverage import upgrade
+from tests.inference_fixtures import isolate_grading_provider
 
 BOX = {"x":.1,"y":.2,"width":.8,"height":.2}
 
@@ -72,6 +73,7 @@ class PrintedAnchorTests(unittest.TestCase):
 
 class CoverageTests(unittest.TestCase):
     def setUp(self):
+        isolate_grading_provider(self)
         self.engine = create_engine("sqlite://"); Base.metadata.create_all(self.engine)
         self.db = sessionmaker(bind=self.engine)(); self.temp = tempfile.TemporaryDirectory()
         self.path = Path(self.temp.name)/"synthetic.pdf"; self.path.write_bytes(b"synthetic private fixture")

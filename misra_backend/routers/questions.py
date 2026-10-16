@@ -11,6 +11,12 @@ from services.rubric_version_service import attach_initial_approved_rubric
 router = APIRouter(prefix="/api", tags=["questions"])
 
 
+@router.delete('/questions/{question_id}', status_code=204)
+def delete_question(question_id: str, db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    from services.question_deletion_service import delete_draft_question
+    delete_draft_question(db, user, question_id)
+
+
 @router.get("/exams/{exam_id}/questions")
 def list_exam_questions(
     exam_id: str,
@@ -57,6 +63,10 @@ async def create_question(
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=f"Invalid rubric: {error}") from error
+
+    if not payload.approve_initial_rubric and payload.policy is None:
+        from services.account_settings_service import apply_to_new_draft
+        rubric = apply_to_new_draft(db, user, rubric)
 
     existing_count = db.query(Question).filter(Question.exam_id == exam_id).count()
 

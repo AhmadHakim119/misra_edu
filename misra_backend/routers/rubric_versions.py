@@ -242,12 +242,18 @@ def create_draft_rubric_version(
     question = _owned_question(db, question_id, user)
 
     try:
+        rubric = payload.rubric
+        if payload.apply_instructor_preferences:
+            from services.account_settings_service import apply_to_new_draft
+            rubric = apply_to_new_draft(db, user, rubric)
+            rubric = rubric.model_dump() if hasattr(rubric, 'model_dump') else rubric
         return create_rubric_version(
             question=question,
-            rubric_json=payload.rubric,
+            rubric_json=rubric,
             source=payload.source,
             change_summary=payload.change_summary,
             db=db,
+            created_by=user.id,
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

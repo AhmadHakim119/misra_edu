@@ -76,6 +76,33 @@ class ExamSetupTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as error: call()
             self.assertEqual(error.exception.status_code, 404)
 
+    def approved_profile(self):
+        from models import InstructorPreferenceVersion
+        self.db.add(InstructorPreferenceVersion(institution_id='i',user_id='u',created_by='u',approved_by='u',
+            version_number=1,status='approved',scenario_answers=[],explicit_preferences={},proposal_provenance={},
+            derived_proposal={'units_policy':'do_not_penalize','rounding_tolerance_percent':0}))
+        self.db.commit()
+
+    def test_import_uses_survey_defaults_once_without_approval_or_retry_rewrite(self):
+        from models import InstructorAccountSettings
+        self.approved_profile();job=self.draft()
+        first=exam_setup.confirm('e',job.id,self.request(),self.db,self.user)
+        rubric=self.db.query(RubricVersion).one()
+        self.assertEqual(rubric.status,'draft')
+        self.assertEqual(rubric.rubric_json['policy']['units_policy'],'do_not_penalize')
+        self.assertEqual(rubric.rubric_json['policy']['rounding_tolerance_percent'],0)
+        self.db.add(InstructorAccountSettings(user_id='u',institution_id='i',use_marking_preferences=False));self.db.commit()
+        again=exam_setup.confirm('e',job.id,self.request(),self.db,self.user)
+        self.assertEqual(first,again);self.assertEqual(self.db.query(RubricVersion).count(),1)
+        self.db.refresh(rubric);self.assertEqual(rubric.rubric_json['policy']['units_policy'],'do_not_penalize')
+
+    def test_import_respects_account_opt_out(self):
+        from models import InstructorAccountSettings
+        self.approved_profile()
+        self.db.add(InstructorAccountSettings(user_id='u',institution_id='i',use_marking_preferences=False));self.db.commit()
+        job=self.draft();exam_setup.confirm('e',job.id,self.request(),self.db,self.user)
+        self.assertEqual(self.db.query(RubricVersion).one().rubric_json['policy']['units_policy'],'required_when_applicable')
+
     def test_confirm_creates_only_drafts_and_is_idempotent(self):
         job = self.draft()
         first = exam_setup.confirm('e', job.id, self.request(), self.db, self.user)

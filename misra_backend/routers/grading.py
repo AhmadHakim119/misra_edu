@@ -9,6 +9,7 @@ from services.job_queue_service import create_processing_job, job_to_dict
 from services.audit_service import record_audit_event
 from services.grading_scope_service import is_external_question
 from models import Answer, GradingRun, Question, Submission, User
+from schemas.public_results import GradingRunRecord, AnswerRecord
 
 router = APIRouter(prefix="/api", tags=["grading"])
 
@@ -26,7 +27,7 @@ def _require_verified_mapping(submission_id: str, db: Session):
     return report
 
 
-@router.post("/grade/{answer_id}")
+@router.post("/grade/{answer_id}", response_model=AnswerRecord)
 async def grading_endpoint(
     answer_id: str,
     payload: GradeRequest,
@@ -109,7 +110,7 @@ def grade_submission(
         db.commit()
     return {"submission_id": submission.id, "job": job_to_dict(job)}
 
-@router.get("/answers/{answer_id}/grading-runs")
+@router.get("/answers/{answer_id}/grading-runs", response_model=list[GradingRunRecord])
 async def get_grading_runs(
     answer_id: str,
     db: Session = Depends(get_db),

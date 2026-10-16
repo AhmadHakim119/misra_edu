@@ -40,8 +40,8 @@ See [Questions from approved sources](docs/SOURCE_QUESTION_DRAFTS.md) for the
 Rubric Studio generation workflow and its validation/approval boundaries.
 See [Assessment source defaults](docs/ASSESSMENT_SOURCE_DEFAULTS.md) for choosing
 references once per assessment and the additive database upgrade.
-The [parallel marking workspace](docs/NEXT_WORKSPACE.md) is available at
-`/app/next/index.html`; the original workspace remains the full-feature fallback.
+The [instructor app](docs/NATIVE_WORKSPACE.md) is available at
+`/app/`. The retained old interface is isolated at `/legacy/pages/`.
 Its [source-led marking guide](docs/ASSESSMENT_GUIDE.md) reviews all questions
 together and publishes saved rubric, answer-key and source-choice drafts with one
 assessment-wide approval. Source-page checking and historical run snapshots remain
@@ -227,10 +227,10 @@ starting a worker with `python .\worker.py --recover-only`.
 
 Open:
 
-- Instructor workspace: <http://127.0.0.1:8000/app/pages/dashboard.html>
+- Instructor workspace: <http://127.0.0.1:8000/app/dashboard.html>
 - API documentation: <http://127.0.0.1:8000/docs>
 - Health check: <http://127.0.0.1:8000/api/health>
-- Admin operations: <http://127.0.0.1:8000/app/pages/admin-operations.html>
+- Admin operations: <http://127.0.0.1:8000/app/admin.html>
 
 The frontend has no build step. It is served by FastAPI from
 `misra-frontend/`. Instructor sessions use signed, HTTP-only cookies with CSRF
@@ -396,10 +396,11 @@ routing fields. Structural conflicts stop grading before a provider call;
 advisories cap confidence and require instructor review. These checks do not
 claim to understand whether academic prose is semantically correct.
 
-Settings provides optional, versioned instructor marking profiles. Scenario
-answers create proposed rubric defaults, but approval never changes an
-assessment. An instructor must explicitly copy an approved profile into an
-editable Rubric Studio draft and approve that rubric separately. Review forms
+Settings provides optional, versioned instructor marking profiles. Approved
+survey preferences fill new native marking-guide drafts by default, with a saved
+opt-out in Settings. Existing drafts and approved guides keep their rules, and
+the whole guide still requires instructor approval. See [Account controls](docs/ACCOUNT_SETTINGS.md)
+for the additive upgrade, completion indicator and protected account deletion. Review forms
 record structured reasons such as valid alternatives, notation tolerance,
 method credit, and carried-forward errors. After three distinct decisions of
 one kind, MISRA may suggest a new profile rule. OCR/mapping failures, rubric

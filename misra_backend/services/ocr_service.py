@@ -8,7 +8,7 @@ from pydantic import BaseModel, ValidationError, Field, StrictInt
 from pdf2image import convert_from_bytes, convert_from_path
 from sqlalchemy.orm import Session
 import logging
-from services.gemini_client import generate
+from services.inference_service import generate_ocr as generate
 from models import (
     Answer,
     AnswerSource,

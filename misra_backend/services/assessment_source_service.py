@@ -25,7 +25,9 @@ def public_scope(scope):
 
 def save_default(db, exam, request, user):
     db.query(Exam).filter(Exam.id == exam.id).with_for_update().one()
-    validate_exam_bindings(db, exam, request)
+    # Pending pages may record instructor intent in a draft. Approval and retrieval
+    # continue to require the independently checked, immutable source version.
+    validate_exam_bindings(db, exam, request, allow_pending_sources=request.allow_pending_sources)
     number = db.query(func.max(AssessmentMaterialScopeVersion.version_number)).filter(
         AssessmentMaterialScopeVersion.exam_id == exam.id).scalar() or 0
     scope = AssessmentMaterialScopeVersion(exam_id=exam.id, version_number=number + 1,

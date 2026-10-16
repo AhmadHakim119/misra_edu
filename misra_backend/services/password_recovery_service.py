@@ -45,7 +45,7 @@ def _normalized_email(email: str) -> str:
 
 def _reset_url(token: str) -> str:
     base = os.getenv("APP_PUBLIC_URL", "http://127.0.0.1:8000").strip().rstrip("/")
-    return f"{base}/app/pages/reset-password.html?token={token}"
+    return f"{base}/app/reset-password.html?token={token}"
 
 
 @dataclass(frozen=True)

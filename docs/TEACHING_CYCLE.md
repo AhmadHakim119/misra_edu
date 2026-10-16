@@ -1,7 +1,7 @@
 # Teaching material to class feedback
 
 The new instructor workspace supports a connected teaching cycle at
-`/app/next/index.html`:
+`/app/index.html`:
 
 1. Create/select a course assessment. In **Sources & rubric → Sources**, add
    lecture slides, notes or textbook chapters to the course library. The multi-file

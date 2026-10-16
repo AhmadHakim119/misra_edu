@@ -29,6 +29,8 @@ from schemas.page_recovery_input import (
 )
 from schemas.source_mapping_input import SourceMappingRequest, UnmatchedSegmentResolutionRequest
 from schemas.source_mapping_input import BulkSegmentResolutionRequest
+from schemas.source_mapping_input import SourceTextCorrectionRequest
+from schemas.public_results import ResultRecord, AnswerRecord
 from schemas.submission_metadata_input import SubmissionMetadataUpdate
 from services.extraction_review_service import (
     bulk_resolve_segments,
@@ -116,7 +118,7 @@ def reprocess_extraction(
         db.commit()
     return {"job": job_to_dict(job), "created": created}
 
-@router.get("/results/{submission_id}")
+@router.get("/results/{submission_id}", response_model=ResultRecord)
 async def get_results(
     submission_id: str,
     db: Session = Depends(get_db),
@@ -366,7 +368,7 @@ def update_submission_metadata(
 
     exam = db.query(Exam).filter(Exam.id == submission.exam_id).first()
     course = db.query(Course).filter(Course.id == exam.course_id).first() if exam else None
-    if course:
+    if course and 'instructor_name' in payload.model_fields_set:
         course.instructor_name = instructor_name or None
 
     try:
@@ -540,6 +542,39 @@ def update_answer_source_question(
         raise HTTPException(status_code=status_code, detail=str(error)) from error
 
 
+@router.patch('/answer-sources/{source_id}/text')
+def correct_source_text(source_id: str, payload: SourceTextCorrectionRequest,
+                        db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    source = _owned_source(source_id, db, user)
+    if not source:
+        raise HTTPException(404, 'Answer source not found')
+    answer = db.get(Answer, source.answer_id)
+    from services.extraction_review_service import _assert_answer_is_ungraded, _rebuild_answer_from_sources
+    try:
+        _assert_answer_is_ungraded(answer, db)
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from None
+    if db.query(ProcessingJob).filter(ProcessingJob.submission_id == answer.submission_id,
+        ProcessingJob.institution_id == user.institution_id,
+        ProcessingJob.status.in_(['queued','processing','retrying'])).first():
+        raise HTTPException(409, 'Wait for this paper’s active job before editing extraction.')
+    if source.extracted_text != payload.expected_text:
+        raise HTTPException(409, 'This transcription changed. Reload before saving your correction.')
+    if not payload.text.strip():
+        raise HTTPException(422, 'Enter the transcription visible on the paper.')
+    segment = dict(source.ocr_segment or {})
+    segment.setdefault('original_extracted_text', source.extracted_text)
+    segment['instructor_corrected'] = True
+    source.ocr_segment = segment
+    source.extracted_text = payload.text
+    db.flush(); _rebuild_answer_from_sources(answer, db)
+    record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
+        action='extraction_text_corrected', entity_type='answer_source', entity_id=source.id,
+        details={'submission_id':answer.submission_id})
+    db.commit()
+    return build_extraction_review(answer.submission_id, db)
+
+
 @router.delete("/answer-sources/{source_id}")
 def delete_manually_assigned_answer_source(
     source_id: str,
@@ -605,7 +640,7 @@ def confirm_submission_page_reextract(
         status_code = 404 if "not found" in str(error).lower() else 409
         raise HTTPException(status_code=status_code, detail=str(error)) from error
 
-@router.get("/review-queue")
+@router.get("/review-queue", response_model=list[AnswerRecord])
 async def get_review_queue(
     exam_id: str = None,
     db: Session = Depends(get_db),

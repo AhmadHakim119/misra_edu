@@ -18,7 +18,7 @@ from services.extraction_review_service import (
     _rebuild_answer_from_sources,
     build_extraction_review,
 )
-from services.gemini_client import generate
+from services.inference_service import generate_ocr as generate
 from services.extraction_coverage_service import confirmed_recovery_regions
 from services.ocr_service import _normalize_question_number
 

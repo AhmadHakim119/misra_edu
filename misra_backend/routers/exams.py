@@ -29,6 +29,7 @@ from models import Batch
 from typing import Optional
 from schemas.course_input import CourseCreateRequest
 from schemas.exam_input import ExamCreateRequest, ExamDuplicateRequest
+from schemas.public_results import SubmissionRecord
 
 router = APIRouter(prefix="/api", tags=["exams"])
 
@@ -372,7 +373,10 @@ async def upload_exam(
         },
     )
     db.commit()
-    return {"submission": submission, "job": job_to_dict(job)}
+    # Commits expire ORM attributes. Materialize the public record explicitly;
+    # generic ORM encoding can otherwise return {} after the audit commit.
+    return {"submission": SubmissionRecord.model_validate(submission).model_dump(),
+            "job": job_to_dict(job)}
 
 
 @router.post("/upload-batch", status_code=202)

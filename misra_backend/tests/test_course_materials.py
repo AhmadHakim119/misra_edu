@@ -26,10 +26,12 @@ from services.material_retrieval_service import retrieve_for_question, provider_
 from services.grading_package_service import build_grading_package, provider_grading_package, validate_evidence_references
 from services.grading_service import GradingResult, process_grading
 from scripts.upgrade_course_materials import upgrade
+from tests.inference_fixtures import isolate_grading_provider
 
 
 class CourseMaterialTests(unittest.TestCase):
     def setUp(self):
+        isolate_grading_provider(self)
         self.engine = create_engine("sqlite://")
         Base.metadata.create_all(self.engine)
         self.db = sessionmaker(bind=self.engine)()

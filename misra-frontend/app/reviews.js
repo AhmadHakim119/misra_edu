@@ -1,0 +1,8 @@
+(function(){
+  'use strict';const {$,esc,number,link,params,ready}=MisraApp;
+  async function load(){try{const [rows,papers,exams]=await Promise.all([MisraAPI.reviewQueue($('review-exam').value||undefined),MisraAPI.submissions(),MisraAPI.exams()]);if(!Array.isArray(rows)||!Array.isArray(papers))throw Error('Review queue response is incomplete.');
+    if(!$('review-exam').options.length){$('review-exam').innerHTML='<option value="">All exams</option>'+exams.map(e=>`<option value="${esc(e.id)}">${esc(e.title)}</option>`).join('');$('review-exam').value=params.get('exam_id')||'';if($('review-exam').value){return load();}}
+    $('review-list').innerHTML=rows.map(a=>{const p=papers.find(p=>p.id===a.submission_id);return `<div class="record-row"><div><h3>${esc(p?.extracted_student_name||'Student identity needs checking')}</h3><p>AI proposed ${number(a.score)} / ${number(a.max_score)} · ${esc(a.feedback||'Review the recorded evidence')}</p></div><a class="button primary" href="${link('grading',{exam_id:p?.exam_id,submission_id:a.submission_id,question_id:a.question_id})}">Review evidence & mark</a></div>`;}).join('')||'<div class="empty"><h2>No flagged grades awaiting review</h2><p>All proposed marks remain available in each exam’s grading workspace.</p></div>';$('review-count').textContent=`${rows.length} answers awaiting review`;$('review-error').textContent='';
+  }catch(e){$('review-error').textContent=e.message;}}
+  $('review-exam').addEventListener('change',load);$('review-refresh').addEventListener('click',load);ready.then(load).catch(e=>$('review-error').textContent=e.message);
+})();
