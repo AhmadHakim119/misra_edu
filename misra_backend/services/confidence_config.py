@@ -4,6 +4,9 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class ConfidenceConfig:
     needs_review_threshold: float = 70.0
+    # Independent raw-model floor: a clear scan must not mask uncertain grading.
+    # Operational heuristic, not a calibrated probability of an accurate mark.
+    model_review_threshold: float = 95.0
 
     weight_ocr_legibility: float = 0.30
     weight_llm_confidence: float = 0.50

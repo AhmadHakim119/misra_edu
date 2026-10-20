@@ -69,7 +69,7 @@
   }
   function restoreJobs(items,wanted) {
     if(!exam || accepted || sending || files.length || ambiguous) return;
-    const owned=items.filter(j=>j.exam_id===exam.id && ['ocr_submission','ocr_batch'].includes(j.job_type));
+    const owned=items.filter(j=>j.exam_id===exam.id && !['locate_answers','read_answer_area'].includes(j.operation) && ['ocr_submission','ocr_batch'].includes(j.job_type));
     const job=wanted ? owned.find(j=>j.id===wanted) : owned.find(j=>active.has(j.status));
     if(job) {accepted=job;mode=job.job_type==='ocr_batch' ? 'batch' : 'single';sync();poll();}
     else if(wanted) {recoveryId=wanted;ambiguous=true;error('The saved upload is not in recent activity. Check the paper list and full activity history before uploading it again.');sync();}

@@ -124,8 +124,19 @@ def execute_processing_job(processing_job_id: str) -> None:
             from services.exam_setup_service import extract_setup_documents
             extract_setup_documents(job, db, progress)
         elif job.job_type == "ocr_submission":
-            options = {"reprocess": True} if (job.payload or {}).get("reprocess") else {}
-            process_submission(job.submission_id, db, progress_callback=progress, **options)
+            if (job.payload or {}).get('operation') == 'read_answer_area':
+                from services.answer_area_service import read_area_job
+                read_area_job(job,db,progress)
+            elif (job.payload or {}).get('operation') == 'locate_answers':
+                from services.answer_location_service import run_location_job
+                run_location_job(job, db, progress)
+            else:
+                options = {"reprocess": True} if (job.payload or {}).get("reprocess") else {}
+                if job.submission_id not in (job.payload or {}).get('extracted_submission_ids', []):
+                    process_submission(job.submission_id, db, progress_callback=progress,
+                                       processing_job_id=job.id, **options)
+                from services.answer_location_service import automatic_locations
+                automatic_locations(job, db, progress)
         elif job.job_type == "ocr_batch":
             payload = job.payload or {}
             process_batch(
@@ -133,9 +144,16 @@ def execute_processing_job(processing_job_id: str) -> None:
                 db,
                 progress_callback=progress,
                 submission_ids=payload.get("submission_ids"),
+                processing_job_id=job.id,
             )
+            from services.answer_location_service import automatic_locations
+            automatic_locations(job, db, progress)
         elif job.job_type == "grade_submission":
-            _grade_submission(job, db)
+            if (job.payload or {}).get('operation') == 'regrade_corrected_answer':
+                from services.answer_area_service import regrade_corrected_answer
+                regrade_corrected_answer(job,db,progress)
+            else:
+                _grade_submission(job, db)
         else:
             raise ValueError(f"Unsupported processing job type: {job.job_type}")
 

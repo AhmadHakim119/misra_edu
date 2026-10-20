@@ -9,7 +9,7 @@ from models import Answer, AnswerSource, Exam, QuestionGradingPolicy, Submission
 from services.answer_key_service import resolve_answer_key, public_snapshot
 from services.assessment_readiness_service import definition_consistency
 from services.rubric_version_service import get_effective_rubric
-from services.material_retrieval_service import retrieve_for_question, provider_sources
+from services.material_retrieval_service import retrieve_for_question, provider_sources, configured_strategy
 
 
 def _routing_snapshot(answer, question, rubric, policy, mode, db, context=None):
@@ -55,12 +55,19 @@ def build_grading_package(answer, question, db, mode, routing_context=None):
         AnswerSource.page_index, AnswerSource.segment_index).all()
     if any(s.page_index < 0 or s.page_index >= submission.page_count for s in sources):
         raise ValueError("Student evidence references an unavailable page. Review extraction mapping.")
-    evidence = [{"id": f"answer:{answer.id}:text", "kind": "combined_ocr", "text": answer.raw_ocr_text or ""}]
+    from services.answer_area_service import answer_revisions
+    areas = answer_revisions(db,answer,sources)
+    revised = {area['source_id']:area for area in areas}
+    effective_text = '\n'.join(revised[s.id]['text'] if s.id in revised else s.extracted_text for s in sources) if areas else answer.raw_ocr_text or ''
+    evidence = [{"id": f"answer:{answer.id}:text", "kind": "combined_ocr", "text": effective_text}]
     evidence.extend({"id": f"source:{s.id}", "kind": "ocr_segment", "page_index": s.page_index,
-                     "segment_index": s.segment_index, "text": s.extracted_text} for s in sources)
+                     "segment_index": s.segment_index, "text": revised[s.id]['text'] if s.id in revised else s.extracted_text} for s in sources)
     if mode == "image_text":
         evidence.extend({"id": f"page:{p}", "kind": "student_image", "page_index": p}
                         for p in sorted({s.page_index for s in sources}))
+        evidence.extend({'id':f"area:{area['id']}",'kind':'student_image','page_index':area['page_index'],
+            'image_role':'instructor_selected_region','bounding_box':deepcopy(area['bounding_box']),
+            'source_segment_index':next(s.segment_index for s in sources if s.id==area['source_id'])} for area in areas)
     public_key = public_snapshot(key)
     public_key["reference_id"] = f"key:{key['id'] or 'legacy'}"
     scoring_rubric = deepcopy(rubric)
@@ -68,7 +75,7 @@ def build_grading_package(answer, question, db, mode, routing_context=None):
     scoring_rubric.pop("reference_context", None)
     scoring_rubric.pop("acceptable_answers", None)
     routing = _routing_snapshot(answer, question, rubric, policy, mode, db, routing_context)
-    course_references = retrieve_for_question(db, question, rubric)
+    course_references = retrieve_for_question(db, question, rubric, strategy=configured_strategy())
     from services.extraction_coverage_service import coverage_report
     all_sources = db.query(AnswerSource).join(Answer,Answer.id == AnswerSource.answer_id).filter(Answer.submission_id == submission.id).all()
     coverage = coverage_report(db,submission,all_sources,[item for item in (submission.unmatched_segments or []) if item.get("excluded_reason")])
@@ -90,10 +97,17 @@ def build_grading_package(answer, question, db, mode, routing_context=None):
         "extraction_coverage":coverage,
         "student_document_sha256": None,
     }
-    path = Path(submission.original_file_path)
+    if areas:
+        package['selected_answer_areas'] = deepcopy(areas)
+        package['original_student_evidence'] = {'combined_ocr':answer.raw_ocr_text,
+            'sources':[{'id':s.id,'text':s.extracted_text,'ocr_segment':deepcopy(s.ocr_segment)} for s in sources]}
+    from services.answer_location_service import stored_path
+    path = stored_path(submission.original_file_path) if areas else Path(submission.original_file_path)
     if path.is_file():
         with path.open("rb") as stream:
             package["student_document_sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
+    if any(area['document_sha256']!=package['student_document_sha256'] for area in areas):
+        raise ValueError('The original paper changed after the area correction. Review extraction again.')
     package["snapshot_sha256"] = hashlib.sha256(json.dumps(package, sort_keys=True, ensure_ascii=False,
         separators=(",", ":"), allow_nan=False).encode("utf-8")).hexdigest()
     return package, key, deepcopy(rubric), rubric_id
@@ -126,7 +140,7 @@ def provider_grading_package(package):
         alias = f"{prefixes[kind]}:{counters[kind]}"
         evidence_aliases[alias] = item["id"]
         safe_item = {"id": alias, "kind": kind}
-        for field in ("page_index", "segment_index", "text"):
+        for field in ("page_index", "segment_index", "text", "image_role", "bounding_box", "source_segment_index"):
             if field in item:
                 safe_item[field] = deepcopy(item[field])
         evidence.append(safe_item)
@@ -183,6 +197,10 @@ def provider_grading_package(package):
     }
     safe_sources, source_aliases = provider_sources(package.get("course_references") or {})
     safe_package["course_references"] = safe_sources
+    from services.grading_numeric_checks import numeric_context
+    arithmetic = numeric_context(evidence)
+    if arithmetic['checks']:
+        safe_package['numeric_checks'] = arithmetic
     reference_aliases = {provider_key_id: local_key_id} if provider_key_id else {}
     reference_aliases.update(source_aliases)
     safe_package["citation_contract"] = {

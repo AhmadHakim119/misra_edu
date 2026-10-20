@@ -23,9 +23,9 @@ def _has_noncontiguous_pages(page_indices: list[int]) -> bool:
     )
 
 
-def _serialize_source(source: AnswerSource) -> dict[str, Any]:
+def _serialize_source(source: AnswerSource, db=None, institution_id=None) -> dict[str, Any]:
     ocr_segment = source.ocr_segment or {}
-    return {
+    result = {
         "id": source.id,
         "answer_id": source.answer_id,
         "page_index": source.page_index,
@@ -40,6 +40,20 @@ def _serialize_source(source: AnswerSource) -> dict[str, Any]:
         ),
         "created_at": source.created_at,
     }
+    if db is not None:
+        from services.answer_area_service import latest_revision, source_signature, OPERATION
+        from models import ProcessingJob
+        result['area_revision']=latest_revision(db,source,institution_id)
+        candidates=db.query(ProcessingJob).filter(ProcessingJob.institution_id==institution_id,
+            ProcessingJob.payload['operation'].as_string()==OPERATION,
+            ProcessingJob.payload['source_id'].as_string()==source.id,
+            ProcessingJob.payload['source_signature'].as_string()==source_signature(source),
+            ProcessingJob.status.in_(('queued','processing','retrying','completed'))
+            ).order_by(ProcessingJob.created_at.desc(),ProcessingJob.id.desc()).limit(10).all()
+        pending=next((job for job in candidates if not (job.payload or {}).get('area_confirmation')
+            and job.payload.get('base_revision_id')==(result['area_revision'] or {}).get('id')),None)
+        result['pending_area_job_id']=pending.id if pending else None
+    return result
 
 
 def _serialize_answer(answer: Answer) -> dict[str, Any]:
@@ -173,7 +187,7 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
                 "order_index": question.order_index,
             },
             "answer": _serialize_answer(answer) if answer else None,
-            "sources": [_serialize_source(source) for source in answer_sources],
+            "sources": [_serialize_source(source,db,submission.institution_id) for source in answer_sources],
             "mapping_flags": flags,
         }
         rows.append(row)

@@ -16,6 +16,7 @@ from services.build_info import build_info
 from routers import exam_setup
 from routers import course_materials
 from routers import material_library
+from routers import answer_areas
 
 load_dotenv()
 
@@ -70,6 +71,7 @@ app.include_router(jobs.router, dependencies=protected)
 app.include_router(exam_setup.router, dependencies=protected)
 app.include_router(course_materials.router, dependencies=protected)
 app.include_router(material_library.router, dependencies=protected)
+app.include_router(answer_areas.router, dependencies=protected)
 
 @app.get("/")
 def read_root():

@@ -35,7 +35,7 @@ authoring context. Ordinary student grading never retrieves from unapproved
 assessment/source-choice drafts. Instructor-selected scoring policy is retained.
 
 The original frontend and per-version APIs remain compatible. This replacement
-is in `/app/next/index.html`; it does not restyle other pages. Restart the API to
+is in `/app/index.html`; it does not restyle other pages. Restart the API to
 load the new review/approval endpoints, then hard-refresh the browser. No new
 database migration is needed beyond the previously required foundation/source
 upgrades. Tests use synthetic records and mocked AI, not real marking evaluation.

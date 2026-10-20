@@ -5,6 +5,9 @@ module.exports = defineConfig({
   timeout: 30_000,
   expect: { timeout: 5_000 },
   fullyParallel: true,
+  // The local static server receives many module requests per workspace load.
+  // Bound concurrency so Windows socket pressure does not time out mobile checks.
+  workers: 2,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 2 : 0,
   reporter: [['list'], ['html', { open: 'never' }]],
@@ -15,7 +18,7 @@ module.exports = defineConfig({
   },
   webServer: {
     command: 'python -m http.server 4173 --directory misra-frontend',
-    url: 'http://127.0.0.1:4173/pages/login.html',
+    url: 'http://127.0.0.1:4173/app/login.html',
     reuseExistingServer: true,
     timeout: 15_000,
   },

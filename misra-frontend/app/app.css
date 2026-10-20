@@ -163,3 +163,10 @@ body[data-workspace-page="setup"] #guide-sources-stage>h3,body[data-workspace-pa
 @media(max-width:700px) { .chapter-group { grid-template-columns:minmax(0,1fr); }.chapter-boundary-row { grid-template-columns:1fr 1fr; }.chapter-boundary-row label:first-child { grid-column:1/-1; }.assessment-chapters .workflow-heading { flex-direction:column; } }
 @media(max-width:700px) { .chapter-option { flex-wrap:wrap;gap:0;padding-bottom:12px; }.chapter-option .chapter-choice { flex-basis:100%; }.chapter-review-link { margin-inline-start:26px; } }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important;transition:none!important;animation:none!important; } }
+
+#extraction-image.zoomed { width:100%; }
+.document-inspector .highlight-editor { padding:0; }
+.document-inspector .highlight-editor label,.document-inspector .highlight-editor p { font-size:14px; }
+.document-inspector .highlight-editor>label { display:block;margin-block:16px 8px; }
+.document-inspector .highlight-editor .check-row { display:flex;align-items:start;gap:8px; }
+.document-inspector .highlight-editor .check-row input { flex:none;margin-block-start:4px; }

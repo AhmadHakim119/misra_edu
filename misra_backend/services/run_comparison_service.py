@@ -140,9 +140,23 @@ def apply_material_disagreement_gate(
             else:
                 answer.needs_review = (
                     answer.final_confidence < ACTIVE_CONFIG.needs_review_threshold
+                    or any(run.needs_review for run in (text_run, image_run))
                 )
                 answer.review_status = "pending" if answer.needs_review else "none"
-            answer.review_reasons = None
+            # Retire only the resolved comparison reason. Independent evidence,
+            # verification and aggregation concerns still belong in the queue.
+            comparison_keys = {'code', 'comparison_pair_id', 'text_only_run_id',
+                'image_text_run_id', 'text_only_score', 'image_text_score',
+                'score_difference', 'material_threshold', 'policy_mode',
+                'criterion_differences', 'message'}
+            remaining = {key: value for key, value in existing_reason.items()
+                         if key not in comparison_keys}
+            policies = [(run.response_json or {}).get('review_policy')
+                        for run in (text_run, image_run)]
+            flagged_policies = [item for item in policies if item and item.get('needs_review')]
+            if flagged_policies:
+                remaining['paired_review_policies'] = flagged_policies
+            answer.review_reasons = remaining or None
         return False
 
     if human_review_status:

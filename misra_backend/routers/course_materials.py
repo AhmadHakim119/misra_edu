@@ -279,11 +279,11 @@ def approve_scope(question_id: str, scope_id: str, db: Session = Depends(get_db)
 
 @router.get("/questions/{question_id}/material-retrieval-preview")
 def retrieval_preview(question_id: str, db: Session = Depends(get_db), user: User = Depends(require_instructor)):
-    from services.material_retrieval_service import retrieve_for_question
+    from services.material_retrieval_service import retrieve_for_question, configured_strategy
     question = owned_question(db, user, question_id)
     ready(db)
     try:
-        return retrieve_for_question(db, question, current_rubric(db, question))
+        return retrieve_for_question(db, question, current_rubric(db, question), strategy=configured_strategy())
     except ValueError as error:
         raise HTTPException(409, str(error)) from error
 

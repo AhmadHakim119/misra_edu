@@ -1,7 +1,8 @@
 const { test, expect } = require('@playwright/test');
 
-async function fixture(page,{failSave=false,delayPaper=false,blockGrading=false,scanHighlight=false,savedNote=''}={}) {
-  const writes=[];
+async function fixture(page,{failSave=false,delayPaper=false,blockGrading=false,scanHighlight=false,savedNote='',autoLocation=null}={}) {
+  const writes=[];writes.locationStarts=0;let locationRequested=false,locationCompleted=false;
+  const locationJob={id:'auto-location',submission_id:'s',job_type:'ocr_submission',operation:'locate_answers',page_index:1,status:'queued'};
   const questions=[{id:'q1',question_number:'1',question_text:'State the formula for work.',max_score:2},{id:'q2',question_number:'2',question_text:'A constant force of 82.0 N moves a box 3.00 m in the direction of the force. What is the work done?',max_score:2}];
   const papers=[{id:'s',exam_id:'e',extracted_student_name:'Pilot B',extracted_student_number:'TEST002',page_count:2,status:'graded',readiness:{bulk_grading_allowed:true},grading_summary:{recorded_score:3.5,max_score:4,complete:true,review_count:1,graded_count:2,expected_count:2}},{id:'other',exam_id:'e',extracted_student_name:'Pilot C',page_count:2,status:'extracted',readiness:{bulk_grading_allowed:!blockGrading},grading_summary:{recorded_score:null,max_score:4,complete:false,review_count:0}}];
   const criteria=[{criterion_id:'formula-id',points_earned:1,max_points:1,feedback:'Correct formula.'},{criterion_id:'calculation-id',points_earned:.5,max_points:1,feedback:'Correct units; arithmetic error.'}];
@@ -19,6 +20,9 @@ async function fixture(page,{failSave=false,delayPaper=false,blockGrading=false,
     else if(path==='/submissions') body=new URL(route.request().url()).searchParams.get('exam_id')==='e2' ? [] : papers;
     else if(path.startsWith('/results/')) { const id=path.split('/').at(-1); if(delayPaper && id==='s') await new Promise(resolve=>setTimeout(resolve,450)); const paper=papers.find(p=>p.id===id);body={submission:paper,answers:id==='s' ? [{id:'a1',question_id:'q1',score:2,max_score:2},answer] : [],latest_review_labels:[]}; }
     else if(path.endsWith('/extraction-review')) { const id=path.split('/')[2];body={submission:papers.find(p=>p.id===id),questions:questions.map((question,i)=>({question,sources:[{id:`src${i}`,page_index:i,extracted_text:i ? answer.raw_ocr_text:'W = Fd',ocr_segment:{bounding_box:{x:.1,y:.25,width:.6,height:.15}}}],mapping_flags:[]})),readiness:{bulk_grading_allowed:id==='s' || !blockGrading,blocking_reasons:blockGrading ? ['Original answer coverage needs checking.'] : []},grading_scope:{kind:'all'}}; }
+    else if(path.endsWith('/locate-answers')) {if(!locationRequested){locationRequested=true;writes.locationStarts++;}const index=Number(new URL(route.request().url()).searchParams.get('page_index'));body={job:{...locationJob,page_index:index,status:autoLocation?'queued':'failed'}};}
+    else if(path==='/jobs/auto-location') {locationCompleted=true;body={...locationJob,status:'completed'};}
+    else if(path.endsWith('/source-locations')&&autoLocation&&locationCompleted) body={page_index:1,sources:{src1:autoLocation==='unlocated'?{status:'unverified',method:'vision_grid',reason:'answer_not_located'}:{status:'located',method:'vision_grid',bounding_box:{x:.06,y:.65,width:.8,height:.13}}}};
     else if(path.endsWith('/source-locations')) body={page_index:Number(new URL(route.request().url()).searchParams.get('page_index')),sources:scanHighlight?{}:{src1:{status:'located',method:'native_pdf_text',bounding_box:{x:.06,y:.18,width:.8,height:.23}}}};
     else if(path.includes('/pages/')) return route.fulfill({contentType:'image/svg+xml',body:`<svg xmlns="http://www.w3.org/2000/svg" width="550" height="700"><rect width="550" height="700" fill="white"/><g font-family="serif" font-size="17" fill="black"><text x="45" y="50">Synthetic paper · full original page</text><text x="45" y="${scanHighlight?200:150}">Question 2</text><text x="45" y="${scanHighlight?480:200}">W = Fd</text><text x="45" y="${scanHighlight?520:235}">W = 82 × 3 = 200 J</text><text x="45" y="640">Page end — evidence is not cropped</text></g></svg>`});
     else if(path.endsWith('/resolve-review')) { writes.push(route.request().postDataJSON());if(failSave) return route.fulfill({status:409,json:{detail:'Synthetic newer grading run'}});answer={...answer,teacher_override_score:writes.at(-1).human_score,needs_review:false,review_status:'overridden'};body={answer}; }
@@ -79,70 +83,13 @@ test('enlarging the original paper preserves highlights, page navigation and uns
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
 });
 
-async function drawHighlight(page){
-  await page.getByRole('button',{name:'Adjust highlight',exact:true}).click();
-  await page.locator('#paper-viewport').scrollIntoViewIfNeeded();
-  await page.locator('#paper-viewport').evaluate(el=>{el.scrollTop=el.querySelector('img').height*.7-el.clientHeight/2;});
-  const rect=await page.locator('#evidence-boxes').boundingBox();
-  await page.mouse.move(rect.x+rect.width*.05,rect.y+rect.height*.65);await page.mouse.down();
-  await page.mouse.move(rect.x+rect.width*.85,rect.y+rect.height*.75,{steps:5});await page.mouse.up();
-}
-
-test('scan highlights can be corrected on this device without changing OCR or grades',async({page},info)=>{
+test('answer region editing is linked to Extraction and grading remains read-only',async({page})=>{
   const writes=await fixture(page,{scanHighlight:true});
-  await expect(page.locator('#location-note')).toContainText('1 approximate');
-  await drawHighlight(page);await expect(page.locator('#save-highlight')).toBeEnabled();
-  await page.getByRole('button',{name:'Save highlight',exact:true}).click();
-  await expect(page.locator('#highlight-status')).toHaveText('Highlight saved on this device.');
-  await expect(page.locator('.evidence-box.adjusted')).toHaveCount(1);
-  const box=await page.locator('.evidence-box.adjusted').evaluate(el=>({top:parseFloat(el.style.top),height:parseFloat(el.style.height)}));
-  expect(box.top).toBeCloseTo(65,0);expect(box.height).toBeCloseTo(10,0);expect(writes).toHaveLength(0);
-  await page.reload();await expect(page.locator('.evidence-box.adjusted')).toHaveCount(1);
-  await expect(page.getByLabel('Instructor score',{exact:true})).toHaveValue('1.5');
-  for(const theme of ['light','dark']){
-    await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
-    await page.locator('#paper-viewport').evaluate(el=>{el.scrollTop=el.querySelector('img').height*.7-el.clientHeight/2;});
-    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
-    await page.locator('#paper-viewer').screenshot({path:`.impeccable/review/highlight-adjusted-${theme}-${info.project.name}.png`,animations:'disabled'});
-  }
-  await page.getByRole('button',{name:'Adjust highlight',exact:true}).click();
-  await page.getByRole('button',{name:'Reset highlight',exact:true}).click();
-  await expect(page.locator('.evidence-box.adjusted')).toHaveCount(0);
-  await expect(page.locator('#highlight-status')).toHaveText('Original OCR highlight restored.');
-});
-
-test('highlight drafts guard navigation, cancel safely and retain an unsaved grade',async({page})=>{
-  const writes=await fixture(page,{scanHighlight:true});await page.getByLabel('Instructor score',{exact:true}).fill('1.75');
-  await page.getByRole('button',{name:'Adjust highlight',exact:true}).click();
-  await page.locator('#evidence-boxes').press('ArrowDown');await expect(page.locator('#save-highlight')).toBeEnabled();
-  page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('button',{name:'Previous paper page',exact:true}).click();
-  await expect(page.locator('#page-select')).toHaveValue('1');await expect(page.locator('#save-highlight')).toBeEnabled();
-  await page.getByRole('button',{name:'Cancel',exact:true}).click();
-  await expect(page.locator('.evidence-box.editing')).toHaveCount(0);await expect(page.getByLabel('Instructor score',{exact:true})).toHaveValue('1.75');
+  await expect(page.getByRole('button',{name:'Select answer area',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('link',{name:'Edit answer area in Extraction',exact:true})).toHaveAttribute('href',/extraction.html.*submission_id=s/);
+  await page.getByLabel('Instructor score',{exact:true}).fill('1.75');
+  await expect(page.locator('.evidence-box')).toHaveCount(1);
   expect(writes).toHaveLength(0);
-});
-
-test('a highlight storage failure retains the draft and never claims it was saved',async({page})=>{
-  await fixture(page,{scanHighlight:true});
-  await page.evaluate(()=>{const original=Storage.prototype.setItem;Storage.prototype.setItem=function(key,value){if(key.startsWith('misra-highlight:'))throw new Error('Synthetic storage failure');return original.call(this,key,value);};});
-  await page.getByRole('button',{name:'Adjust highlight',exact:true}).click();await page.locator('#evidence-boxes').press('Shift+ArrowDown');
-  await page.getByRole('button',{name:'Save highlight',exact:true}).click();
-  await expect(page.locator('#highlight-status')).toContainText('Could not save on this device');
-  await expect(page.locator('#save-highlight')).toBeEnabled();await expect(page.locator('.evidence-box.adjusted')).toHaveCount(0);
-  await page.getByRole('button',{name:'Cancel',exact:true}).click();
-});
-
-test('highlight controls translate and remain aligned in Arabic and expanded view',async({page},info)=>{
-  await fixture(page,{scanHighlight:true});await drawHighlight(page);await page.locator('#save-highlight').click();await page.locator('#app-language').click();
-  await page.getByRole('button',{name:'تعديل التحديد',exact:true}).click();
-  await page.locator('#evidence-boxes').press('ArrowDown');await page.locator('#evidence-boxes').press('Shift+ArrowRight');
-  await page.getByRole('button',{name:'حفظ التحديد',exact:true}).click();
-  await expect(page.locator('#highlight-status')).toHaveText('حُفظ التحديد على هذا الجهاز.');
-  await page.locator('#expand-paper').click();await page.locator('#zoom-in').click();
-  const aligned=await page.evaluate(()=>{const img=document.getElementById('original-paper').getBoundingClientRect(),overlay=document.getElementById('evidence-boxes').getBoundingClientRect();return Math.abs(img.width-overlay.width)<1&&Math.abs(img.height-overlay.height)<1;});
-  expect(aligned).toBeTruthy();await expect(page.locator('.evidence-box.adjusted')).toHaveCount(1);
-  await page.locator('#paper-viewport').evaluate(el=>{el.scrollTop=el.querySelector('img').height*.7-el.clientHeight/2;});
-  await page.locator('#paper-viewer').screenshot({path:`.impeccable/review/highlight-adjusted-rtl-${info.project.name}.png`,animations:'disabled'});
 });
 
 test('override requires a reason, pins the displayed run, and keeps the current question after saving',async({page})=>{
@@ -216,4 +163,44 @@ test('hero at the approved desktop dimensions retains ledger and evidence layout
   await page.setViewportSize({width:1586,height:992});await fixture(page);
   await page.evaluate(()=>{document.activeElement?.blur();window.scrollTo(0,0);});
   await page.screenshot({path:'.impeccable/review/hero-repro.png',animations:'disabled'});
+});
+
+
+test('answer areas are located automatically, preserve unsaved grades and survive refresh',async({page},info)=>{
+  const writes=await fixture(page,{scanHighlight:true,autoLocation:'queued'});
+  await page.getByLabel('Instructor score',{exact:true}).fill('2');
+  await expect(page.getByRole('button',{name:'Locate answer',exact:true})).toHaveCount(0);
+  await expect(page.getByRole('link',{name:'Edit answer area in Extraction',exact:true})).toBeVisible();
+  await expect(page.locator('#highlight-status')).toContainText('background');
+  await expect(page.locator('#location-note')).toContainText('AI-located regions',{timeout:10000});
+  await expect(page.locator('.evidence-box')).toHaveAttribute('style',/top:65%/);
+  await expect(page.getByLabel('Instructor score',{exact:true})).toHaveValue('2');
+  expect(writes).toHaveLength(0);expect(writes.locationStarts).toBe(1);
+  await page.screenshot({path:`.impeccable/review/automatic-area-light-${info.project.name}.png`,fullPage:true});
+  await page.locator('#theme').click();await page.screenshot({path:`.impeccable/review/automatic-area-dark-${info.project.name}.png`,fullPage:true});
+  page.on('dialog',dialog=>dialog.accept());await page.reload();
+  await expect(page.locator('.evidence-box')).toHaveAttribute('style',/top:65%/);expect(writes.locationStarts).toBe(1);
+});
+
+test('failed automatic localization links to Extraction without changing grades',async({page})=>{
+  const writes=await fixture(page,{scanHighlight:true});
+  await expect(page.locator('#highlight-status')).toContainText('Select the area manually');
+  await expect(page.getByRole('link',{name:'Edit answer area in Extraction',exact:true})).toBeVisible();
+  await expect(page.getByLabel('Instructor score',{exact:true})).toHaveValue('1.5');expect(writes).toHaveLength(0);
+});
+
+test('an unlocated automatic result never reuses the incorrect rectangle',async({page})=>{
+  await fixture(page,{scanHighlight:true,autoLocation:'unlocated'});
+  await expect(page.locator('#location-note')).toContainText('Highlight unavailable',{timeout:10000});
+  await expect(page.locator('.evidence-box')).toHaveCount(0);
+  await expect(page.getByRole('link',{name:'Edit answer area in Extraction',exact:true})).toBeVisible();
+  await expect(page.getByAltText('Full original submitted paper, page 2')).toBeVisible();
+});
+
+test('pending automatic localization resumes after refresh with an Arabic extraction link',async({page})=>{
+  const writes=await fixture(page,{scanHighlight:true,autoLocation:'queued'});
+  await page.evaluate(()=>localStorage.setItem('misra-language','ar'));await page.reload();
+  await expect(page.getByRole('link',{name:'تعديل منطقة الإجابة في الاستخراج',exact:true})).toBeVisible();
+  await expect(page.locator('#highlight-status')).toContainText('حُددت مناطق الإجابة تلقائيًا',{timeout:10000});
+  expect(writes.locationStarts).toBe(1);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
 });

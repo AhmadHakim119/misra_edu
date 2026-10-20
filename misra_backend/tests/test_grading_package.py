@@ -16,10 +16,12 @@ from services.grading_package_service import (
     provider_grading_package,
     validate_evidence_references,
 )
-from services.grading_service import GradingResult, process_grading, process_grading_with_policy
+from services.grading_service import (GradingResult, process_grading, process_grading_with_policy,
+    _aggregate_criterion_total, _validate_grading_against_rubric)
 from services.grading_errors import GradingResponseValidationError
 from services.run_comparison_service import apply_material_disagreement_gate
 from tests.inference_fixtures import isolate_grading_provider
+from tests.test_grading_decisions import check
 
 
 class GradingPackageTests(unittest.TestCase):
@@ -52,7 +54,8 @@ class GradingPackageTests(unittest.TestCase):
     def result(self, **criterion_changes):
         criterion = dict(criterion_id="logic", max_points=2, points_earned=2, feedback="Valid reasoning",
             evidence_refs=["source:source"], reference_refs=["key:legacy"],
-            policy_applied=["handwritten_syntax_policy"], uncertainties=[])
+            policy_applied=["handwritten_syntax_policy"], uncertainties=[],
+            decision_check=check(criterion_kind='other', method_status='not_assessed'))
         criterion.update(criterion_changes)
         return dict(score=2, max_score=2, feedback="Correct", reasoning="Logic meets criteria",
                     criteria_scores=[criterion], llm_confidence=95)
@@ -66,6 +69,49 @@ class GradingPackageTests(unittest.TestCase):
         self.assertEqual(package["policy"]["handwritten_syntax_policy"], "accept_unambiguous")
         self.assertNotIn("missing-synthetic", json.dumps(package))
         self.assertEqual(len(package["snapshot_sha256"]), 64)
+
+    def test_criterion_total_preserves_original_and_forces_review(self):
+        response = self.result(evidence_refs=['student:segment:1'], reference_refs=['instructor:answer_key'])
+        response['score'] = 0
+        response['grade_letter'] = 'F'
+        with patch('services.grading_service.generate', return_value=json.dumps(response)):
+            process_grading('a', self.db)
+        run = self.db.query(GradingRun).one()
+        self.assertEqual(run.score, 2)
+        self.assertIsNone(run.grade_letter)
+        self.assertTrue(run.needs_review)
+        snapshot = run.response_json
+        self.assertEqual(snapshot['original_model_response']['attempts'][0]['score'], 0)
+        self.assertEqual(snapshot['score_aggregation']['model_reported_total'], 0)
+        self.assertFalse(snapshot['score_aggregation']['criterion_marks_changed'])
+        self.assertIn('model_total_discrepancy', snapshot['review_policy']['reasons'])
+        self.db.expire_all()
+        self.assertEqual(self.db.query(GradingRun).one().response_json, snapshot)
+
+    def test_aggregation_never_relaxes_criterion_or_original_benchmark_validation(self):
+        response = self.result()
+        response['score'] = 0
+        result = GradingResult(**response)
+        with self.assertRaisesRegex(ValueError, 'criterion total'):
+            _validate_grading_against_rubric(result, self.rubric)
+        for changes in ({'points_earned': 3}, {'criterion_id': 'invented'}, {'max_points': 3}):
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                _aggregate_criterion_total(GradingResult(**self.result(**changes)), self.rubric)
+        binary = deepcopy(self.rubric)
+        binary['criteria'][0]['scoring_type'] = 'binary'
+        with self.assertRaisesRegex(ValueError, 'partial credit'):
+            _aggregate_criterion_total(GradingResult(**self.result(points_earned=1)), binary)
+
+    def test_citation_correction_keeps_initial_aggregation_discrepancy(self):
+        initial = self.result(evidence_refs=['invented'], reference_refs=['instructor:answer_key'])
+        initial['score'] = 0
+        corrected = self.result(evidence_refs=['student:segment:1'], reference_refs=['instructor:answer_key'])
+        with patch('services.grading_service.generate', side_effect=[json.dumps(initial), json.dumps(corrected)]):
+            process_grading('a', self.db)
+        saved = self.db.query(GradingRun).one().response_json
+        self.assertEqual(len(saved['original_model_response']['attempts']), 2)
+        self.assertTrue(saved['score_aggregation']['discrepancy'])
+        self.assertIn('model_total_discrepancy', saved['review_policy']['reasons'])
 
     def test_draft_does_not_change_effective_key(self):
         self.db.add(AnswerKeyVersion(question_id="q", version_number=1, status="draft",
@@ -210,7 +256,7 @@ class GradingPackageTests(unittest.TestCase):
             process_grading("a", self.db)
         run = self.db.query(GradingRun).one()
         original = deepcopy(run.response_json["grading_package"])
-        self.assertEqual(run.prompt_version, "v8-explicit-citation-contract")
+        self.assertEqual(run.prompt_version, "v14-approved-data-copy-error")
         self.assertIn("GRADING PACKAGE JSON", generate.call_args.kwargs["contents"])
         self.q.question_text = "Changed question"
         self.db.query(RubricVersion).first().rubric_json = {**self.rubric, "reference_context": "Changed reference"}
@@ -292,7 +338,7 @@ class GradingPackageTests(unittest.TestCase):
         self.assertEqual(self.db.query(GradingRun).count(), 0)
 
     def test_schema_and_score_failures_do_not_trigger_citation_repair(self):
-        for response in ['not JSON', json.dumps({'score': 1}), json.dumps({**self.result(), 'score': 1})]:
+        for response in ['not JSON', json.dumps({'score': 1}), json.dumps(self.result(points_earned=3))]:
             with self.subTest(response=response), patch('services.grading_service.generate', return_value=response) as generate:
                 with self.assertRaises(GradingResponseValidationError):
                     process_grading('a', self.db)
@@ -385,7 +431,10 @@ class GradingPackageTests(unittest.TestCase):
                     "a", self.db, mode="image_text", update_answer=False,
                     routing_context=routing,
                 )
-        self.assertFalse(self.answer.needs_review)  # Image IDs/selected mode may differ.
+        # Matching modes do not flag disagreement, but an absent verifier now
+        # independently requires review even when their scores agree.
+        self.assertTrue(self.answer.needs_review)
+        self.assertNotEqual((self.answer.review_reasons or {}).get('code'), 'material_mode_disagreement')
         image_run = self.db.query(GradingRun).filter(GradingRun.mode == "image_text").one()
         original = deepcopy(image_run.response_json)
         changes = {
@@ -436,6 +485,41 @@ class GradingPackageTests(unittest.TestCase):
             "visual_evidence_not_seen",
         )
 
+    def test_agreeing_pair_cannot_clear_independent_review_gate(self):
+        routing = {'comparison_pair_id': 'fresh-pair'}
+        response = self.result()
+        response['llm_confidence'] = 80
+        with patch('services.grading_service.generate', return_value=json.dumps(response)):
+            process_grading('a', self.db, routing_context=routing)
+            with patch('services.grading_service._load_answer_source_images', return_value=([], [0])):
+                process_grading('a', self.db, mode='image_text', update_answer=False, routing_context=routing)
+        self.answer.review_reasons = {'code': 'material_mode_disagreement',
+                                     'criterion_evidence_issues': [{'uncertainties': ['unclear']} ]}
+        self.answer.needs_review = True
+        self.db.commit()
+        self.assertFalse(apply_material_disagreement_gate(self.answer, self.db, comparison_pair_id='fresh-pair'))
+        self.assertTrue(self.answer.needs_review)
+        self.assertEqual(self.answer.review_status, 'pending')
+        self.assertIn('criterion_evidence_issues', self.answer.review_reasons)
+        self.assertIn('paired_review_policies', self.answer.review_reasons)
+
+    def test_audit_review_gate_reaches_queue_without_replacing_displayed_grade(self):
+        with patch('services.grading_service.generate', return_value=json.dumps(self.result())):
+            process_grading('a', self.db)
+        self.answer.needs_review = False
+        self.answer.review_status = 'none'
+        self.db.commit()
+        displayed = deepcopy(self.answer.grading_raw_response)
+        response = self.result(points_earned=1)
+        response.update(score=1, llm_confidence=70)
+        with patch('services.grading_service.generate', return_value=json.dumps(response)), \
+             patch('services.grading_service._load_answer_source_images', return_value=([], [0])):
+            process_grading('a', self.db, mode='image_text', update_answer=False)
+        self.assertEqual(float(self.answer.score), 2)
+        self.assertEqual(self.answer.grading_raw_response, displayed)
+        self.assertTrue(self.answer.needs_review)
+        self.assertIn('low_model_confidence', self.answer.review_reasons['audit_review_policy']['reasons'])
+
     def test_structural_key_conflict_fails_before_provider_call(self):
         self.db.add(AnswerKeyVersion(id='bad-key', question_id='q', version_number=2,
             status='approved', mode='no_fixed_answer', reference_text='Fixed answer',
@@ -480,6 +564,66 @@ class GradingPackageTests(unittest.TestCase):
         self.assertEqual(routing['route_reasons'][0]['code'], 'explicit_question_policy')
         self.assertEqual(package_routing['route_reasons'], routing['route_reasons'])
         self.assertEqual(package_routing['selected_mode'], 'text_only')
+
+    def test_confident_conceptual_method_flag_is_persisted_without_changing_proposal(self):
+        response = self.result(points_earned=0, decision_check=check(method_status='invalid', error_type='conceptual'),
+                               evidence_refs=['student:segment:1'], reference_refs=['instructor:answer_key'])
+        response.update(score=0, llm_confidence=100)
+        verification = {'criteria': [{'criterion_id':'logic', 'verdict':'supported',
+            'explanation':'Incorrect direction under the supplied criterion.',
+            'decision_check':check(method_status='invalid', error_type='conceptual')}], 'summary':'Checked.'}
+        from services.free_model_gateway import FreeCompletion
+        with patch.dict(os.environ, {'VERIFICATION_ENABLED':'true'}), \
+             patch('services.grading_service.generate', return_value=json.dumps(response)), \
+             patch('services.verification_agent.complete', return_value=FreeCompletion(json.dumps(verification), {})), \
+             patch('services.source_consultation_service.prepare_consultation_context', return_value=None):
+            process_grading('a', self.db)
+        run = self.db.query(GradingRun).one()
+        self.assertEqual(float(run.score), 0)
+        self.assertTrue(run.needs_review)
+        self.assertTrue(self.answer.needs_review)
+        self.assertEqual(self.answer.review_status, 'pending')
+        self.assertIn('conceptual_partial_credit_check', run.response_json['review_policy']['reasons'])
+        self.assertEqual(run.response_json['verification']['original_model_response']['criteria'][0]['verdict'], 'supported')
+        self.assertEqual(run.response_json['original_model_response']['attempts'][0]['score'], 0)
+        self.db.expire_all()
+        saved = self.db.query(GradingRun).one().response_json
+        self.assertEqual(saved['decision_review']['version'], '2026-10-19.v8')
+        self.assertTrue(saved['validation']['evidence_issues'][0]['decision_checks'])
+
+    def test_new_decision_guard_preserves_instructor_override_and_earlier_run(self):
+        with patch('services.grading_service.generate', return_value=json.dumps(self.result())):
+            process_grading('a', self.db)
+        original = self.db.query(GradingRun).one()
+        snapshot = deepcopy(original.response_json)
+        self.answer.teacher_override_score = 1.5
+        self.answer.review_status = 'overridden'
+        self.answer.needs_review = False
+        self.db.commit()
+        changed = self.result(points_earned=0, decision_check=check(method_status='uncertain', policy_status='ambiguous'))
+        changed.update(score=0, llm_confidence=100)
+        with patch('services.grading_service.generate', return_value=json.dumps(changed)):
+            process_grading('a', self.db)
+        self.db.expire_all()
+        self.assertEqual(self.db.get(GradingRun, original.id).response_json, snapshot)
+        self.assertEqual(float(self.answer.teacher_override_score), 1.5)
+        self.assertEqual(self.answer.review_status, 'overridden')
+        self.assertFalse(self.answer.needs_review)
+        latest = self.db.query(GradingRun).filter(GradingRun.id != original.id).one()
+        self.assertTrue(latest.needs_review)
+        self.assertIn('marking_policy_uncertain', latest.response_json['review_policy']['reasons'])
+
+    def test_citation_correction_cannot_clear_initial_method_uncertainty(self):
+        initial = self.result(evidence_refs=['invented'], reference_refs=['instructor:answer_key'],
+                              decision_check=check(work_status='unclear', error_type='unclear'))
+        corrected = self.result(evidence_refs=['student:segment:1'], reference_refs=['instructor:answer_key'],
+                                decision_check=check())
+        with patch('services.grading_service.generate', side_effect=[json.dumps(initial), json.dumps(corrected)]):
+            process_grading('a', self.db)
+        saved = self.db.query(GradingRun).one().response_json
+        self.assertEqual(saved['criteria_scores'][0]['decision_check']['work_status'], 'complete')
+        self.assertIn('unclear_student_work', saved['review_policy']['reasons'])
+        self.assertEqual(len(saved['original_model_response']['attempts']), 2)
 
 
 if __name__ == "__main__":

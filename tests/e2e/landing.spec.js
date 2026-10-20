@@ -1,5 +1,11 @@
 const {test,expect}=require('@playwright/test');
 
+test('static root bookmarks open the current public landing page',async({page})=>{
+  await page.goto('/index.html?source=bookmark#workflow');
+  await expect(page).toHaveURL(/\/app\/landing\.html\?source=bookmark#workflow$/);
+  await expect(page.locator('h1')).toContainText('Handwritten exams.');
+});
+
 test('landing presents the real brand, new app destinations and an explicitly synthetic example',async({page})=>{
   const requests=[];await page.route('**/api/**',route=>{requests.push(route.request().url());return route.abort();});
   await page.goto('/app/landing.html');

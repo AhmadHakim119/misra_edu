@@ -10,6 +10,7 @@ def isolate_grading_provider(test_case):
         "GRADING_PROVIDER": "gemini",
         "GRADING_MODEL": "gemini-2.5-flash",
         "VERIFICATION_ENABLED": "false",
+        "MISRA_RETRIEVAL_STRATEGY": "bm25_v1",
     })
     environment.start()
     test_case.addCleanup(environment.stop)

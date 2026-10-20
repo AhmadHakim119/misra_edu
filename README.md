@@ -19,7 +19,9 @@ public internet deployment or use as an official institutional gradebook.
 - Evidence-cited criterion results and immutable grading-package snapshots
 - Persistent grading-run history and structured instructor review reasons
 - Optional versioned instructor preference profiles and non-binding suggestions
-- Confidence-based review routing and agreement evaluation
+- Confidence- and evidence-based review routing and agreement evaluation
+- Explicit method/result checks, equivalent-method review and confidence-independent
+  flags for unclear work or conflicting partial-credit interpretations
 - Blackboard-compatible CSV, generic CSV, and detailed Excel exports
 - Instructor authentication, password recovery, and administration
 - Institution-scoped audit records
@@ -27,12 +29,15 @@ public internet deployment or use as an official institutional gradebook.
 - Responsive instructor workspace with keyboard support and light/dark themes
 - Assessment duplication with rubric and grading-policy reuse
 - Approved course-material versions, selected-page review, and question-scoped
-  BM25 retrieval with saved passage provenance
+  BM25 retrieval with saved passage provenance; optional local cosine embeddings
+  and cross-encoder reranking use the same approved source boundaries
 - Versioned assessment-wide source defaults with approved question exceptions
 - Optional explicit free-only OpenRouter grading (no paid/model fallback)
 - Source-grounded question, solution and criterion proposals with quoted approved
   passages, saved setup jobs and separate instructor approval of all foundations
-- Normalized score error, marking bias, citation coverage and observed model timing
+- Offline exact agreement, normalized score errors, marking bias, review workload,
+  extraction fidelity and subject/question transfer reports, with failures and
+  reused examples kept explicit
 
 ## Active application
 
@@ -41,7 +46,8 @@ Rubric Studio generation workflow and its validation/approval boundaries.
 See [Assessment source defaults](docs/ASSESSMENT_SOURCE_DEFAULTS.md) for choosing
 references once per assessment and the additive database upgrade.
 The [instructor app](docs/NATIVE_WORKSPACE.md) is available at
-`/app/`. The retained old interface is isolated at `/legacy/pages/`.
+`/app/`. Retired `/legacy/pages/` and `/app/pages/` bookmarks redirect to the
+corresponding current pages; the old HTML interface is no longer distributed.
 Its [source-led marking guide](docs/ASSESSMENT_GUIDE.md) reviews all questions
 together and publishes saved rubric, answer-key and source-choice drafts with one
 assessment-wide approval. Source-page checking and historical run snapshots remain
@@ -52,9 +58,8 @@ citations for required-source grading, and descriptive class feedback.
 The preview now includes focused paper review, student uploads, assessment source
 defaults, versioned rubric/answer-key editors, course-library page review, identity
 correction, export checks/downloads, assessment creation and account pages.
-Exam-document import, source-question generation, advanced extraction, expanded
-history and evaluation/admin tools still have labeled links to the original
-workspace while parity is verified.
+Exam-document import, source-question generation, extraction, history and
+evaluation/admin tools use the current instructor workspace.
 
 - `misra_backend/` - FastAPI, SQLAlchemy, MariaDB/MySQL, OCR, Gemini grading,
   authentication, exports, background jobs, and evaluation
@@ -62,8 +67,10 @@ workspace while parity is verified.
 - `database/schema.sql` - complete database schema for fresh installations
 - `docs/` - public technical notes; private student-work reports are excluded
 
-`misra_ui/` is legacy reference material and is not part of the active
-application.
+Local `misra_ui/` and retired `misra-frontend/pages/` copies are ignored reference
+material. Shared controllers in `misra-frontend/js/` remain dependencies of the
+current app. Original papers, evaluation artifacts, model caches, exports, local
+agent configuration and secrets must remain outside Git; see `.gitignore`.
 
 ## Architecture overview
 

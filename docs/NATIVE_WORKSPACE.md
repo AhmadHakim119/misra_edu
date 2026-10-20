@@ -4,9 +4,12 @@ Open `/app/index.html` on the MISRA API. It opens the native dashboard.
 An existing `index.html?exam_id=…` link still opens the shared marking workspace.
 The main instructor app lives in `misra-frontend/app/` and is served at `/app/`.
 The server root opens the public landing page, with links into this app.
-The old interface is isolated at `/legacy/pages/`;
-old `/app/next/` bookmarks redirect to the main app while preserving the query.
-Shared controllers and original assets are retained. No data migration is needed.
+The retired HTML interface is no longer distributed. Known `/legacy/pages/` and
+`/app/pages/` bookmarks redirect to their current equivalents; old paper `id`
+parameters become `submission_id`. Old `/app/next/` bookmarks also redirect to the
+main app. Shared controllers and original assets are retained. No data migration
+is needed. Browser regression tests target the current app; retired page-specific
+tests are kept only in the ignored local archive.
 
 ## Public introduction and review conveniences — 16 October 2026
 
@@ -15,9 +18,33 @@ Shared controllers and original assets are retained. No data migration is needed
   links open the canonical interface. English/Arabic and light/dark preferences persist
   on the device; content and native links remain usable without JavaScript.
 - Navbar account controls align at the opposite end from navigation in both directions.
-- Paper review offers **Adjust highlight** for misplaced extraction boxes. Draw or
-  move/resize the box and save it on this device. This changes the displayed overlay;
-  it does not improve automatic localization, edit OCR, alter grades or rerun extraction.
+- Answer-area localization runs automatically after extraction for new individual and
+  batch uploads. Complete native PDF text matches need no extra model call; scans use
+  the configured extraction provider and a numbered coordinate grid. Page results are
+  checkpointed in the current extraction job, separately from OCR evidence and grades.
+- Existing papers automatically request any missing page location when opened. Matching
+  pending, completed, unlocated and failed attempts are reused, so refreshing cannot
+  repeatedly launch new inference. Other active paper work finishes first. GET requests
+  remain read-only; the browser uses an authenticated CSRF-protected POST to ensure work.
+- **Extraction → Select answer area** lets the instructor draw or adjust a rectangle,
+  read the selected area, review/edit its transcription, and confirm that it contains
+  the complete answer for that mapped part. Saving creates an immutable correction
+  revision in the existing processing-job store; original OCR and previous runs stay
+  intact. Pending previews can be reopened after refresh without reading again.
+- **View & grade** displays answer regions and links back to Extraction for editing.
+  After a saved correction, **Regrade corrected answer** explicitly requests one new
+  answer proposal. It uses reviewed text, the selected crop, full original mapped
+  pages, approved rubric/key/policy and bounded course evidence. Assessment and
+  verification receive the same images. Existing instructor grades are retained;
+  the new proposal needs a fresh instructor decision before export. Regrading is
+  answer-specific, request-idempotent and checkpointed to preserve earlier runs.
+- AI completion cannot overwrite an active manual draft or a confirmed server revision.
+  Unsaved changes block navigation/grading; failed saves keep the edited transcription.
+  A highlight is an evidence location, not proof of a correct extraction or grade.
+- Localization failure leaves extraction saved and offers manual selection. Per-page
+  fingerprints reject stale results. Retry checkpoints are committed with extracted
+  sources, preventing another OCR pass after a worker interruption during localization.
+  No database or enum upgrade is needed. Vision areas remain estimates for review.
 - **Discard changes** restores the loaded instructor decision without an API write.
   Saved instructor notes are shown when the decision is reopened.
 
@@ -55,7 +82,7 @@ Course books are uploaded once. Assessments select chapters with checkboxes and
 may add their own PDF/PPTX files. See [Course library and marking survey](COURSE_LIBRARY.md)
 for the workflow, tested additive upgrade and scan-reading boundaries.
 
-All instructor navigation in `/next` stays in `/next`. Essential existing controllers
+All instructor navigation stays in `/app/`. Essential existing controllers
 and backend APIs are reused. The focused setup/upload/grading/feedback/results entry
 points mount one shared `workspace-template.html`; `workspace-navigation.js` handles
 page transitions with the existing unsaved-state guards. `app-shell.js` shares
@@ -159,3 +186,57 @@ and test logs stay in the ignored `.impeccable/review/` directory.
 - Synthetic after-images inspected for desktop/mobile, light/dark and Arabic RTL.
 - No live inference, production database changes, migrations, service restarts,
   commits or pushes. Some specialist/server text remains English.
+
+### Answer-location verification — 16 October 2026
+
+Full backend discovery: **350 passed**. Full browser suite: **515 passed, 3 skips**.
+Final page-specific localization/native-location tests: **23 passed**. JavaScript
+syntax and diff whitespace checks passed. Synthetic captures cover desktop/mobile,
+light/dark and Arabic controls. The local API exposes the action and the idle worker
+was restarted with empty queues. No migration or live localization inference was run.
+These mocked checks do not establish the new method's localization accuracy; the
+instructor must inspect its proposed region on the original page.
+
+### Automatic-area verification — 16 October 2026
+
+Full backend: **358 passed**. Focused paper review: **39 passed, 1 viewport skip**.
+Full browser: **516 passed, 3 skips, 1 failure** at workspace module loading before
+an editor fixture initialized. That exact editor case then passed **6 isolated
+repeats** (three desktop, three mobile); the full run is not claimed clean.
+Automatic extraction checkpoints and individual/batch localization use synthetic
+fixtures and mocked providers. Manual save/cancel/storage failure, Arabic, both
+viewports/themes and concurrent AI/manual work are covered. The worker was safely
+restarted idle, and the local automatic API parameter was confirmed. No database
+upgrade or live localization inference was initiated by tools.
+
+### Confirmed extraction corrections — 17 October 2026
+
+Answer-region editing now belongs to Extraction. Reading a region produces a
+durable preview; instructor confirmation saves a separate revision. The original
+OCR, original full pages, earlier AI runs and prior instructor decisions remain
+available. A saved correction does not automatically request regrading.
+
+Explicit corrected-answer regrading creates one new proposal with the confirmed
+text, selected crop, full mapped original pages and existing approved grading
+inputs. Required course evidence and citation validation remain enforced. Existing
+instructor grades are retained while the new proposal awaits review. Saving a
+current instructor decision is blocked during its pending corrected-answer job;
+historical evaluation labels remain independent. Unsaved instructor edits must be
+saved or discarded before requesting regrading.
+
+Final backend discovery: **381 passed**, including an actual FastAPI HTTP sequence
+through preview, confirmation, extraction review, regrading, results and preserved
+run/decision history. Focused browser workflow/editor checks: **143 passed, 1
+viewport skip**. Eight synthetic network-failure tests verify one bounded workspace
+download retry, visible persistent failure and no duplicate module execution.
+The final full browser run passed **539 tests, with 3 viewport-specific skips**
+using four workers, after fixing the intermittent workspace-download failures found
+in the earlier runs. SQL compilation checks verify current reads for MySQL write
+paths; the regression database remains isolated SQLite.
+JavaScript syntax and diff whitespace checks passed. Private synthetic captures
+cover Extraction in both themes, both viewports, Arabic RTL and zoom alignment.
+
+No schema migration or provider changes were needed. The worker was restarted only
+after confirming it was idle with empty queues. The API exposes the new routes.
+Tools made no live inference calls; these checks do not measure OCR, localization
+or grading accuracy.

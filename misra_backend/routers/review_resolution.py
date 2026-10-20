@@ -40,6 +40,20 @@ def resolve_review(
     )
     if not answer:
         raise HTTPException(status_code=404, detail="Answer not found")
+    if request.apply_as_current:
+        from models import ProcessingJob
+        # Serialize with corrected-regrade acceptance. A pending proposal must not
+        # race a new official decision against the older displayed AI run.
+        db.query(Submission).filter(Submission.id==answer.submission_id,
+            Submission.institution_id==user.institution_id).with_for_update().one()
+        db.refresh(answer,with_for_update=True)
+        running=db.query(ProcessingJob).filter(ProcessingJob.institution_id==user.institution_id,
+            ProcessingJob.submission_id==answer.submission_id,
+            ProcessingJob.status.in_(('queued','processing','retrying')),
+            ProcessingJob.payload['operation'].as_string()=='regrade_corrected_answer',
+            ProcessingJob.payload['answer_id'].as_string()==answer.id).with_for_update().first()
+        if running:
+            raise HTTPException(409,'A corrected-answer proposal is processing. Review the new proposal before saving an instructor decision.')
     from models import Question
     from services.grading_scope_service import is_external_question
     question = db.query(Question).filter(Question.id == answer.question_id).first()

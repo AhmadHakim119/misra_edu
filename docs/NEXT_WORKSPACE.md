@@ -4,8 +4,9 @@ The current route map, three-role AI pipeline, mixed-provider configuration and
 validation boundaries are documented in [Native instructor workflow](NATIVE_WORKSPACE.md).
 The focused native pages supersede the porting backlog below.
 
-Open `/app/index.html` on the running MISRA API. The original workspace at
-`/legacy/pages/dashboard.html` is unchanged and remains the complete fallback.
+Open `/app/index.html` on the running MISRA API. The retired HTML interface is no
+longer distributed; its known bookmarks redirect to current pages. Shared
+controllers remain in use by the current app.
 
 The new workspace is an **assessment-first marking ledger**, developed in phases.
 It is a functional preview, not yet a replacement with full feature parity or a
@@ -64,9 +65,9 @@ already has recorded marks. Use the existing job retry/history tools for those c
 
 The requested setup, upload, extraction correction, grading history, review queue,
 identity, feedback, results, evaluation and administration workflows now have
-native `/next` destinations. Links inside this workspace no longer send instructors
-to `/pages`. The original files remain available for compatibility; this change does
-not certify every historical feature or change the public landing route.
+native `/app/` destinations. Links inside this workspace no longer send instructors
+to `/pages`. Local retired copies are ignored reference material and are not a
+supported fallback. This does not certify every historical feature.
 
 Assessment-wide references require the additive source-default upgrade described
 in [Assessment source defaults](ASSESSMENT_SOURCE_DEFAULTS.md). Back up first and
