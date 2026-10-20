@@ -42,6 +42,13 @@ packet with verified crop hashes. It has no provider connection or save action.
 against the evidence digest and writes a new revision without updating live grades.
 The CLI is an offline operator tool, not an authenticated application endpoint.
 
+Independent readers need neutral literal-transcription instructions. Keep
+case-specific expected words, symbol alternatives, checked text and prior reader
+outputs out of their prompts. Preserve any hinted diagnostic as development
+evidence and repeat it separately before drawing conclusions about that reading.
+Keep margin notes located and separate until their question attribution is checked;
+include their transcription differences and uncertainties in the review packet.
+
 `services/ocr_text_diff.py` supplies bounded word/number/symbol differences for
 offline review of prose, code and formula transcriptions. Exact character spans
 refer to the untouched input strings, so spelling repairs, changed terminology,
