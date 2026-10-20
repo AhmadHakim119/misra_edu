@@ -17,7 +17,7 @@ module.exports = defineConfig({
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: 'python -m http.server 4173 --directory misra-frontend',
+    command: 'python scripts/serve-test-frontend.py',
     url: 'http://127.0.0.1:4173/app/login.html',
     reuseExistingServer: true,
     timeout: 15_000,
