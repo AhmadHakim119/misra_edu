@@ -31,6 +31,7 @@ def derive_proposal(
 ) -> tuple[dict, dict]:
     proposal: dict = {}
     provenance: dict = {}
+    guidance: dict = {}
 
     def proposed(field: str, value, scenario_id: str, selected_option: str):
         proposal[field] = value
@@ -38,7 +39,10 @@ def derive_proposal(
             "source": "scenario",
             "scenario_id": scenario_id,
             "selected_option": selected_option,
-            "derivation_version": DERIVATION_VERSION,
+            "derivation_version": "survey-v2" if scenario_id in {
+                'correct_method_arithmetic_error','missing_units','rounding_difference',
+                'correct_result_without_working','illegible_handwriting',
+                'incomplete_solution','contradictory_answers'} else DERIVATION_VERSION,
         }
 
     for answer in scenario_answers:
@@ -75,6 +79,28 @@ def derive_proposal(
                 "assess": "assess",
             }[option]
             proposed("language_quality_policy", language, scenario_id, option)
+        elif scenario_id == 'correct_method_arithmetic_error':
+            proposed('arithmetic_error_policy',option,scenario_id,option)
+        elif scenario_id == 'missing_units':
+            proposed('units_policy',option,scenario_id,option)
+        elif scenario_id == 'rounding_difference':
+            proposed('rounding_tolerance_percent',{'exact':0,'within_point_one_percent':0.1,'within_one_percent':1}[option],scenario_id,option)
+        elif scenario_id == 'correct_result_without_working':
+            proposed('evidence_requirement',option,scenario_id,option)
+        elif scenario_id == 'illegible_handwriting':
+            proposed('illegible_response_policy',option,scenario_id,option)
+        elif scenario_id == 'incomplete_solution':
+            guidance[scenario_id]={'completed_criteria':'For incomplete solutions, award credit only for completed rubric criteria; do not infer missing work.',
+                'published_levels':'For incomplete solutions, follow the published credit levels for each criterion.',
+                'manual_review':'Flag incomplete solutions for instructor review and explain which required steps are missing.'}[option]
+        elif scenario_id == 'contradictory_answers':
+            guidance[scenario_id]={'manual_review':'Flag contradictory answers for instructor review; do not choose the highest-scoring interpretation.',
+                'identified_final_answer':'Use the clearly identified final answer while retaining and flagging contradictory working as evidence.',
+                'criterion_specific':'Resolve contradictory answers only according to the published criterion and flag unresolved ambiguity.'}[option]
+    if guidance:
+        ordered=[key for key in ('incomplete_solution','contradictory_answers') if key in guidance]
+        proposal['custom_instructions']='\n'.join(guidance[key] for key in ordered)
+        provenance['custom_instructions']={'source':'scenario','scenario_ids':ordered,'derivation_version':'survey-v2'}
     # Directly stated preferences take precedence over scenario-derived
     # suggestions. The translation is still only a proposal; no assessment is
     # changed by creating or approving this record.

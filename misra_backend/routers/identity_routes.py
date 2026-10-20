@@ -5,10 +5,11 @@ from database import get_db
 from models import Exam, Submission, Student, User
 from schemas.identity import IdentityResolutionRequest
 from services.auth_dependencies import require_instructor
+from schemas.public_results import SubmissionRecord
 
 router = APIRouter(prefix="/api", tags=["identity"])
 
-@router.get("/exams/{exam_id}/unresolved-identities")
+@router.get("/exams/{exam_id}/unresolved-identities", response_model=list[SubmissionRecord])
 def list_unresolved_identities(
     exam_id: str,
     db: Session = Depends(get_db),
@@ -31,7 +32,7 @@ def list_unresolved_identities(
     return submissions
 
 
-@router.post("/submissions/{submission_id}/resolve-identity")
+@router.post("/submissions/{submission_id}/resolve-identity", response_model=SubmissionRecord)
 def resolve_identity(
     submission_id: str,
     request: IdentityResolutionRequest,

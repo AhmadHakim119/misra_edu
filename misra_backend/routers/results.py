@@ -29,6 +29,8 @@ from schemas.page_recovery_input import (
 )
 from schemas.source_mapping_input import SourceMappingRequest, UnmatchedSegmentResolutionRequest
 from schemas.source_mapping_input import BulkSegmentResolutionRequest
+from schemas.source_mapping_input import SourceTextCorrectionRequest
+from schemas.public_results import ResultRecord, AnswerRecord
 from schemas.submission_metadata_input import SubmissionMetadataUpdate
 from services.extraction_review_service import (
     bulk_resolve_segments,
@@ -116,7 +118,7 @@ def reprocess_extraction(
         db.commit()
     return {"job": job_to_dict(job), "created": created}
 
-@router.get("/results/{submission_id}")
+@router.get("/results/{submission_id}", response_model=ResultRecord)
 async def get_results(
     submission_id: str,
     db: Session = Depends(get_db),
@@ -178,6 +180,8 @@ def list_submissions(
             .all()
         )
         for job in jobs:
+            if (job.payload or {}).get('operation') in {'locate_answers','read_answer_area'}:
+                continue
             target = latest_ocr_jobs if job.job_type == "ocr_submission" else latest_grading_jobs
             target.setdefault(job.submission_id, job)
 
@@ -366,7 +370,7 @@ def update_submission_metadata(
 
     exam = db.query(Exam).filter(Exam.id == submission.exam_id).first()
     course = db.query(Course).filter(Course.id == exam.course_id).first() if exam else None
-    if course:
+    if course and 'instructor_name' in payload.model_fields_set:
         course.instructor_name = instructor_name or None
 
     try:
@@ -475,7 +479,72 @@ def get_source_locations(
                .order_by(AnswerSource.segment_index).all())
     response.headers["Cache-Control"] = "no-store, max-age=0"
     from services.source_location_service import page_source_locations
-    return page_source_locations(_stored_submission_path(submission.original_file_path), page_index, sources)
+    result = page_source_locations(_stored_submission_path(submission.original_file_path), page_index, sources)
+    from services.answer_location_service import saved_locations
+    # A unique complete native-text match remains stronger than a vision estimate.
+    for source_id, location in saved_locations(db, submission, page_index, sources).items():
+        if result['sources'].get(source_id, {}).get('status') != 'located':
+            result['sources'][source_id] = location
+    from services.answer_area_service import latest_revision
+    for source in sources:
+        revision=latest_revision(db,source,user.institution_id)
+        if revision:
+            result['sources'][source.id]={'status':'located','method':'instructor_confirmed_area',
+                'bounding_box':revision['bounding_box'],'revision_id':revision['id']}
+    return result
+
+
+@router.post('/submissions/{submission_id}/locate-answers', status_code=202)
+def locate_submission_answers(
+    submission_id: str,
+    page_index: int = Query(ge=0),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
+    automatic: bool = False,
+):
+    from services.answer_location_service import OPERATION, MAX_SOURCES, fingerprint, sources_for_page, previous_location_attempt
+    from services.job_queue_service import ACTIVE_JOB_STATUSES, create_processing_job, job_to_dict
+    submission = _owned_submission(submission_id, db, user)
+    if not submission:
+        raise HTTPException(status_code=404, detail='Submission not found')
+    if page_index >= submission.page_count:
+        raise HTTPException(status_code=404, detail='Page not found')
+    # Serialize requests for this paper and share the existing durable OCR queue.
+    db.query(Submission).filter(Submission.id == submission.id).with_for_update().one()
+    sources = sources_for_page(db, submission, page_index)
+    if not 1 <= len(sources) <= MAX_SOURCES:
+        raise HTTPException(status_code=409, detail='This page needs between 1 and 50 extracted parts to locate.')
+    if automatic:
+        previous, record = previous_location_attempt(db, submission, page_index, sources)
+        if previous:
+            # The page may have been localized within a larger extraction/batch job.
+            result = job_to_dict(previous)
+            if (previous.payload or {}).get('operation') != OPERATION:
+                result.update(operation=OPERATION, submission_id=submission.id, page_index=page_index,
+                              status='completed')
+            return {'job': result, 'reused': True}
+    from sqlalchemy import or_
+    scope = ProcessingJob.submission_id == submission.id
+    if submission.batch_id:
+        scope = or_(scope, ProcessingJob.batch_id == submission.batch_id)
+    running = db.query(ProcessingJob).filter(scope,
+        ProcessingJob.institution_id == user.institution_id,
+        ProcessingJob.status.in_(ACTIVE_JOB_STATUSES)).first()
+    if running:
+        if (running.job_type == 'ocr_submission' and (running.payload or {}).get('operation') == OPERATION
+                and (running.payload or {}).get('page_index') == page_index):
+            return {'job': job_to_dict(running)}
+        if automatic:
+            return {'waiting_for': job_to_dict(running)}
+        raise HTTPException(status_code=409, detail='Wait for the current paper task to finish before locating answers.')
+    job, _ = create_processing_job(db, institution_id=user.institution_id, requested_by=user.id,
+        job_type='ocr_submission', submission_id=submission.id, progress_total=1,
+        payload={'operation': OPERATION, 'page_index': page_index, 'source_fingerprint': fingerprint(sources)})
+    record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
+        action='answer_location_requested', entity_type='processing_job', entity_id=job.id,
+        details={'page_index': page_index, 'display_only': True})
+    db.commit()
+    return {'job': job_to_dict(job)}
 
 
 @router.get("/submissions/{submission_id}/pages/{page_index}")
@@ -538,6 +607,39 @@ def update_answer_source_question(
     except ValueError as error:
         status_code = 404 if "not found" in str(error).lower() else 409
         raise HTTPException(status_code=status_code, detail=str(error)) from error
+
+
+@router.patch('/answer-sources/{source_id}/text')
+def correct_source_text(source_id: str, payload: SourceTextCorrectionRequest,
+                        db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    source = _owned_source(source_id, db, user)
+    if not source:
+        raise HTTPException(404, 'Answer source not found')
+    answer = db.get(Answer, source.answer_id)
+    from services.extraction_review_service import _assert_answer_is_ungraded, _rebuild_answer_from_sources
+    try:
+        _assert_answer_is_ungraded(answer, db)
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from None
+    if db.query(ProcessingJob).filter(ProcessingJob.submission_id == answer.submission_id,
+        ProcessingJob.institution_id == user.institution_id,
+        ProcessingJob.status.in_(['queued','processing','retrying'])).first():
+        raise HTTPException(409, 'Wait for this paper’s active job before editing extraction.')
+    if source.extracted_text != payload.expected_text:
+        raise HTTPException(409, 'This transcription changed. Reload before saving your correction.')
+    if not payload.text.strip():
+        raise HTTPException(422, 'Enter the transcription visible on the paper.')
+    segment = dict(source.ocr_segment or {})
+    segment.setdefault('original_extracted_text', source.extracted_text)
+    segment['instructor_corrected'] = True
+    source.ocr_segment = segment
+    source.extracted_text = payload.text
+    db.flush(); _rebuild_answer_from_sources(answer, db)
+    record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
+        action='extraction_text_corrected', entity_type='answer_source', entity_id=source.id,
+        details={'submission_id':answer.submission_id})
+    db.commit()
+    return build_extraction_review(answer.submission_id, db)
 
 
 @router.delete("/answer-sources/{source_id}")
@@ -605,7 +707,7 @@ def confirm_submission_page_reextract(
         status_code = 404 if "not found" in str(error).lower() else 409
         raise HTTPException(status_code=status_code, detail=str(error)) from error
 
-@router.get("/review-queue")
+@router.get("/review-queue", response_model=list[AnswerRecord])
 async def get_review_queue(
     exam_id: str = None,
     db: Session = Depends(get_db),

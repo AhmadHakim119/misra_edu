@@ -16,6 +16,8 @@ from services.audit_service import record_audit_event
 from services.job_queue_service import dispatch_processing_job
 from services.rubric_version_service import get_effective_rubric
 from services.upload_security_service import UploadValidationError, remove_stored_uploads, store_validated_upload, upload_limits
+from services import material_library_service as library
+from models import AssessmentMaterialAttachment
 
 router = APIRouter(prefix="/api", tags=["course-materials"])
 
@@ -81,11 +83,14 @@ def finish(db, user, entity, action):
 
 
 @router.get("/courses/{course_id}/materials")
-def list_materials(course_id: str, db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+def list_materials(course_id: str, db: Session = Depends(get_db), user: User = Depends(require_instructor), exam_id: str | None = None):
     owned_course(db, user, course_id)
     ready(db)
+    if isinstance(exam_id,str) and owned_exam(db,user,exam_id).course_id!=course_id:
+        raise HTTPException(404,'Assessment not found in this course')
     return [public_material(db, m) for m in db.query(CourseMaterial).filter(CourseMaterial.course_id == course_id,
-        CourseMaterial.institution_id == user.institution_id).order_by(CourseMaterial.created_at.desc()).limit(200).all()]
+        CourseMaterial.institution_id == user.institution_id).order_by(CourseMaterial.created_at.desc()).limit(200).all()
+        if library.attachment_exam(db,m.id) in {None,exam_id if isinstance(exam_id,str) else None}]
 
 
 @router.post("/courses/{course_id}/materials/text", status_code=201)
@@ -103,15 +108,16 @@ def create_text(course_id: str, payload: MaterialTextRequest, db: Session = Depe
     return public_material(db, material)
 
 
-async def store_pdf(db, user, course, file, title, material=None):
+async def store_pdf(db, user, course, file, title, material=None, *, attachment_exam_id=None, ocr_scans=False):
     ready(db)
     stored = []
     try:
         limits = replace(upload_limits(), max_pdf_pages=max(1, min(1000, int(os.getenv("MAX_MATERIAL_PDF_PAGES", "1000")))))
-        item = await store_validated_upload(file, service.MATERIAL_DIR, limits=limits)
+        item = await store_validated_upload(file, service.MATERIAL_DIR, limits=limits, allow_pptx=True)
         stored.append(item)
-        if item.media_type != "application/pdf":
-            raise UploadValidationError(415, "Course references currently accept PDF files or typed text. Images require transcription first.")
+        from services.presentation_material_service import PPTX_TYPE
+        if item.media_type not in {"application/pdf",PPTX_TYPE}:
+            raise UploadValidationError(415, "Course references accept PDF, PPTX or typed text. Images require transcription first.")
         if material is None:
             display_title = (title or item.original_filename).strip()
             if not display_title or len(display_title) > 255:
@@ -119,13 +125,16 @@ async def store_pdf(db, user, course, file, title, material=None):
             material = CourseMaterial(course_id=course.id, institution_id=user.institution_id, title=display_title, created_by=user.id)
             db.add(material)
             db.flush()
+            if attachment_exam_id:
+                db.add(AssessmentMaterialAttachment(material_id=material.id,exam_id=attachment_exam_id))
         with item.path.open("rb") as stream:
             digest = hashlib.file_digest(stream, "sha256").hexdigest()
         version = service.new_version(db, material, user, media_type=item.media_type,
             document_sha256=digest, page_count=item.page_count, path=item.path)
         job = ProcessingJob(institution_id=user.institution_id, requested_by=user.id, job_type="material_ingestion",
             status="queued", progress_total=item.page_count, progress_message="Waiting to read course reference", max_attempts=3,
-            payload={"material_version_id":version.id, "material_id":material.id, "course_id":course.id})
+            payload={"material_version_id":version.id, "material_id":material.id, "course_id":course.id,
+                     **({'ocr_scans':True} if ocr_scans else {})})
         db.add(job)
         db.flush()
         version.processing_job_id = job.id
@@ -142,10 +151,10 @@ async def store_pdf(db, user, course, file, title, material=None):
 
 @router.post("/courses/{course_id}/materials", status_code=202)
 async def upload_material(course_id: str, file: UploadFile = File(...), title: str | None = Form(None),
-    db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    db: Session = Depends(get_db), user: User = Depends(require_instructor), ocr_scans: bool = Form(False)):
     try:
         course = owned_course(db, user, course_id, lock=True)
-        return await store_pdf(db, user, course, file, title)
+        return await store_pdf(db, user, course, file, title, ocr_scans=ocr_scans is True)
     finally:
         await file.close()
 
@@ -270,11 +279,11 @@ def approve_scope(question_id: str, scope_id: str, db: Session = Depends(get_db)
 
 @router.get("/questions/{question_id}/material-retrieval-preview")
 def retrieval_preview(question_id: str, db: Session = Depends(get_db), user: User = Depends(require_instructor)):
-    from services.material_retrieval_service import retrieve_for_question
+    from services.material_retrieval_service import retrieve_for_question, configured_strategy
     question = owned_question(db, user, question_id)
     ready(db)
     try:
-        return retrieve_for_question(db, question, current_rubric(db, question))
+        return retrieve_for_question(db, question, current_rubric(db, question), strategy=configured_strategy())
     except ValueError as error:
         raise HTTPException(409, str(error)) from error
 

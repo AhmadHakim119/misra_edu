@@ -1,4 +1,23 @@
-from pydantic import BaseModel, EmailStr, Field, model_validator
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+
+
+class AccountSettingsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    use_marking_preferences: bool = Field(strict=True)
+
+
+class AccountSettingsResponse(BaseModel):
+    use_marking_preferences: bool
+    has_approved_profile: bool
+    survey_completed: bool
+    approved_profile_id: str | None = None
+
+
+class DeleteAccountRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    current_password: str = Field(min_length=1, max_length=1024)
+    confirmation: Literal["DELETE"]
 
 
 class LoginRequest(BaseModel):

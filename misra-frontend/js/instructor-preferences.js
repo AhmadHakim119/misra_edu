@@ -19,6 +19,17 @@
     change_summary: current?.status === 'draft' ? current.change_summary || 'Updated marking scenarios' : 'Initial marking scenarios',
   });
   const editable = () => !current || current.status === 'draft';
+  const native=window.location.pathname.startsWith('/app/')&&!window.location.pathname.startsWith('/app/pages/');
+  if(native)scenarios.push(
+    {id:'correct_method_arithmetic_error',title:'The method is correct, but one arithmetic error changes the final result.',help:'Choose a starting policy; the approved rubric still controls the available marks.',options:[['single_penalty','Deduct for the original calculation error'],['penalize_each','Deduct at each affected calculation'],['criterion_specific','Follow the criterion rules']]},
+    {id:'missing_units',title:'The numerical result is correct, but its physical unit is missing.',help:'Consider a question where units are relevant to the answer.',options:[['required_when_applicable','Require units when relevant'],['required','Require units explicitly'],['do_not_penalize','Do not deduct for units']]},
+    {id:'rounding_difference',title:'A correct calculation differs slightly because of rounding.',help:'Choose the maximum percentage tolerance to propose for numerical results.',options:[['exact','Exact result required'],['within_point_one_percent','Allow up to 0.1% difference'],['within_one_percent','Allow up to 1% difference']]},
+    {id:'correct_result_without_working',title:'The final answer is correct, but the student shows no working.',help:'Choose the evidence you normally expect; individual questions can require more.',options:[['key_steps','Require the key steps'],['final_answer_only','Accept the final answer alone'],['complete_reasoning','Require complete reasoning']]},
+    {id:'illegible_handwriting',title:'Part of the handwritten answer cannot be read reliably.',help:'Uncertain handwriting should remain visible as uncertainty rather than guessed text.',options:[['manual_review','Send unclear work for instructor review'],['grade_visible_only','Assess readable evidence only'],['zero','Propose zero for the unreadable response']]},
+    {id:'incomplete_solution',title:'A student starts correctly but leaves the solution unfinished.',help:'No credit should be invented for steps that are not present.',options:[['completed_criteria','Credit completed criteria only'],['published_levels','Use the published partial-credit levels'],['manual_review','Review incomplete solutions personally']]},
+    {id:'contradictory_answers',title:'The response contains two contradictory answers or conflicting working.',help:'MISRA must retain the conflicting evidence and explain the uncertainty.',options:[['manual_review','Flag the contradiction for review'],['identified_final_answer','Use a clearly identified final answer'],['criterion_specific','Follow an explicit criterion rule']]}
+  );
+  const workspaceName=native?'the marking guide':'Rubric Studio';
   function choose(version) {
     current = version || null;
     answers = Object.fromEntries((version?.scenario_answers || []).map(item => [item.scenario_id, item.selected_option]));
@@ -33,9 +44,11 @@
       method_credit: 'Valid-method credit', handwritten_syntax_policy: 'Handwritten syntax', notation_policy: 'Equivalent notation',
       error_carried_forward: 'Carried-forward errors', language_quality_policy: 'Language quality',
       alternative_valid_methods: 'Alternative methods', alternative_methods_allowed: 'Alternative methods',
+      arithmetic_error_policy:'Arithmetic errors',units_policy:'Units',rounding_tolerance_percent:'Rounding tolerance (%)',
+      evidence_requirement:'Required working',illegible_response_policy:'Unclear handwriting',custom_instructions:'Additional marking guidance',
     };
     const entries = Object.entries(proposal || {});
-    return entries.length ? `<div class="preference-proposal"><h4>Proposed rubric defaults</h4><dl>${entries.map(([key, value]) => `<dt>${esc(labels[key] || key.replaceAll('_', ' '))}</dt><dd>${esc(String(value).replaceAll('_', ' '))}</dd>`).join('')}</dl><p class="field-hint">These are suggestions only. Applying them to a rubric requires a separate confirmation in Rubric Studio.</p></div>` : '';
+    return entries.length ? `<div class="preference-proposal"><h4>Proposed rubric defaults</h4><dl>${entries.map(([key, value]) => `<dt>${esc(labels[key] || key.replaceAll('_', ' '))}</dt><dd>${esc(String(value).replaceAll('_', ' '))}</dd>`).join('')}</dl><p class="field-hint">These are suggestions only. Applying them to a rubric requires a separate confirmation in ${workspaceName}.</p></div>` : '';
   }
   function explicitProposal() {
     const proposal = { ...explicitPreferences };
@@ -70,19 +83,22 @@
     host.setAttribute('aria-busy', String(busy));
     const readonly = !editable();
     const answered = Object.keys(answers).length;
-    host.innerHTML = `<div class="preference-profile-head"><div><h3>${current ? `Preference profile version ${current.version_number}` : 'Create your first preference profile'}</h3><p>${readonly ? 'This approved version is read-only and available as an optional starting point in Rubric Studio.' : 'Choose the decision closest to your normal marking. You can still override every proposed rule per assessment.'}</p></div>${window.MisraUI.badge(current ? current.status : 'Not set', readonly ? 'success' : 'draft')}</div>
+    const visibleScenarios=native&&readonly?scenarios.filter(scenario=>answers[scenario.id]):scenarios;
+    host.innerHTML = `<div class="preference-profile-head"><div><h3>${current ? `Preference profile version ${current.version_number}` : 'Create your first preference profile'}</h3><p>${readonly ? (native?'Saved profile. Manage automatic use in Settings.':`This approved version is read-only and available as an optional starting point in ${workspaceName}.`) : 'Choose the decision closest to your normal marking. You can still override every proposed rule per assessment.'}</p>${native&&readonly?'<button class="btn btn-secondary" type="button" data-preference-new>Create new draft</button>':''}</div>${window.MisraUI.badge(current ? current.status : 'Not set', readonly ? 'success' : 'draft')}</div>
       ${error ? `<p class="check-error" role="alert">${esc(error)}</p>` : ''}
+      ${native&&readonly&&answered<scenarios.length?'<p data-i18n>This earlier profile remains unchanged. Create a new draft to complete the expanded survey.</p>':''}
       <form data-preference-form>
         ${suggestionMarkup()}
-        <div class="preference-scenarios">${scenarios.map((scenario, index) => `<fieldset class="preference-scenario" ${readonly || busy ? 'disabled' : ''}><legend>${index + 1}. ${esc(scenario.title)}</legend><p>${esc(scenario.help)}</p><div class="scenario-options">${scenario.options.map(([value, label]) => `<label class="scenario-option"><input type="radio" name="scenario-${esc(scenario.id)}" value="${esc(value)}" data-scenario="${esc(scenario.id)}" ${answers[scenario.id] === value ? 'checked' : ''}><span>${esc(label)}</span></label>`).join('')}</div></fieldset>`).join('')}</div>
+        <div class="preference-scenarios">${visibleScenarios.map(scenario => `<fieldset class="preference-scenario" ${readonly || busy ? 'disabled' : ''}><legend>${scenarios.indexOf(scenario) + 1}. ${esc(scenario.title)}</legend><p data-i18n>${esc(scenario.help)}</p><div class="scenario-options">${scenario.options.map(([value, label]) => `<label class="scenario-option"><input type="radio" name="scenario-${esc(scenario.id)}" value="${esc(value)}" data-scenario="${esc(scenario.id)}" ${answers[scenario.id] === value ? 'checked' : ''}><span data-i18n>${esc(label)}</span></label>`).join('')}</div></fieldset>`).join('')}</div>
         ${proposalMarkup(dirty ? { ...(current?.derived_proposal || {}), ...explicitProposal() } : current?.derived_proposal)}
-        <div class="preference-actions">${readonly ? '<button class="btn btn-secondary" type="button" data-preference-new>Create new draft</button>' : '<button class="btn btn-secondary" type="submit" data-preference-save>Save draft</button><button class="btn btn-primary" type="button" data-preference-approve>Save &amp; approve profile</button>'}<p class="form-message" role="status">${busy ? 'Saving…' : dirty ? `${answered} of ${scenarios.length} scenarios answered · unsaved` : readonly ? 'Approved profiles never change existing rubrics.' : `${answered} of ${scenarios.length} scenarios answered`}</p></div>
+        <div class="preference-actions">${readonly ? native?'':'<button class="btn btn-secondary" type="button" data-preference-new>Create new draft</button>' : '<button class="btn btn-secondary" type="submit" data-preference-save>Save draft</button><button class="btn btn-primary" type="button" data-preference-approve>Save &amp; approve profile</button>'}<p class="form-message" role="status">${busy ? 'Saving…' : dirty ? `${answered} of ${scenarios.length} scenarios answered · unsaved` : readonly ? 'Approved profiles never change existing rubrics.' : `${answered} of ${scenarios.length} scenarios answered`}</p></div>
       </form>
       ${versions.length ? `<details class="preference-history"><summary>Preference history (${versions.length})</summary>${versions.map(version => `<div class="preference-history-row"><span>Version ${version.version_number} · ${esc(version.status)}</span><button class="btn btn-ghost" type="button" data-preference-version="${esc(version.id)}">View</button></div>`).join('')}</details>` : ''}`;
     host.querySelector('[data-preference-form]')?.addEventListener('change', event => {
       const changed = event.target.closest('[data-scenario]');
       sync();
       dirty = true;
+      error = '';
       render(changed ? { scenario: changed.dataset.scenario, value: changed.value } : null);
     });
     host.querySelector('[data-preference-form]')?.addEventListener('submit', event => { event.preventDefault(); save(false); });
@@ -100,7 +116,8 @@
     if (busy || !editable()) return;
     sync();
     if (!Object.keys(answers).length && !Object.keys(explicitPreferences).length) { error = 'Answer at least one scenario or use an observed decision before saving.'; render(); return; }
-    if (approve && !window.confirm('Approve this preference profile? It will remain a suggestion and will not change existing rubrics.')) return;
+    if(native && approve && Object.keys(answers).length<scenarios.length){error='Answer all 12 scenarios before approving this expanded profile. You can save a partial draft.';render();return;}
+    if (approve && !window.confirm(native?'Approve this profile? Its rules will fill new guide drafts when automatic preferences are enabled in Settings. Existing guides are unchanged.':'Approve this preference profile? It will remain a suggestion and will not change existing rubrics.')) return;
     busy = true; error = ''; render();
     try {
       const saved = current ? await window.MisraAPI.updateInstructorPreference(current.id, versionBody()) : await window.MisraAPI.createInstructorPreference(versionBody());
@@ -111,11 +128,17 @@
         choose(approved);
       } else choose(saved);
       window.showToast(approve ? 'Marking preference profile approved.' : 'Marking preference draft saved.', 'success');
+      window.dispatchEvent(new CustomEvent('misra:preferences-saved',{detail:{approved:approve,version:current}}));
     } catch (requestError) {
       error = requestError.message || 'Could not save marking preferences. Your choices are still here.';
     } finally { busy = false; render(); }
   }
   window.addEventListener('beforeunload', event => { if (dirty || busy) { event.preventDefault(); event.returnValue = ''; } });
+  window.MisraInstructorPreferences={hasUnsaved:()=>dirty,isBusy:()=>busy,current:()=>current};
+  if(native)document.addEventListener('click',event=>{
+    if(!event.target.closest('a,#native-sign-out'))return;
+    if(busy||dirty&&!confirm('Leave without saving your marking preferences?')){event.preventDefault();event.stopImmediatePropagation();}
+  },true);
   Promise.allSettled([
     window.MisraAPI.instructorPreferenceVersions(),
     window.MisraAPI.instructorPreferenceSuggestions(),

@@ -75,6 +75,8 @@ def job_to_dict(job: ProcessingJob) -> dict:
     return {
         "id": job.id,
         "job_type": job.job_type,
+        "operation": (job.payload or {}).get('operation') if (job.payload or {}).get('operation') in {'locate_answers','read_answer_area','regrade_corrected_answer'} else None,
+        "page_index": (job.payload or {}).get('page_index') if (job.payload or {}).get('operation') == 'locate_answers' else None,
         "status": job.status,
         "submission_id": job.submission_id,
         "batch_id": job.batch_id,

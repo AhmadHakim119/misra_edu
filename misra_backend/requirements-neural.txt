@@ -1,0 +1,8 @@
+# Optional local retrieval runtime, isolated from the base API requirements.
+# Explicit optional install; do not upgrade a live OCR environment in place.
+# Install a compatible CPU/CUDA PyTorch build for the target machine.
+# Patched weights-only checkpoint converter (CVE-2026-24747).
+torch==2.10.0
+transformers==5.7.0
+huggingface-hub==1.13.0
+safetensors==0.7.0

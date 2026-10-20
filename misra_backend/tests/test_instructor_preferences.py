@@ -136,20 +136,44 @@ class InstructorPreferenceTests(unittest.TestCase):
         created = self.create()
         self.assertEqual(created["derived_proposal"]["method_credit"], "partial")
         self.assertTrue(created["derived_proposal"]["alternative_methods_allowed"])
-        self.assertEqual(
-            created["derived_proposal"]["handwritten_syntax_policy"],
-            "criterion_specific",
-        )
-        provenance = created["proposal_provenance"]["method_credit"]
-        self.assertEqual(provenance["source"], "explicit_preference")
-        self.assertEqual(provenance["preference_field"], "method_credit")
-        self.assertEqual(provenance["derivation_version"], "v1")
-        syntax_provenance = created["proposal_provenance"]["handwritten_syntax_policy"]
-        self.assertEqual(syntax_provenance["scenario_id"], "minor_handwritten_syntax")
-        self.assertFalse(created["applies_automatically"])
-        event = self.db.query(AuditLog).filter(AuditLog.entity_id == created["id"]).one()
-        self.assertEqual(event.action, "instructor_preference_draft_created")
+        self.assertEqual(created['derived_proposal']['handwritten_syntax_policy'],'criterion_specific')
+        provenance=created['proposal_provenance']['method_credit']
+        self.assertEqual(provenance['source'],'explicit_preference')
+        self.assertEqual(provenance['preference_field'],'method_credit')
+        self.assertEqual(provenance['derivation_version'],'v1')
+        self.assertEqual(created['proposal_provenance']['handwritten_syntax_policy']['scenario_id'],'minor_handwritten_syntax')
+        self.assertFalse(created['applies_automatically'])
+        event=self.db.query(AuditLog).filter(AuditLog.entity_id==created['id']).one()
+        self.assertEqual(event.action,'instructor_preference_draft_created')
 
+    def test_expanded_survey_persists_twelve_answers_and_valid_policy_proposals(self):
+        from schemas.instructor_preferences import SCENARIO_OPTIONS
+        from schemas.rubric_v2 import RubricPolicy
+        selected={key:sorted(options)[0] for key,options in SCENARIO_OPTIONS.items()}
+        selected.update(missing_units='required_when_applicable',rounding_difference='within_point_one_percent',
+            correct_result_without_working='key_steps',illegible_handwriting='manual_review',
+            incomplete_solution='completed_criteria',contradictory_answers='manual_review')
+        answers=[{'scenario_id':key,'selected_option':value} for key,value in selected.items()]
+        created=self.create(explicit_preferences={},scenario_answers=answers)
+        self.assertEqual(len(created['scenario_answers']),12)
+        proposal=created['derived_proposal'];self.assertEqual(proposal['rounding_tolerance_percent'],0.1)
+        self.assertEqual(proposal['units_policy'],'required_when_applicable')
+        self.assertIn('incomplete solutions',proposal['custom_instructions'])
+        self.assertIn('contradictory answers',proposal['custom_instructions'])
+        RubricPolicy(**proposal)
+        self.assertEqual(created['proposal_provenance']['units_policy']['derivation_version'],'survey-v2')
+        approved=instructor_preferences.approve_version(created['id'],self.db,self.user)
+        self.assertEqual(approved['scenario_answers'],answers)
+        self.assertEqual(self.db.query(RubricVersion).count(),0)
+
+    def test_new_survey_does_not_rewrite_old_approved_profile_and_rejects_bad_choices(self):
+        from copy import deepcopy
+        old=self.create();instructor_preferences.approve_version(old['id'],self.db,self.user)
+        row=self.db.get(InstructorPreferenceVersion,old['id']);snapshot=deepcopy(row.derived_proposal)
+        self.create(explicit_preferences={},scenario_answers=[{'scenario_id':'missing_units','selected_option':'required'}])
+        self.db.refresh(row);self.assertEqual(row.status,'approved');self.assertEqual(row.derived_proposal,snapshot)
+        with self.assertRaises(ValidationError):
+            InstructorPreferenceDraftRequest(scenario_answers=[{'scenario_id':'rounding_difference','selected_option':'invented'}])
     def test_draft_approval_history_and_approved_immutability(self):
         first = self.create()
         updated = instructor_preferences.update_version(

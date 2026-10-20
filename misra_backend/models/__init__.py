@@ -1,5 +1,6 @@
 from .institution import Institution
 from .user import User
+from .instructor_account_settings import InstructorAccountSettings
 from .student import Student
 from .course import Course
 from .course_enrollment import CourseEnrollment
@@ -21,3 +22,4 @@ from .answer_key_version import AnswerKeyVersion
 from .instructor_preference_version import InstructorPreferenceVersion
 from .course_material import CourseMaterial, MaterialVersion, MaterialPage, MaterialChunk, QuestionMaterialScopeVersion, AssessmentMaterialScopeVersion
 from .extraction_inventory import ExtractionInventory
+from .material_library import MaterialChapterIndex, AssessmentMaterialAttachment

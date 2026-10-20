@@ -21,7 +21,12 @@
   }
   function location(source, locations = {}) {
     const native = locations[source.id];
+    if(native?.method==='instructor_confirmed_area')return {box:validBox(native.bounding_box),verified:false,confirmed:true,
+      message:'Instructor-confirmed answer area. Review the saved extraction and grading run.'};
     const matched = native?.status === 'located' && native?.method === 'native_pdf_text' && validBox(native.bounding_box);
+    if(native?.method==='vision_grid')return {
+      box:native.status==='located'?validBox(native.bounding_box):null,verified:false,
+      message:'AI-located answer region. Check against the original; the highlight does not verify the grade.'};
     return matched
       ? { box: matched, verified: true, message: 'Text matched on the original PDF. The highlight locates the answer; it does not verify its correctness.' }
       : { box: validBox(source.ocr_segment?.bounding_box), verified: false,

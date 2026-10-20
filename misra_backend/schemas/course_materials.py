@@ -71,6 +71,7 @@ class MaterialScopeRequest(BaseModel):
 
 class AssessmentMaterialScopeRequest(MaterialScopeRequest):
     mode: Literal["required", "optional", "disabled"] = "required"
+    allow_pending_sources: bool = Field(default=False, strict=True)
 
     @model_validator(mode="after")
     def assessment_bindings(self):

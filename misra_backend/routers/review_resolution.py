@@ -7,11 +7,22 @@ from models import Answer, GradingRun, ReviewLabel, Submission, User
 from schemas.review_input import PREFERENCE_REASON_CODES, ReviewResolutionRequest
 from services.auth_dependencies import require_instructor
 from services.audit_service import record_audit_event
+from schemas.public_results import ReviewResolutionRecord, ReviewRecord
 
 router = APIRouter(prefix="/api", tags=["review"])
 
 
-@router.post("/answers/{answer_id}/resolve-review")
+@router.get("/answers/{answer_id}/review-history", response_model=list[ReviewRecord])
+def review_history(answer_id: str, db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    answer = db.query(Answer).join(Submission, Submission.id == Answer.submission_id).filter(
+        Answer.id == answer_id, Submission.institution_id == user.institution_id).first()
+    if not answer:
+        raise HTTPException(status_code=404, detail="Answer not found")
+    return db.query(ReviewLabel).filter(ReviewLabel.answer_id == answer_id).order_by(
+        ReviewLabel.created_at.asc(), ReviewLabel.id.asc()).all()
+
+
+@router.post("/answers/{answer_id}/resolve-review", response_model=ReviewResolutionRecord)
 def resolve_review(
     answer_id: str,
     request: ReviewResolutionRequest,
@@ -29,6 +40,20 @@ def resolve_review(
     )
     if not answer:
         raise HTTPException(status_code=404, detail="Answer not found")
+    if request.apply_as_current:
+        from models import ProcessingJob
+        # Serialize with corrected-regrade acceptance. A pending proposal must not
+        # race a new official decision against the older displayed AI run.
+        db.query(Submission).filter(Submission.id==answer.submission_id,
+            Submission.institution_id==user.institution_id).with_for_update().one()
+        db.refresh(answer,with_for_update=True)
+        running=db.query(ProcessingJob).filter(ProcessingJob.institution_id==user.institution_id,
+            ProcessingJob.submission_id==answer.submission_id,
+            ProcessingJob.status.in_(('queued','processing','retrying')),
+            ProcessingJob.payload['operation'].as_string()=='regrade_corrected_answer',
+            ProcessingJob.payload['answer_id'].as_string()==answer.id).with_for_update().first()
+        if running:
+            raise HTTPException(409,'A corrected-answer proposal is processing. Review the new proposal before saving an instructor decision.')
     from models import Question
     from services.grading_scope_service import is_external_question
     question = db.query(Question).filter(Question.id == answer.question_id).first()

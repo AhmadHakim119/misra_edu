@@ -9,6 +9,13 @@ ScenarioId = Literal[
     "equivalent_notation",
     "carried_forward_error",
     "language_quality_outside_criterion",
+    "correct_method_arithmetic_error",
+    "missing_units",
+    "rounding_difference",
+    "correct_result_without_working",
+    "illegible_handwriting",
+    "incomplete_solution",
+    "contradictory_answers",
 ]
 
 
@@ -18,6 +25,13 @@ SCENARIO_OPTIONS: dict[str, set[str]] = {
     "equivalent_notation": {"full_credit", "minor_deduction", "reject"},
     "carried_forward_error": {"single_penalty", "penalize_each", "criterion_specific"},
     "language_quality_outside_criterion": {"ignore", "minor_deduction", "assess"},
+    "correct_method_arithmetic_error": {"single_penalty", "penalize_each", "criterion_specific"},
+    "missing_units": {"required_when_applicable", "required", "do_not_penalize"},
+    "rounding_difference": {"exact", "within_point_one_percent", "within_one_percent"},
+    "correct_result_without_working": {"key_steps", "final_answer_only", "complete_reasoning"},
+    "illegible_handwriting": {"manual_review", "grade_visible_only", "zero"},
+    "incomplete_solution": {"completed_criteria", "published_levels", "manual_review"},
+    "contradictory_answers": {"manual_review", "identified_final_answer", "criterion_specific"},
 }
 
 
@@ -65,7 +79,7 @@ class InstructorPreferenceDraftRequest(BaseModel):
         default_factory=InstructorExplicitPreferences
     )
     scenario_answers: list[InstructorScenarioAnswer] = Field(
-        default_factory=list, max_length=5
+        default_factory=list, max_length=12
     )
     change_summary: str = Field(default="", max_length=2000)
 

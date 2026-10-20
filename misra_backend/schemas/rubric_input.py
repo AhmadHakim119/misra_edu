@@ -76,6 +76,7 @@ class RubricVersionCreateRequest(BaseModel):
     rubric: dict
     source: Literal["manual", "ai", "imported"] = "manual"
     change_summary: Optional[str] = None
+    apply_instructor_preferences: bool = Field(default=False, strict=True)
 
 
 class RubricVersionUpdateRequest(BaseModel):

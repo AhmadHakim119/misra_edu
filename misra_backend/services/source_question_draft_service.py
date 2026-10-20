@@ -33,6 +33,10 @@ def source_package(db: Session, exam: Exam, request: SourceQuestionDraftRequest)
         if not row:
             raise ValueError("Choose sources belonging to this assessment's course.")
         version, material = row
+        from services.material_library_service import attachment_exam
+        attached = attachment_exam(db,material.id)
+        if attached and attached != exam.id:
+            raise ValueError('Extra source material belongs to another assessment.')
         verify_approved_version(db, version)
         if not set(binding.page_indices).issubset(set(version.approved_page_indices)):
             raise ValueError("Select only instructor-approved source pages.")

@@ -40,6 +40,39 @@ class AssessmentSourceTests(unittest.TestCase):
         self.assertEqual(context["status"], "retrieved")
         self.assertEqual(api.get_effective_scope("q", self.db, self.user)["origin"], "assessment")
 
+    def test_pending_chapter_selection_is_draft_only_until_source_review(self):
+        from schemas.course_materials import MaterialApprovalRequest
+        from services.assessment_guide_service import review_guide
+        from models import Exam
+        _,active=self.material();old=self.default(active)
+        material,pending=self.material(approved=False)
+        binding={'version_id':pending.id,'page_indices':[0]}
+        with self.assertRaises(HTTPException):
+            api.create_assessment_scope('e',AssessmentMaterialScopeRequest(bindings=[binding]),self.db,self.user)
+        draft=api.create_assessment_scope('e',AssessmentMaterialScopeRequest(bindings=[binding],allow_pending_sources=True),self.db,self.user)
+        self.assertEqual(draft['status'],'draft')
+        self.assertEqual(retrieve_for_question(self.db,self.q,self.rubric)['scope_version_id'],old['id'])
+        with self.assertRaises(HTTPException):api.approve_assessment_scope('e',draft['id'],self.db,self.user)
+        self.assertEqual(pending.status,'draft');self.assertEqual(pending.approved_page_indices,[])
+        review=review_guide(self.db,self.db.get(Exam,'e'))
+        self.assertFalse(review['can_approve']);self.assertTrue(any('source' in e.lower() for e in review['errors']))
+        api.approve_version(material['id'],pending.id,MaterialApprovalRequest(page_indices=[0],confirm_content_reviewed=True),self.db,self.user)
+        api.approve_assessment_scope('e',draft['id'],self.db,self.user)
+        self.assertEqual(retrieve_for_question(self.db,self.q,self.rubric)['scope_version_id'],draft['id'])
+
+    def test_pending_chapter_selection_checks_ownership_page_bounds_and_reading_state(self):
+        _,version=self.material(approved=False)
+        for binding in [{'version_id':version.id,'page_indices':[1]},{'version_id':'missing','page_indices':[0]}]:
+            with self.assertRaises(HTTPException):
+                api.create_assessment_scope('e',AssessmentMaterialScopeRequest(bindings=[binding],allow_pending_sources=True),self.db,self.user)
+        _,foreign=self.material(course='c2',approved=False)
+        with self.assertRaises(HTTPException):
+            api.create_assessment_scope('e',AssessmentMaterialScopeRequest(bindings=[{'version_id':foreign.id,'page_indices':[0]}],allow_pending_sources=True),self.db,self.user)
+        version.ingestion_status='queued';self.db.commit()
+        with self.assertRaises(HTTPException):
+            api.create_assessment_scope('e',AssessmentMaterialScopeRequest(bindings=[{'version_id':version.id,'page_indices':[0]}],allow_pending_sources=True),self.db,self.user)
+        self.assertEqual(self.db.query(AssessmentMaterialScopeVersion).count(),0)
+
     def test_exception_disable_and_return_to_inherit(self):
         _, version = self.material()
         self.default(version)

@@ -7,6 +7,11 @@ class SourceMappingRequest(BaseModel):
     question_id: str
 
 
+class SourceTextCorrectionRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=50000)
+    expected_text: str = Field(max_length=50000)
+
+
 class UnmatchedSegmentResolutionRequest(BaseModel):
     action: Literal["assign", "ignore"]
     question_id: Optional[str] = None

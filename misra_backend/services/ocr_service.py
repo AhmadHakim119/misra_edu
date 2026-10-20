@@ -8,7 +8,7 @@ from pydantic import BaseModel, ValidationError, Field, StrictInt
 from pdf2image import convert_from_bytes, convert_from_path
 from sqlalchemy.orm import Session
 import logging
-from services.gemini_client import generate
+from services.inference_service import generate_ocr as generate
 from models import (
     Answer,
     AnswerSource,
@@ -557,6 +557,7 @@ def process_submission(
     db: Session,
     progress_callback: Callable[[int, int, str], None] | None = None,
     reprocess: bool = False,
+    processing_job_id: str | None = None,
 ) -> None:
     submission = db.query(Submission).filter(Submission.id == submission_id).first()
     if not submission:
@@ -734,6 +735,9 @@ def process_submission(
             submission.unmatched_segments = unmatched_segments
 
         submission.status = "extracted"
+        if processing_job_id:
+            from services.answer_location_service import record_extraction_completion
+            record_extraction_completion(processing_job_id, submission, db)
         db.commit()
 
     except Exception as e:
@@ -751,6 +755,7 @@ def process_batch(
     db: Session,
     progress_callback: Callable[[int, int, str], None] | None = None,
     submission_ids: list[str] | None = None,
+    processing_job_id: str | None = None,
 ) -> None:
     batch = db.query(Batch).filter(Batch.id == batch_id).first()
     if not batch:
@@ -777,7 +782,8 @@ def process_batch(
                 )
             continue
         try:
-            process_submission(submission.id, db)
+            options = {'processing_job_id': processing_job_id} if processing_job_id else {}
+            process_submission(submission.id, db, **options)
         except Exception:
             pass
         if progress_callback:

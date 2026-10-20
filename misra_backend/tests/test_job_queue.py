@@ -196,7 +196,7 @@ class ProcessingJobTests(unittest.TestCase):
     def test_worker_persists_progress_and_completion(self):
         job = self._job()
 
-        def fake_ocr(submission_id, db, progress_callback=None):
+        def fake_ocr(submission_id, db, progress_callback=None, processing_job_id=None):
             self.assertEqual(submission_id, self.submission.id)
             progress_callback(1, 2, "Extracted page 1 of 2")
             progress_callback(2, 2, "Extracted page 2 of 2")

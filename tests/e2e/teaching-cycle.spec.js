@@ -21,7 +21,7 @@ async function fixture(page,{materials=14,failUpload=false,failGenerate=false,fa
     else if(p.endsWith('/setup-imports')){if(req.method()==='POST'){writes.push({kind:'import',body:req.postData()});proposal.origin='uploaded_exam';rows=[proposal];body=proposal;}else body=rows;}
     else if(p.endsWith('/learning-insights')){if(failInsights)return route.fulfill({status:503,json:{detail:'Synthetic feedback interruption'}});body={exam_id:'e',submission_count:2,confidence_status:'uncalibrated',notes:['Missing work is not scored zero.'],questions:[{question_id:'q',question_number:'1',question_text:'Calculate work.',graded_count:2,average_percent:75,awaiting_review_count:1,course_grounded_count:2,criterion_override_excluded_count:0,criteria:[{title:'Correct result',description:'Calculate the force-distance product and give joules.',rubric_version_id:'r1',assessed_count:2,average_percent:75,full_credit_count:1,partial_credit_count:1,zero_credit_count:0,source_pages:[{title:'Synthetic lecture 1',page_index:0}]}]}]};}
     await route.fulfill({json:body});});
-  await page.goto('/next/index.html?exam_id=e');await expect(page.locator('#exam-title')).toHaveText('Synthetic lecture quiz');await page.locator('#sources-link').click();return writes;
+  await page.goto('/app/index.html?exam_id=e');await expect(page.locator('#exam-title')).toHaveText('Synthetic lecture quiz');await page.locator('#sources-link').click();return writes;
 }
 
 test('one action selects all fourteen approved chapters without approving them',async({page})=>{

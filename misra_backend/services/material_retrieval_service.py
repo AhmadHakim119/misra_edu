@@ -1,7 +1,8 @@
-"""Bounded, approved-source BM25 RAG; query construction never uses student text."""
+"""Bounded, approved-source RAG; query construction never uses student text."""
 from collections import Counter
 from copy import deepcopy
 import math
+import os
 import re
 
 from models import CourseMaterial, MaterialVersion, MaterialPage, MaterialChunk
@@ -14,6 +15,15 @@ STOPWORDS = frozenset("a an the of in to for and or on with as is are was be by 
 MAX_PASSAGES = 8
 MAX_CONTEXT_CHARS = 12000
 MAX_CANDIDATES = 6000
+NEURAL_STRATEGIES = frozenset({'bm25_rerank_v1', 'neural_hybrid_v1', 'dense_v1', 'dense_rerank_v1'})
+STRATEGIES = {'bm25_v1', 'hybrid_rrf_v1', *NEURAL_STRATEGIES}
+
+
+def configured_strategy():
+    strategy = os.getenv('MISRA_RETRIEVAL_STRATEGY', 'bm25_v1')
+    if strategy not in STRATEGIES:
+        raise ValueError('Unknown configured course retrieval strategy.')
+    return strategy
 
 
 def tokens(text):
@@ -41,8 +51,12 @@ def bm25_scores(texts, query):
     return result
 
 
-def retrieve_for_question(db, question, rubric, *, proposal_scope=None):
-    empty = {"strategy":"bm25_v1", "scope_version_id":None, "scope_version_number":None,
+def retrieve_for_question(db, question, rubric, *, proposal_scope=None, strategy='bm25_v1', hits_per_criterion=2, concept_queries=None):
+    if strategy not in STRATEGIES:
+        raise ValueError('Unknown approved-source retrieval strategy.')
+    if type(hits_per_criterion) is not int or not 1 <= hits_per_criterion <= 4:
+        raise ValueError('Choose between one and four approved passages per criterion.')
+    empty = {"strategy":strategy, "scope_version_id":None, "scope_version_number":None,
         "mode":"disabled", "status":"not_configured", "passages":[], "queries":[]}
     # Additive rollout: existing assessments work before the explicit migration.
     if not schema_available(db):
@@ -91,6 +105,11 @@ def retrieve_for_question(db, question, rubric, *, proposal_scope=None):
             binding_criteria.setdefault(chunk.id, set()).add(binding.criterion_id)
         if len(candidates) > MAX_CANDIDATES:
             raise ValueError("Reference scope is too broad. Select relevant chapter pages or exact passages.")
+    from services.retrieval_query_service import validate_concept_queries,criterion_query,QUERY_VERSION
+    concepts=validate_concept_queries(question.question_text,rubric.get('criteria',[]),concept_queries)
+    if concepts is not None:
+        context['query_strategy']=QUERY_VERSION
+        context['concept_queries']=deepcopy(concepts)
     selected, query_snapshots = {}, []
     required_criteria = {c['id'] for c in rubric.get('criteria', [])} if scope.mode == 'required' else set()
     for criterion in rubric.get("criteria", []):
@@ -99,11 +118,30 @@ def retrieve_for_question(db, question, rubric, *, proposal_scope=None):
         if not eligible:
             continue
         required_criteria.add(cid)
-        query = " ".join(str(value or "") for value in (question.question_text, criterion.get("title"), criterion.get("description"), criterion.get("full_credit_conditions")))[:5000]
-        scores = bm25_scores([item[0].text for item in eligible], query)
+        query = criterion_query(question.question_text,criterion,concepts)
+        ranking_details = None
+        if strategy == 'hybrid_rrf_v1':
+            from services.hybrid_retrieval_service import hybrid_scores
+            scores, ranking_details = hybrid_scores([item[0].text for item in eligible], query)
+        elif strategy in NEURAL_STRATEGIES:
+            from services.neural_retrieval_service import rank_passages, model_metadata, fingerprint
+            # Stable tie handling and institution/scope-specific cache isolation.
+            eligible.sort(key=lambda item:item[0].id)
+            namespace = fingerprint({'institution':question.institution_id,
+                'assessment':question.exam_id, 'scope':scope.scope_sha256})
+            scores, ranking_details = rank_passages([item[0].text for item in eligible], query,
+                namespace=namespace, strategy=strategy,
+                pinned_indices=[i for i,item in enumerate(eligible) if item[0].id in exact_ids])
+            context['neural_retrieval'] = model_metadata(strategy)
+        else:
+            scores = bm25_scores([item[0].text for item in eligible], query)
         ranked = sorted(zip(eligible, scores), key=lambda pair:(pair[0][0].id not in exact_ids, -pair[1], pair[0][0].id))
-        hits = [(item,score) for item,score in ranked if score > 0 or item[0].id in exact_ids][:2]
+        hits = [(item,score) for item,score in ranked if score > 0 or item[0].id in exact_ids][:hits_per_criterion]
         query_snapshots.append({"criterion_id":cid, "query":query, "candidate_count":len(eligible), "selected_chunk_ids":[item[0].id for item,score in hits]})
+        if ranking_details is not None:
+            by_id = {item[0].id: detail for item, detail in zip(eligible, ranking_details)}
+            query_snapshots[-1]['ranking'] = {
+                item[0].id: by_id[item[0].id] for item, _ in hits}
         for item,score in hits:
             chunk,version,material,page = item
             if chunk.id not in selected:
@@ -113,11 +151,26 @@ def retrieve_for_question(db, question, rubric, *, proposal_scope=None):
                     "char_start":chunk.char_start, "char_end":chunk.char_end, "text":chunk.text,
                     "text_sha256":chunk.text_sha256, "document_sha256":version.document_sha256,
                     "content_sha256":version.content_sha256, "parser_version":version.parser_version,
-                    "selection":"exact_link" if chunk.id in exact_ids else "bm25", "retrieval_score":score,
+                    "selection":"exact_link" if chunk.id in exact_ids else strategy.removesuffix('_v1'), "retrieval_score":score,
                     "criterion_ids":[], "source_role":"approved_course_reference"}
             selected[chunk.id]["criterion_ids"].append(cid)
     passages, total_chars = [], 0
-    for item in selected.values():
+    remaining = list(selected.values())
+    if hits_per_criterion > 2 or strategy in NEURAL_STRATEGIES:
+        # Supplemental retrieval must not spend its entire budget on the first
+        # criterion. Cover criteria before adding extra explanatory passages.
+        uncovered = set(required_criteria)
+        while uncovered and len(passages) < MAX_PASSAGES:
+            fitting = [item for item in remaining if uncovered.intersection(item['criterion_ids'])
+                       and total_chars + len(item['text']) <= MAX_CONTEXT_CHARS]
+            if not fitting:
+                break
+            item = max(fitting, key=lambda value: len(uncovered.intersection(value['criterion_ids'])))
+            passages.append(item)
+            total_chars += len(item['text'])
+            uncovered.difference_update(item['criterion_ids'])
+            remaining.remove(item)
+    for item in remaining:
         if len(passages) == MAX_PASSAGES or total_chars + len(item["text"]) > MAX_CONTEXT_CHARS:
             continue  # Never cut a referenced passage or equation to fit a budget.
         passages.append(item)

@@ -1,7 +1,12 @@
-# Parallel instructor workspace
+# Native instructor workspace
 
-Open `/app/next/index.html` on the running MISRA API. The original workspace at
-`/app/pages/dashboard.html` is unchanged and remains the complete fallback.
+The current route map, three-role AI pipeline, mixed-provider configuration and
+validation boundaries are documented in [Native instructor workflow](NATIVE_WORKSPACE.md).
+The focused native pages supersede the porting backlog below.
+
+Open `/app/index.html` on the running MISRA API. The retired HTML interface is no
+longer distributed; its known bookmarks redirect to current pages. Shared
+controllers remain in use by the current app.
 
 The new workspace is an **assessment-first marking ledger**, developed in phases.
 It is a functional preview, not yet a replacement with full feature parity or a
@@ -56,25 +61,13 @@ explicitly uncalibrated; highlights locate evidence but do not verify grades.
 The preview does not silently start another full-paper grading job when the paper
 already has recorded marks. Use the existing job retry/history tools for those cases.
 
-## Still accessed through the original workspace
+## Native workflow destinations
 
-The preview's labeled links preserve these workflows while they are ported:
-
-| Task | Existing destination |
-| --- | --- |
-| Assessment duplication and expanded management | Assessments |
-| Source-grounded question suggestions | Rubric Studio |
-| Setup exam/answer-key document import | Rubric Studio |
-| Coverage recovery and advanced OCR tools | Full extraction |
-| Historical runs and expanded review tools | Full grading history |
-| Agreement metrics and run comparison | Original workspace → Evaluation |
-| Browser workflow defaults | Settings |
-| Admin logs and instructor administration | Original workspace (admin only) |
-
-Next phases port setup import/source-question generation and remaining review/
-administration tools, then verify parity through a realistic instructor walkthrough.
-No React migration, vector database, paid provider call or live schema upgrade
-is required merely to open this preview.
+The requested setup, upload, extraction correction, grading history, review queue,
+identity, feedback, results, evaluation and administration workflows now have
+native `/app/` destinations. Links inside this workspace no longer send instructors
+to `/pages`. Local retired copies are ignored reference material and are not a
+supported fallback. This does not certify every historical feature.
 
 Assessment-wide references require the additive source-default upgrade described
 in [Assessment source defaults](ASSESSMENT_SOURCE_DEFAULTS.md). Back up first and
@@ -84,8 +77,8 @@ restart both the API and worker after applying it yourself.
 
 Browser tests use synthetic API records and synthetic original pages. Software
 tests establish workflow behaviour, not improved marking accuracy on real papers.
-Private drafts and selected files remain in memory; only the theme preference
-is stored locally. The URL may retain assessment/view/job identifiers to recover
+Private drafts and selected files remain in memory; theme and interface-language preferences
+are stored locally. The URL may retain assessment/view/job identifiers to recover
 accepted work, never file bytes or student names. Reloading discards an unsent
 file selection but does not repeat an accepted upload. An ambiguous upload
 response requires checking papers/activity before choosing a new selection.

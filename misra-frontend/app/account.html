@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Settings · MISRA EDU</title><link rel="icon" href="../assets/logo.png">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="ledger.css"><link rel="stylesheet" href="app.css">
+  <script src="../js/app.js" defer></script><script src="../js/api.js" defer></script>
+  <script src="common.js" defer></script><script src="locale.js" defer></script><script src="app-shell.js" defer></script><script src="account.js" defer></script>
+</head>
+<body>
+<main class="native-page workflow-panel settings-page">
+  <header class="settings-heading"><h1>Settings</h1><p id="native-account-facts" data-no-translate>Loading account…</p></header>
+  <p id="password-required" role="alert" hidden>Change your password before continuing.</p>
+  <div class="settings-layout">
+    <nav class="settings-navigation" aria-label="Settings sections">
+      <a href="#marking-settings">Marking preferences</a><a href="#appearance-settings">Appearance</a><a href="#security-settings">Security</a><a href="#ai-settings">AI services</a><a href="#account-settings">Account</a>
+    </nav>
+    <div class="settings-content">
+      <section id="marking-settings" class="settings-section" aria-labelledby="marking-settings-title">
+        <h2 id="marking-settings-title">Marking preferences</h2>
+        <p data-i18n>Your survey supplies default marking rules.</p>
+        <div id="marking-completion" role="status"></div>
+        <label class="settings-check" for="use-marking-preferences"><input id="use-marking-preferences" type="checkbox" checked disabled aria-describedby="marking-default-help"><span data-i18n>Use my survey preferences for new marking guides</span></label>
+        <p id="marking-default-help" class="settings-help" data-i18n>For new drafts. Review before approval. Existing guides and grades stay unchanged.</p>
+        <p id="marking-settings-status" role="status">Loading saved setting…</p><p id="marking-settings-error" role="alert" class="form-error"></p>
+        <div class="inline-actions"><a class="button" href="marking-survey.html" id="settings-survey-link">Open marking survey</a><button id="retry-marking-setting" type="button" hidden>Retry save</button><button id="reload-marking-setting" type="button" hidden>Reload setting</button></div>
+      </section>
+      <section id="appearance-settings" class="settings-section" aria-labelledby="appearance-title">
+        <h2 id="appearance-title">Appearance</h2><p data-i18n>Choose how MISRA looks on this device.</p>
+        <fieldset id="native-themes"><legend>Color theme</legend><label class="check-row"><input type="radio" name="theme" value="light" data-theme-option> Light</label><label class="check-row"><input type="radio" name="theme" value="dark" data-theme-option> Dark</label><label class="check-row"><input type="radio" name="theme" value="system" data-theme-option> Match device</label></fieldset><p role="status" id="native-settings-status"></p>
+      </section>
+      <section id="security-settings" class="settings-section" aria-labelledby="security-title">
+        <h2 id="security-title">Security</h2><details id="native-password"><summary>Change password</summary><p data-i18n>Changing your password signs you out on all devices.</p>
+          <form id="native-password-form">
+            <div class="field"><label for="current-password">Current password</label><input id="current-password" name="current_password" type="password" autocomplete="current-password" required></div>
+            <div class="field"><label for="new-password">New password</label><input id="new-password" name="new_password" type="password" autocomplete="new-password" minlength="10" required></div>
+            <div class="field"><label for="confirm-password">Confirm new password</label><input id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" required></div>
+            <p id="native-password-error" role="alert" class="form-error"></p><div class="inline-actions"><button class="primary" type="submit">Change password</button><button type="reset">Cancel</button></div>
+          </form>
+        </details>
+      </section>
+      <section id="ai-settings" class="settings-section" aria-labelledby="ai-title">
+        <h2 id="ai-title">AI services</h2><p data-i18n>AI proposes grades. You review and decide the final marks.</p><details><summary>View connected AI roles</summary><p id="native-ai-status" role="status">Reading configured AI services…</p><div id="native-ai-agents"></div></details>
+      </section>
+      <section id="account-settings" class="settings-section" aria-labelledby="account-title">
+        <h2 id="account-title">Account</h2><details id="delete-account-panel"><summary class="settings-danger">Delete account</summary>
+          <p data-i18n>Deleting your account removes your name, email and sign-in access. This cannot be undone here.</p>
+          <p data-i18n>Institution records, including papers, grades, survey history and past decisions, are retained. This does not delete course or student records.</p>
+          <form id="delete-account-form">
+            <div class="field"><label for="delete-password">Current password</label><input id="delete-password" name="current_password" type="password" autocomplete="current-password" required></div>
+            <div class="field"><label for="delete-confirmation">Type DELETE to confirm</label><input id="delete-confirmation" name="confirmation" type="text" dir="ltr" autocomplete="off" spellcheck="false" pattern="DELETE" required aria-describedby="delete-help"></div>
+            <p id="delete-help" class="settings-help" data-i18n>You will be signed out on all devices. The last active institution administrator must arrange another administrator first.</p>
+            <p id="delete-account-error" role="alert" class="form-error"></p><div class="inline-actions"><button class="danger-button" type="submit">Delete my account</button><button type="reset">Cancel</button></div>
+          </form>
+        </details>
+      </section>
+    </div>
+  </div>
+</main>
+</body></html>

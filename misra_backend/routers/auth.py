@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import secrets
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import User
-from schemas.auth_input import ChangePasswordRequest, ForgotPasswordRequest, LoginRequest, ResetPasswordRequest
+from models import User, Institution, InstructorAccountSettings, PasswordResetToken, ProcessingJob
+from schemas.auth_input import AccountSettingsRequest, AccountSettingsResponse, DeleteAccountRequest, ChangePasswordRequest, ForgotPasswordRequest, LoginRequest, ResetPasswordRequest
+from services.account_settings_service import account_settings, public_settings
 from services.auth_dependencies import authenticated_instructor
 from services.auth_service import (
     CSRF_COOKIE,
@@ -111,6 +113,64 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
 @router.get("/me")
 def current_user(user: User = Depends(authenticated_instructor)):
     return _public_user(user)
+
+
+@router.get("/settings", response_model=AccountSettingsResponse)
+def get_account_settings(user: User = Depends(authenticated_instructor), db: Session = Depends(get_db)):
+    return public_settings(db, user)
+
+
+@router.put("/settings", response_model=AccountSettingsResponse)
+def update_account_settings(payload: AccountSettingsRequest, user: User = Depends(authenticated_instructor), db: Session = Depends(get_db)):
+    db.query(User).filter_by(id=user.id).with_for_update().populate_existing().first()
+    if not user.is_active:
+        raise HTTPException(401, "Sign in required")
+    settings = account_settings(db, user, lock=True)
+    if not settings:
+        settings = InstructorAccountSettings(user_id=user.id, institution_id=user.institution_id)
+        db.add(settings)
+    settings.use_marking_preferences = payload.use_marking_preferences
+    record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
+        action="account_settings_updated", entity_type="user", entity_id=user.id,
+        details={"use_marking_preferences": payload.use_marking_preferences})
+    db.commit()
+    return public_settings(db, user)
+
+
+@router.delete("/account", status_code=204)
+def delete_account(payload: DeleteAccountRequest, response: Response,
+    user: User = Depends(authenticated_instructor), db: Session = Depends(get_db)):
+    # Serialize administrator self-deletions within an institution.
+    db.query(Institution).filter_by(id=user.institution_id).with_for_update().first()
+    db.query(User).filter_by(id=user.id).with_for_update().populate_existing().first()
+    if not user.is_active or not verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(400, "Current password is incorrect")
+    if user.role == "admin" and db.query(User).filter(User.institution_id == user.institution_id,
+        User.role == "admin", User.is_active.is_(True), User.id != user.id).with_for_update().first() is None:
+        raise HTTPException(409, "You are the last active administrator. Another active administrator is required before deleting this account.")
+    if db.query(ProcessingJob.id).filter(ProcessingJob.institution_id == user.institution_id,
+        ProcessingJob.requested_by == user.id, ProcessingJob.status.in_(["queued", "processing", "retrying"])).first():
+        raise HTTPException(409, "Your background tasks are still running. Wait for them to finish before deleting your account.")
+    settings = account_settings(db, user, lock=True)
+    if not settings:
+        settings = InstructorAccountSettings(user_id=user.id, institution_id=user.institution_id)
+        db.add(settings)
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    settings.deleted_at = now
+    settings.use_marking_preferences = False
+    user.is_active = False
+    user.session_version = (user.session_version or 1) + 1
+    user.full_name = "Deleted instructor"
+    user.email = f"deleted-{user.id}@deleted.invalid"
+    user.hashed_password = hash_password(secrets.token_urlsafe(48))
+    user.must_change_password = False
+    db.query(PasswordResetToken).filter(PasswordResetToken.user_id == user.id,
+        PasswordResetToken.used_at.is_(None)).update({PasswordResetToken.used_at: now}, synchronize_session=False)
+    record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
+        action="account_deleted", entity_type="user", entity_id=user.id,
+        details={"academic_history_retained": True})
+    db.commit()
+    _clear_auth_cookies(response)
 
 
 @router.post("/logout", status_code=204)

@@ -1,0 +1,10 @@
+(function(){
+  'use strict';const {$,esc,number,params,ready}=MisraApp;let report;$('evaluation-download').disabled=true;
+  async function load(){try{report=await MisraAPI.evaluation(params.get('exam_id'));if(!report.overall)throw Error('Evaluation response incomplete.');const summary=report.latest_per_answer||report.overall;
+    $('evaluation-summary').innerHTML=[['Labelled answers',summary.label_count],['MAE',summary.mae],['RMSE',summary.rmse],['Exact agreement',summary.exact_agreement==null?null:summary.exact_agreement*100]].map(([title,value])=>`<div><dt>${title}${title==='Exact agreement'?' (%)':''}</dt><dd>${number(value)}</dd></div>`).join('');
+    $('evaluation-note').textContent=summary.label_count?'These metrics describe saved instructor review labels. Independent benchmark labels and controlled retrieval experiments are needed for thesis claims.':'No instructor labels available. Review and label graded answers before calculating agreement.';
+    $('evaluation-questions').innerHTML='<table class="data-table"><thead><tr><th>Question</th><th>Observations</th><th>MAE</th><th>Normalized MAE</th><th>Exact agreement</th></tr></thead><tbody>'+Object.entries(report.per_question||{}).map(([q,r])=>`<tr><td>${esc(q)}</td><td>${number(r.label_count)}</td><td>${number(r.mae)}</td><td>${number(r.normalized_mae)}</td><td>${r.exact_agreement==null?'—':number(r.exact_agreement*100)+'%'}</td></tr>`).join('')+'</tbody></table>';
+    $('evaluation-limitations').innerHTML=(report.notes||[]).map(n=>`<li>${esc(n)}</li>`).join('');$('evaluation-error').textContent='';$('evaluation-download').disabled=false;
+  }catch(e){$('evaluation-error').textContent=e.message;}}
+  $('evaluation-refresh').addEventListener('click',load);$('evaluation-download').addEventListener('click',()=>{if(!report)return;const url=URL.createObjectURL(new Blob([JSON.stringify(report,null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='misra-recorded-agreement.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});ready.then(load).catch(e=>$('evaluation-error').textContent=e.message);
+})();

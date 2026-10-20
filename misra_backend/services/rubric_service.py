@@ -9,7 +9,7 @@ from schemas.rubric_v2 import (
     RubricPolicy,
     RubricV2,
 )
-from services.gemini_client import generate
+from services.inference_service import generate_setup as generate
 
 
 # Compatibility aliases for modules that previously imported these names.

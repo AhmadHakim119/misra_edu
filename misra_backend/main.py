@@ -2,8 +2,9 @@ from pathlib import Path
 import os
 
 from fastapi import Depends, FastAPI
+from fastapi.responses import RedirectResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
+from services.frontend_routes import mount_frontend
 from dotenv import load_dotenv
 from database import engine, Base
 import models
@@ -14,6 +15,8 @@ from services.job_queue_service import redis_connection
 from services.build_info import build_info
 from routers import exam_setup
 from routers import course_materials
+from routers import material_library
+from routers import answer_areas
 
 load_dotenv()
 
@@ -31,6 +34,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition", "X-MISRA-Omitted-Rows"],
 )
 
 
@@ -38,7 +42,7 @@ app.add_middleware(
 async def prevent_sensitive_page_caching(request, call_next):
     response = await call_next(request)
     path = request.url.path
-    if path.startswith("/api/") or path.startswith("/app/pages/") or path.startswith("/app/next/"):
+    if path.startswith(("/api/", "/app/", "/legacy/", "/js/")):
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"
     return response
@@ -66,10 +70,12 @@ app.include_router(exports.router, dependencies=protected)
 app.include_router(jobs.router, dependencies=protected)
 app.include_router(exam_setup.router, dependencies=protected)
 app.include_router(course_materials.router, dependencies=protected)
+app.include_router(material_library.router, dependencies=protected)
+app.include_router(answer_areas.router, dependencies=protected)
 
 @app.get("/")
 def read_root():
-    return {"status": "MISRA Engine Online"}
+    return FileResponse(Path(__file__).resolve().parent.parent/'misra-frontend'/'app'/'landing.html')
 
 @app.get("/api/health")
 def health():
@@ -77,17 +83,20 @@ def health():
         queue_online = bool(redis_connection().ping())
     except Exception:
         queue_online = False
+    from services.inference_service import configuration
     return {
         "status": "online" if queue_online else "degraded",
         "model": DEFAULT_MODEL,
-        "ocr_provider": "gemini",
-        "grading_provider": os.getenv("GRADING_PROVIDER", "gemini"),
-        "grading_model": os.getenv("OPENROUTER_GRADING_MODEL", "nvidia/nemotron-3-super-120b-a12b:free") if os.getenv("GRADING_PROVIDER", "gemini") == "openrouter_free" else DEFAULT_MODEL,
+        "ocr_provider": configuration('ocr')['provider'],
+        "grading_provider": configuration('grading')['provider'],
+        "grading_model": configuration('grading')['model'],
         "queue": "online" if queue_online else "unavailable",
         "build": build_info(),
+        'agents': {name:configuration(task) for name,task in [('extraction','ocr'),('assessment','grading'),('verification','verification')]},
+        'verification_enabled': os.getenv('VERIFICATION_ENABLED','true').lower() == 'true',
     }
 
 
 frontend_dir = Path(__file__).resolve().parent.parent / "misra-frontend"
 if frontend_dir.exists():
-    app.mount("/app", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+    mount_frontend(app,frontend_dir)

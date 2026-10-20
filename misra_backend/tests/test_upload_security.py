@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
 from fastapi import HTTPException
+from fastapi.encoders import jsonable_encoder
 from PIL import Image
 from pypdf import PdfWriter
 from sqlalchemy import create_engine
@@ -292,7 +293,15 @@ class UploadRouteTests(unittest.TestCase):
                 )
             )
 
-        submission = response["submission"]
+        # Encode before accessing ORM attributes: touching the record first hid
+        # the expired-attribute bug seen by real HTTP clients.
+        encoded = jsonable_encoder(response)
+        submission = self.db.query(Submission).one()
+        self.assertEqual(encoded['submission']['id'], submission.id)
+        self.assertEqual(encoded['submission']['exam_id'], 'exam-1')
+        self.assertEqual(encoded['submission']['page_count'], 1)
+        self.assertNotIn('original_file_path', encoded['submission'])
+        self.assertNotIn('institution_id', encoded['submission'])
         self.assertEqual(self.db.query(Submission).count(), 1)
         self.assertEqual(submission.page_count, 1)
         self.assertTrue(Path(submission.original_file_path).exists())

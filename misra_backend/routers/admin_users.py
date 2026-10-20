@@ -38,9 +38,13 @@ def _owned_teacher(db: Session, admin: User, user_id: str) -> User:
         User.id == user_id,
         User.institution_id == admin.institution_id,
         User.role == "teacher",
-    ).first()
+    ).with_for_update().populate_existing().first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instructor not found")
+    from services.account_settings_service import account_settings
+    settings = account_settings(db, user, lock=True)
+    if settings and settings.deleted_at:
+        raise HTTPException(status_code=409, detail="This account was deleted and cannot be reactivated or reset.")
     return user
 
 

@@ -23,6 +23,18 @@ desktop.ini
 .claude/
 .codex/
 .impeccable/
+/AGENTS.md
+/.tmp_doc_review/
+/output/
+/.cache/
+
+# Provisioned neural weights are local assets, not source code.
+*.safetensors
+*.onnx
+*.pt
+*.pth
+*.ckpt
+pytorch_model*.bin
 
 # Uploaded assessment papers contain student PII. Never commit them.
 misra_backend/storage/uploads/*
@@ -36,6 +48,9 @@ misra_backend/test_*.jpg
 misra_backend/test_*.jpeg
 misra_backend/Quiz5_stu_copy.pdf
 misra_ui/
+/misra-frontend/pages/
+# Original marked papers and any derived images in these local source folders.
+/GPHY171_01_Final Exam_F*/
 misra_backend/seed_*.py
 misra-frontend/INSTRUCTIONS.md
 misra-frontend/pages/dashboard-placeholder.html
@@ -43,6 +58,16 @@ misra-frontend/pages/dashboard-placeholder.html
 *.log
 *.sqlite
 *.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3-wal
+*.sqlite3-shm
+.coverage
+.coverage.*
+htmlcov/
 node_modules/
 playwright-report/
 test-results/

@@ -2,14 +2,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Question, QuestionGradingPolicy
+from models import Question, QuestionGradingPolicy, User
+from services.auth_dependencies import require_instructor
 from schemas.grading_policy_input import QuestionGradingPolicyRequest
 
 router = APIRouter(prefix="/api", tags=["grading-policies"])
 
 
 @router.get("/questions/{question_id}/grading-policy")
-def get_grading_policy(question_id: str, db: Session = Depends(get_db)):
+def get_grading_policy(question_id: str, db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    if not db.query(Question).filter(Question.id == question_id, Question.institution_id == user.institution_id).first():
+        raise HTTPException(status_code=404, detail="Question not found")
     policy = (
         db.query(QuestionGradingPolicy)
         .filter(QuestionGradingPolicy.question_id == question_id)
@@ -25,8 +28,9 @@ def upsert_grading_policy(
     question_id: str,
     payload: QuestionGradingPolicyRequest,
     db: Session = Depends(get_db),
+    user: User = Depends(require_instructor),
 ):
-    question = db.query(Question).filter(Question.id == question_id).first()
+    question = db.query(Question).filter(Question.id == question_id, Question.institution_id == user.institution_id).first()
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
 

@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Marking workspace · MISRA</title>
+  <link rel="icon" href="../assets/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="ledger.css?v=3">
+  <link rel="stylesheet" href="guide.css?v=2">
+  <script src="../js/api.js?v=26" defer></script>
+  <script src="../js/paper-evidence.js?v=1" defer></script>
+  <script src="job-status.js" defer></script>
+  <script src="paper-highlights.js" defer></script>
+  <script src="workflows.js?v=2" defer></script>
+  <script src="../js/assessment-sources.js?v=3" defer></script>
+  <script src="../js/answer-keys.js?v=1" defer></script>
+  <script src="../js/course-materials.js?v=1" defer></script>
+  <script src="editors.js?v=2" defer></script>
+  <script src="guide.js?v=2" defer></script>
+  <script src="teaching.js?v=1" defer></script>
+  <script src="chapter-picker.js?v=1" defer></script>
+  <script src="export.js?v=1" defer></script>
+  <script src="ledger.js?v=2" defer></script>
+  <script src="locale.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#assessment-main">Skip to assessment</a>
+  <header class="app-bar">
+    <a class="brand" href="./" aria-label="MISRA EDU home"><img class="logo-light" src="../assets/logo-transparent.png" alt="MISRA EDU"><img class="logo-dark" src="../assets/logo-white.png" alt="" aria-hidden="true"></a>
+    <nav aria-label="Workspace"><button type="button" id="toggle-assessments" aria-expanded="true" aria-controls="assessment-index">Assessments</button><button type="button" id="review-nav">Review</button><button type="button" id="activity-link">Activity</button><a href="account.html">Settings</a></nav>
+    <div class="account"><button id="theme" type="button" aria-label="Switch to dark theme">Dark theme</button><button id="sign-out" type="button">Sign out</button></div>
+  </header>
+  <div class="ledger-layout">
+    <aside id="assessment-index" class="assessment-index" aria-labelledby="assessment-list-title">
+      <div class="index-title"><h2 id="assessment-list-title">Assessments</h2><a href="assessments.html">Manage</a></div>
+      <label class="visually-hidden" for="assessment-search">Find an assessment</label><input type="search" id="assessment-search" placeholder="Find an assessment">
+      <div id="assessment-list"><p role="status">Loading assessments…</p></div>
+      <div class="legacy-link"><a href="dashboard.html">Dashboard</a><span>Instructor workspace</span></div>
+    </aside>
+    <main id="assessment-main" class="assessment-main">
+      <div id="error" role="alert" hidden></div>
+      <p id="ledger-notice" role="status" hidden></p>
+      <header class="assessment-title"><div><h1 id="exam-title">Your assessments</h1><p id="exam-context">Choose an assessment to start marking.</p></div><button type="button" id="upload-link" disabled>Upload papers</button></header>
+      <section class="assessment-next" aria-label="Next assessment action"><p id="next-action-copy" role="status">Choose an assessment to continue.</p><button id="next-action" class="primary" type="button" disabled>Continue</button></section>
+      <nav class="task-tabs" aria-label="Assessment tasks"><button type="button" id="sources-link" disabled>Rubric &amp; sources</button><button type="button" id="papers-tab" aria-current="page">Papers</button><button type="button" id="review-tab" aria-pressed="false">Review</button><button type="button" id="export-link" disabled>Export</button></nav>
+      <section id="ledger-setup" class="workflow-panel" aria-labelledby="ledger-setup-title" hidden>
+        <header class="workflow-heading"><div><h2 id="ledger-setup-title">Your assessment marking guide</h2><p>Sources ground the answers. Criteria decide the marks. Review the whole guide and approve once.</p></div><button id="refresh-ledger-checks" type="button">Refresh checks</button></header>
+        <nav class="guide-steps" aria-label="Prepare assessment guide"><button type="button" id="guide-sources-tab" aria-pressed="true">Sources</button><button type="button" id="author-rubrics" aria-pressed="false">Marking guide</button><button type="button" id="guide-review-tab" aria-pressed="false">Review &amp; approve</button></nav>
+        <p id="guide-status" role="status">Choose checked sources, then prepare the marking guide.</p>
+        <section id="guide-sources-stage" aria-label="Assessment sources"><h3>Ground this assessment in your teaching material</h3><p>Choose the chapters, slides or notes that explain these questions. Every question inherits them; exceptions are optional.</p><div class="guide-source-actions"><button type="button" id="manage-course-library">Add or check course material</button><button type="button" data-guide-step="questions">Continue to marking guide</button></div><details class="source-defaults" open><summary>Sources used across this assessment</summary><div id="assessment-sources-host"><p>Choose an assessment first.</p></div></details>
+        <section id="native-library" aria-label="Course reference library" hidden><h3>Course reference library</h3><p>Check the original pages and extracted text before approval. These materials are not student submissions.</p><div id="library-material-host"></div></section></section>
+        <section id="guide-questions-stage" aria-label="Whole assessment marking guide" hidden><header class="guide-outline-heading"><div><h3>Marking guide</h3><p id="guide-total"></p></div><div class="guide-source-actions"><button type="button" id="author-new-question">Add question</button><button type="button" data-guide-step="review">Review whole guide</button></div></header><div id="guide-outline"></div>
+        <section id="native-authoring" aria-label="Edit question marking details" hidden>
+          <div class="author-question-controls"><button type="button" id="author-back" data-guide-step="questions">Back to whole guide</button><div class="field"><label for="author-question">Question to edit</label><select id="author-question"></select></div><button type="button" id="author-reload">Reload questions</button></div>
+          <div id="rubric-workspace"></div>
+          <fieldset id="author-foundations">
+          <details id="author-key-section" class="author-section"><summary>Answer key &amp; alternatives</summary><div id="answer-key-panel"></div></details>
+          <details id="author-question-sources" class="author-section"><summary>Source exceptions for this question</summary><div id="question-material-host"></div></details>
+          </fieldset>
+        </section>
+        </section>
+        <section id="guide-review" aria-label="Review saved assessment guide" hidden><h3>Review what future grading will use</h3><p>One approval publishes the saved rubric, answer-key drafts and source choices together. Checked source pages remain independently verified. Previous grading runs never change.</p><div class="guide-source-actions"><button type="button" id="guide-refresh">Refresh saved guide</button><button type="button" id="guide-expand" aria-expanded="false" aria-controls="guide-review-content">Expand all questions</button></div><form id="guide-approval"><label class="guide-confirm"><input type="checkbox" id="guide-confirm"> I reviewed the questions, solutions, marking rules and selected sources for this assessment.</label><button type="submit" id="guide-approve" class="primary" disabled>Approve assessment guide</button><p id="guide-approval-state" role="status"></p></form><div id="guide-review-content"></div></section>
+        <details id="ledger-setup-checks"><summary>Technical readiness details</summary><div id="setup-overview"></div></details>
+        <p><a id="original-studio" href="setup.html">Import an exam or draft questions from course material</a></p>
+      </section>
+      <section id="ledger-upload" class="workflow-panel" aria-labelledby="ledger-upload-title" hidden>
+        <header class="workflow-heading"><div><h2 id="ledger-upload-title" tabindex="-1">Upload student papers</h2><p>Upload scanned student answers. Extraction continues in the background; you can review each paper before grading.</p></div><button type="button" data-show-papers>Back to papers</button></header>
+        <div class="setup-gate"><p id="ledger-readiness" role="status">Checking assessment setup…</p><button id="refresh-upload-checks" type="button">Refresh checks</button></div>
+        <form id="ledger-upload-form">
+          <fieldset class="upload-modes"><legend>How are the papers organized?</legend><button type="button" data-ledger-upload-mode="single" aria-pressed="true">One paper</button><button type="button" data-ledger-upload-mode="batch" aria-pressed="false">Batch</button></fieldset>
+          <label id="upload-drop" class="upload-drop" for="ledger-files"><strong>Choose student papers</strong><span id="upload-hint">Choose files or drop them here.</span><input id="ledger-files" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" aria-describedby="upload-hint"></label>
+          <ul id="upload-selection" class="upload-selection"></ul><button type="button" id="clear-upload" hidden>Clear selection</button>
+          <div id="split-field" class="field" hidden><label for="ledger-split">Pages per student (optional)</label><input type="number" id="ledger-split" min="1" step="1"><p class="muted">Only for one combined PDF. Leave blank when each file is one student.</p></div>
+          <p id="upload-error" role="alert" class="form-error" hidden></p>
+          <button class="primary" id="ledger-upload-submit" type="submit" disabled>Upload paper &amp; start OCR</button>
+        </form>
+        <div id="upload-accepted" class="upload-accepted" aria-live="polite"></div><button type="button" id="upload-another" hidden>Upload another selection</button>
+      </section>
+      <section id="ledger-export" class="workflow-panel" aria-labelledby="export-title" hidden><header class="workflow-heading"><div><h2 id="export-title">Check &amp; export grades</h2><p>Recorded instructor marks are used. Review what each file includes before downloading.</p></div><button type="button" id="refresh-export">Refresh checks</button></header><div class="field"><label for="native-export-profile">CSV format</label><select id="native-export-profile"><option value="blackboard">Blackboard CSV</option><option value="generic">Generic CSV</option></select></div><p id="native-export-note"></p><div class="export-actions"><button type="button" id="native-export-csv" class="primary" disabled>Download CSV</button><button type="button" id="native-export-xlsx" disabled>Excel report</button></div><p role="status" id="native-export-status"></p><p><a id="recorded-agreement" href="evaluation.html">Inspect recorded grading agreement</a> · <a id="resolve-identities" href="identities.html">Resolve student identities</a></p><div id="native-export-checks"></div></section>
+      <section id="ledger-activity" class="workflow-panel" aria-labelledby="activity-title" hidden><header class="workflow-heading"><div><h2 id="activity-title">Background activity</h2><p>Uploads, extraction and grading continue when you leave a page.</p></div><button type="button" data-reconnect>Refresh activity</button></header><div id="background-activity" aria-live="polite"></div></section>
+      <section id="ledger-insights" class="workflow-panel" aria-labelledby="insights-title" hidden><header class="workflow-heading"><div><h2 id="insights-title">What the class understood</h2><p>Recorded question and criterion marks show strengths and areas to revisit. These are observations—not a new AI diagnosis.</p></div><button type="button" id="refresh-insights">Refresh class feedback</button></header><div id="learning-insights" aria-live="polite"></div></section>
+      <section class="paper-section" aria-labelledby="papers-title"><details id="paper-picker" open><summary id="papers-title">Student papers</summary><div class="paper-toolbar"><label class="visually-hidden" for="paper-search">Find a paper</label><input id="paper-search" type="search" placeholder="Find a student or paper"></div><div id="paper-list"><p>Choose an assessment to see its papers.</p></div></details><p id="selected-paper-copy" hidden></p></section>
+      <section id="paper-identity" hidden></section>
+      <section id="question-detail" class="question-detail" aria-live="polite"><div class="empty"><h2>From paper to decision</h2><p>Select a paper to see the extracted answer, approved references and criterion feedback beside the original page.</p></div></section>
+    </main>
+    <aside class="evidence-panel" aria-labelledby="evidence-title">
+      <div class="evidence-heading"><h2 id="evidence-title">Paper &amp; decision</h2><span id="paper-status"></span></div>
+      <div id="paper-viewer">
+      <div id="page-controls" class="page-controls" hidden><span id="paper-name"></span><div><button type="button" id="previous-page" aria-label="Previous paper page">Previous</button><label for="page-select" class="visually-hidden">Paper page</label><select id="page-select"></select><button type="button" id="next-page" aria-label="Next paper page">Next</button></div></div>
+      <div id="viewer-tools" class="viewer-tools" hidden><div><button type="button" id="zoom-out" aria-label="Zoom out original paper">−</button><output id="paper-zoom" aria-live="polite">100%</output><button type="button" id="zoom-in" aria-label="Zoom in original paper">+</button><button type="button" id="fit-paper">Fit width</button></div><button type="button" id="expand-paper">Expand paper</button></div>
+      <div id="paper-viewport" class="paper-viewport"><div class="empty"><p>The original paper appears here. Full pages remain available—highlights are locations, not crops or grade verification.</p></div></div>
+      <p id="location-note" class="location-note"></p>
+      <div id="highlight-tools" class="highlight-tools" hidden></div>
+      <a id="original-link" href="extraction.html">Review & correct extraction</a>
+      </div>
+      <div id="grade-editor"></div>
+    </aside>
+  </div>
+  <dialog id="expanded-paper" aria-labelledby="expanded-title"><header><h2 id="expanded-title">Original paper · expanded view</h2><button type="button" id="close-paper" autofocus>Return to marking</button></header><div id="expanded-viewer-host"></div></dialog>
+</body>
+</html>
