@@ -144,7 +144,7 @@ def build_csv(export: GradeExport, profile: str, identifier: str) -> tuple[bytes
     writer = csv.writer(buffer, lineterminator="\r\n")
     omitted = 0
     if profile == "blackboard":
-        writer.writerow(["Username", _grade_column_title(export)])
+        writer.writerow(["Username", _safe_text(_grade_column_title(export))])
         for row in export.rows:
             username = row["email"] if identifier == "email" else row["student_number"]
             if not username or not row["ready_for_lms"]:
@@ -324,13 +324,13 @@ def build_xlsx(export: GradeExport) -> bytes:
 
     metadata = workbook.create_sheet("Export notes")
     metadata.append(["Field", "Value"])
-    metadata.append(["Assessment", export.exam.title])
+    metadata.append(["Assessment", _safe_text(export.exam.title)])
     if (export.grading_scope or {}).get("kind") == "paper_only":
         metadata.append(["Scope", "Paper component only; external practical marks are not included."])
         metadata.append(["Externally assessed questions", ", ".join(export.grading_scope["external_question_numbers"])])
-    metadata.append(["Course", export.course.title if export.course else ""])
-    metadata.append(["Course code", export.course.course_code if export.course else ""])
-    metadata.append(["Term", export.course.term if export.course else ""])
+    metadata.append(["Course", _safe_text(export.course.title if export.course else "")])
+    metadata.append(["Course code", _safe_text(export.course.course_code if export.course else "")])
+    metadata.append(["Term", _safe_text(export.course.term if export.course else "")])
     metadata.append(["Rule", "Teacher overrides are exported when present; unresolved or incomplete rows are not LMS-ready."])
     _style_sheet(metadata, [20, 90])
     metadata.column_dimensions["B"].width = 90

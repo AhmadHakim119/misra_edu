@@ -86,8 +86,14 @@ class AuthenticationTests(unittest.TestCase):
         self.assertNotIn("misra_session", login.json())
         self.assertEqual(client.get("/api/auth/me").json()["id"], "teacher-1")
 
-        accepted = client.post("/api/auth/logout")
+        copied_cookie = client.cookies.get('misra_session')
+        self.assertEqual(client.post('/api/auth/logout').status_code, 403)
+        accepted = client.post("/api/auth/logout", headers={'X-CSRF-Token':client.cookies.get('misra_csrf')})
         self.assertEqual(accepted.status_code, 204)
+        client.cookies.set('misra_session', copied_cookie)
+        self.assertEqual(client.get('/api/auth/me').status_code, 401)
+        client.close()
+        engine.dispose()
 
 
 if __name__ == "__main__":

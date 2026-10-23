@@ -1,12 +1,27 @@
 """Offline exact-agreement target and review diagnostics; never changes grades.
 
-The target event is historical reference agreement, not proven correctness or an
-instructor's satisfaction. Failed/missing requests stay in the target denominator.
+The default event is historical agreement. Other reference kinds must be declared
+explicitly; an agent audit never becomes instructor validation. Failed/missing
+requests stay in the target denominator.
 Use separate reports for reused development cases and genuinely held-out cases.
 """
 import math
 
 from services.benchmark_metrics import EPSILON, number
+
+
+REFERENCE_EVENTS = {
+    'historical_teacher': 'exact_historical_reference_agreement',
+    'instructor_adjudicated': 'exact_instructor_adjudicated_reference_agreement',
+    'project_user_adjudicated': 'exact_project_user_adjudicated_reference_agreement',
+    'agent_development_audit': 'exact_agent_development_audit_agreement',
+}
+
+
+def _reference_event(reference_kind):
+    if not isinstance(reference_kind, str) or reference_kind not in REFERENCE_EVENTS:
+        raise ValueError('Declare a supported reference-grade provenance.')
+    return REFERENCE_EVENTS[reference_kind]
 
 
 def wilson_interval(successes, count):
@@ -24,12 +39,15 @@ def wilson_interval(successes, count):
             'method':'Wilson 95%; descriptive, assumes independent observations'}
 
 
-def summarize_reliability(observations, *, target=.8):
+def summarize_reliability(observations, *, target=.8, reference_kind='historical_teacher'):
     """One record per prescheduled answer, including failures and missing runs.
 
     Caller selects the cohort before evaluation. needs_review is the recorded
     operational flag, not a fitted confidence threshold or a success label.
+    reference_kind describes the supplied labels; it neither approves nor checks
+    them. The historical default preserves existing callers and saved meanings.
     """
+    event = _reference_event(reference_kind)
     target = number(target, 'target')
     if not 0 < target <= 1:
         raise ValueError('Target must be in (0, 1].')
@@ -64,7 +82,17 @@ def summarize_reliability(observations, *, target=.8):
     unflagged = valid-flagged
     rate = exact/count if count else None
     interval = wilson_interval(exact, count)
-    return {'event':'exact_historical_reference_agreement', 'target':target,
+    interpretation = (
+        'Flagging a disagreement does not make its grade correct. Historical labels may differ from the approved guide. This report never authorizes automatic finalization.'
+        if reference_kind == 'historical_teacher' else
+        'Agreement with the declared reference grades, not instructor satisfaction or automatic finalization. '
+        + ('Agent audit labels are development evidence, not independent human adjudication.'
+           if reference_kind == 'agent_development_audit' else
+           'Project-user adjudication is distinct from instructor adjudication.'
+           if reference_kind == 'project_user_adjudicated' else
+           'Instructor adjudication applies only to the supplied labels; it does not establish reliability on other answers.')
+    )
+    return {'event':event, 'target':target,
         'scheduled_count':count, 'scored_count':valid, 'unavailable_count':unavailable,
         'exact_count':exact, 'exact_rate_over_scheduled':rate,
         'exact_rate_among_scored':exact/valid if valid else None,
@@ -82,16 +110,17 @@ def summarize_reliability(observations, *, target=.8):
         'unflagged_scored_count':unflagged, 'unflagged_disagreement_count':errors-captured,
         'unflagged_disagreement_rate':(errors-captured)/unflagged if unflagged else None,
         'confidence_calibrated':False,
-        'interpretation':'Flagging a disagreement does not make its grade correct. Historical labels may differ from the approved guide. This report never authorizes automatic finalization.'}
+        'interpretation':interpretation}
 
 
-def summarize_replicates(replicates, *, target=.8):
+def summarize_replicates(replicates, *, target=.8, reference_kind='historical_teacher'):
     """Compare prescheduled repeats without pooling correlated answer copies.
 
     Each repeat must contain the same answers, reference scores and score scales.
     A failed repeat cannot establish a stable or consistently exact grade. Repeats
     characterize variation; they do not multiply the independent sample size.
     """
+    _reference_event(reference_kind)
     indexed, summaries = {}, {}
     baseline = None
     for run in replicates:
@@ -101,7 +130,7 @@ def summarize_replicates(replicates, *, target=.8):
         rows = run.get('observations')
         if not isinstance(rows, list) or not rows:
             raise ValueError('Each repeat needs the same nonempty scheduled cohort.')
-        summaries[identifier] = summarize_reliability(rows, target=target)
+        summaries[identifier] = summarize_reliability(rows, target=target, reference_kind=reference_kind)
         cohort = {row['answer_id']:(number(row['reference_score'], 'reference_score'),
                                    number(row['max_score'], 'max_score')) for row in rows}
         if baseline is not None and cohort != baseline:

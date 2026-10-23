@@ -11,6 +11,73 @@ from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
 from services.source_location_service import locate_text, parse_page_words, read_page_words
 
 
+class ScanDisplayGeometryTests(unittest.TestCase):
+    def location(self, **box):
+        return {'status':'located','method':'vision_grid','bounding_box':box}
+
+    def ink_page(self, size, lines):
+        from PIL import Image, ImageDraw
+        image=Image.new('RGB',size,'white');draw=ImageDraw.Draw(image)
+        for y in lines:
+            # Disjoint strokes mimic text, rather than one solid page rule.
+            for x in range(round(size[0]*.2),round(size[0]*.7),30):
+                draw.line((x,round(y*size[1]),x+6,round((y+.035)*size[1])),fill='black',width=3)
+        return image
+
+    def test_clipped_bands_expand_across_page_sizes_without_mutating_saved_geometry(self):
+        from copy import deepcopy
+        from services.source_location_service import refine_scan_location
+        for size in ((600,800),(1200,900),(1200,1600)):
+            with self.subTest(size=size):
+                original=self.location(x=.1,y=.61,width=.7,height=.01);snapshot=deepcopy(original)
+                image=self.ink_page(size,[.6])
+                result=refine_scan_location(image,original)
+                self.assertEqual(result['status'],'located')
+                box=result['bounding_box']
+                self.assertLess(box['y'],.6)
+                self.assertGreater(box['y']+box['height'],.635)
+                self.assertEqual(box['x'],.1);self.assertAlmostEqual(box['width'],.7)
+                self.assertEqual(original,snapshot)
+                self.assertEqual(result['reported_bounding_box'],snapshot['bounding_box'])
+
+    def test_blank_seed_does_not_move_to_a_nearby_different_answer(self):
+        from services.source_location_service import refine_scan_location
+        image=self.ink_page((800,1000),[.64])
+        result=refine_scan_location(image,self.location(x=.1,y=.6,width=.7,height=.015))
+        self.assertEqual(result['status'],'unverified');self.assertNotIn('bounding_box',result)
+
+    def test_rules_alone_do_not_become_answer_boxes(self):
+        from PIL import Image,ImageDraw
+        from services.source_location_service import refine_scan_location
+        image=Image.new('RGB',(800,1000),'white');draw=ImageDraw.Draw(image)
+        for y in range(570,660,20):draw.line((0,y,799,y),fill='black',width=2)
+        result=refine_scan_location(image,self.location(x=.1,y=.6,width=.7,height=.02))
+        self.assertEqual(result['status'],'unverified');self.assertNotIn('bounding_box',result)
+
+    def test_multiline_regions_keep_all_intersecting_bands(self):
+        from services.source_location_service import refine_scan_location
+        image=self.ink_page((800,1000),[.58,.63])
+        result=refine_scan_location(image,self.location(x=.1,y=.59,width=.7,height=.05))
+        self.assertEqual(result['status'],'located')
+        self.assertLess(result['bounding_box']['y'],.58)
+        self.assertGreater(result['bounding_box']['y']+result['bounding_box']['height'],.665)
+
+    def test_native_and_instructor_confirmed_locations_are_never_adjusted(self):
+        from services.source_location_service import refine_scan_location
+        from PIL import Image
+        for method in ('native_pdf_text','instructor_confirmed_area'):
+            value={**self.location(x=.2,y=.4,width=.5,height=.15),'method':method}
+            self.assertEqual(refine_scan_location(Image.new('RGB',(100,100)),value),value)
+
+    def test_invalid_or_search_edge_geometry_is_unavailable(self):
+        from services.source_location_service import refine_scan_location
+        image=self.ink_page((800,1000),[.56])
+        for box in ({'x':.1,'y':.6,'width':.7,'height':.001},
+                    {'x':.8,'y':.6,'width':.7,'height':.01}):
+            result=refine_scan_location(image,self.location(**box))
+            self.assertEqual(result['status'],'unverified');self.assertNotIn('bounding_box',result)
+
+
 def words_xml(words):
     return ('<html><body><page width="600" height="800"><line>' +
             ''.join(f'<word xMin="{60 + i * 30}" yMin="200" xMax="{85 + i * 30}" yMax="212">{word}</word>'

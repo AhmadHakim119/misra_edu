@@ -6,6 +6,7 @@ import json
 from services.grading_package_service import (provider_grading_package,
     restore_provider_citations, validate_evidence_references)
 from services import verification_agent
+from services.grading_policy_checks import remap_numeric_refs
 
 
 def revision_eligible(consultation, *, checked_transcription=False):
@@ -42,6 +43,7 @@ def reconsider_with_sources(initial, package, consultation, *, assessment_fn,
     for item in candidate['criteria_scores']:
         item['evidence_refs'] = [e_alias[ref] for ref in item['evidence_refs'] if ref in e_alias]
         item['reference_refs'] = [r_alias[ref] for ref in item['reference_refs'] if ref in r_alias]
+        remap_numeric_refs(item, {**e_alias, **r_alias})
     findings = deepcopy(consultation['criteria'])
     for item in findings:
         item['evidence_refs'] = [e_alias[ref] for ref in item['evidence_refs']]

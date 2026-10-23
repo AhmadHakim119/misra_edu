@@ -19,7 +19,7 @@ def snapshot_hash(value: dict) -> str:
     return text_hash(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":"), allow_nan=False))
 
 
-def source_package(db: Session, exam: Exam, request: SourceQuestionDraftRequest) -> dict:
+def source_package(db: Session, exam: Exam, request: SourceQuestionDraftRequest, instructor_profile=None) -> dict:
     if not schema_available(db):
         raise ValueError("Install the course-material database upgrade before generating questions.")
     course = db.query(Course).filter(Course.id == exam.course_id, Course.institution_id == exam.institution_id).first()
@@ -74,8 +74,11 @@ def source_package(db: Session, exam: Exam, request: SourceQuestionDraftRequest)
         total += len(chunk.text)
     if not passages:
         raise ValueError("No relevant approved passages were found. Refine the topic or select exact passages.")
-    return dict(exam_id=exam.id, course_id=course.id, request=request.model_dump(),
+    result = dict(exam_id=exam.id, course_id=course.id, request=request.model_dump(),
                 strategy="approved-pages/bm25-v1", passages=passages, total_context_chars=total)
+    if instructor_profile:
+        result['instructor_profile'] = deepcopy(instructor_profile)
+    return result
 
 
 def generate_source_questions(job: ProcessingJob, db: Session, progress) -> None:
@@ -84,7 +87,8 @@ def generate_source_questions(job: ProcessingJob, db: Session, progress) -> None
     if not exam or payload.get("purpose") != PURPOSE:
         raise ValueError("Question-generation job does not belong to this workspace.")
     request = SourceQuestionDraftRequest.model_validate(payload.get("generation_request"))
-    package = source_package(db, exam, request)
+    profile = (payload.get('source_package') or {}).get('instructor_profile')
+    package = source_package(db, exam, request, profile)
     seal = snapshot_hash(package)
     if payload.get("source_package_sha256") and payload["source_package_sha256"] != seal:
         raise ValueError("Approved sources changed after this draft request. Create a new generation request.")
@@ -115,6 +119,8 @@ Do not include question numbers or claim independent source/answer verification.
 """
     prompt += "\nINSTRUCTOR REQUEST:\n" + json.dumps(request.model_dump(exclude={"bindings"}), ensure_ascii=False)
     prompt += "\nAPPROVED REFERENCE DATA:\n" + json.dumps(provider_sources, ensure_ascii=False)
+    from services.account_settings_service import profile_prompt
+    prompt += profile_prompt(profile)
     completion = complete_free(prompt)
     proposals = SourceQuestionProposals.model_validate_json(completion.text)
     if len(proposals.questions) != request.count:
@@ -145,7 +151,7 @@ Do not include question numbers or claim independent source/answer verification.
             citations=[c.model_dump() for c in citations], source_refs=sorted({c.source_ref for c in citations})))
         existing_numbers.add(str(number))
     # Re-check approved content after inference; no stale-source draft is saved.
-    if snapshot_hash(source_package(db, exam, request)) != seal:
+    if snapshot_hash(source_package(db, exam, request, profile)) != seal:
         raise ValueError("Approved sources changed during generation. No questions were added.")
     payload.update(draft_questions=drafts, draft_snapshot_sha256=snapshot_hash(drafts),
                    warnings=["AI-generated questions, solutions and criteria require instructor review.", *proposals.warnings],
@@ -168,7 +174,7 @@ def validated_import_sources(job, reviewed_questions, db, user):
         raise ValueError("Saved source/question snapshots changed. Generate a new draft.")
     exam = db.query(Exam).filter(Exam.id == payload.get("exam_id"), Exam.institution_id == user.institution_id).first()
     request = SourceQuestionDraftRequest.model_validate(payload.get("generation_request"))
-    if not exam or snapshot_hash(source_package(db, exam, request)) != payload["source_package_sha256"]:
+    if not exam or snapshot_hash(source_package(db, exam, request, package.get('instructor_profile'))) != payload["source_package_sha256"]:
         raise ValueError("Approved source content is no longer available unchanged. Generate a new draft.")
     originals = {q["source_draft_id"]:q for q in drafts}
     selected_ids = [q.source_draft_id for q in reviewed_questions]

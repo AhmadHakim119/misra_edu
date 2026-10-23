@@ -135,13 +135,9 @@ async def get_results(
     external_answers = [a for a in answers if a.question_id in grading_scope["external_question_ids"]]
     answers = [a for a in answers if a.question_id not in grading_scope["external_question_ids"]]
     latest_review_labels = []
+    from services.review_state_service import latest_operational_label
     for answer in answers:
-        label = (
-            db.query(ReviewLabel)
-            .filter(ReviewLabel.answer_id == answer.id)
-            .order_by(ReviewLabel.created_at.desc(), ReviewLabel.id.desc())
-            .first()
-        )
+        label = latest_operational_label(db, answer)
         if label:
             latest_review_labels.append(label)
 
@@ -491,6 +487,23 @@ def get_source_locations(
         if revision:
             result['sources'][source.id]={'status':'located','method':'instructor_confirmed_area',
                 'bounding_box':revision['bounding_box'],'revision_id':revision['id']}
+    coarse = [key for key, value in result['sources'].items()
+              if value.get('method') == 'vision_grid' and value.get('status') == 'located']
+    if coarse:
+        from services.source_location_service import refine_scan_location
+        from services.answer_location_service import page_image
+        try:
+            image = page_image(_stored_submission_path(submission.original_file_path), page_index)
+            for source_id in coarse:
+                result['sources'][source_id] = refine_scan_location(image, result['sources'][source_id])
+        except Exception:
+            # Display refinement never fails the paper, starts inference or alters
+            # saved coordinates. Unchecked coarse geometry must stay explicit.
+            for source_id in coarse:
+                location = dict(result['sources'][source_id])
+                location['reported_bounding_box'] = location.pop('bounding_box', None)
+                location.update(status='unverified', reason='display_geometry_unavailable', geometry_check='ink_support_unavailable')
+                result['sources'][source_id] = location
     return result
 
 

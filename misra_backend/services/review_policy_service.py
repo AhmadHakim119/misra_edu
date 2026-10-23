@@ -1,7 +1,7 @@
 """Prospective review routing. Heuristic signals are not accuracy probabilities."""
 import math
 
-REVIEW_POLICY_VERSION = '2026-10-18.v3'
+REVIEW_POLICY_VERSION = '2026-10-23.v4'
 
 
 def review_decision(*, confidence, model_confidence, legibility, verification_status,
@@ -39,6 +39,8 @@ def review_decision(*, confidence, model_confidence, legibility, verification_st
         reasons.append('corrected_extraction_review_required')
     reasons.extend(dict.fromkeys(f['code'] for f in decision_findings))
     return {'version': REVIEW_POLICY_VERSION, 'basis': 'heuristic_uncalibrated',
+            'hard_gate_reasons': [r for r in reasons if r not in {'low_blended_confidence','low_model_confidence'}],
+            'confidence_only_review': bool(reasons) and all(r in {'low_blended_confidence','low_model_confidence'} for r in reasons),
             'thresholds': {'blended_below': blended_threshold, 'model_below': model_threshold},
             'signals': {'blended_confidence': confidence, 'model_confidence': model_confidence,
                         'legibility': legibility, 'verification_status': verification_status},

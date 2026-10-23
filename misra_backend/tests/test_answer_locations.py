@@ -52,6 +52,33 @@ class AnswerLocationTests(unittest.TestCase):
         self.assertEqual(sent[1].size, (864, 664))
         self.assertEqual(image.size, (800, 600))
 
+    def test_display_refines_saved_box_without_changing_its_run_or_answer(self):
+        from copy import deepcopy
+        from PIL import ImageDraw
+        image=Image.new('RGB',(800,1000),'white');draw=ImageDraw.Draw(image)
+        for x in range(160,560,30):draw.line((x,600,x+6,635),fill='black',width=3)
+        location={'status':'located','method':'vision_grid','bounding_box':dict(x=.1,y=.61,width=.7,height=.01)}
+        job=self.job(locations={'source':location});job.status='completed';self.db.commit()
+        saved=deepcopy(job.payload);text=self.source().extracted_text
+        with patch('services.source_location_service.page_source_locations',return_value={'sources':{'source':{'status':'unverified'}}}), \
+             patch('services.answer_location_service.page_image',return_value=image), \
+             patch('services.answer_location_service.complete') as provider:
+            result=get_source_locations('s',Response(),0,self.db,SimpleNamespace(institution_id='i'))
+        self.assertEqual(result['sources']['source']['geometry_check'],'vertical_ink_extent_checked')
+        self.assertGreater(result['sources']['source']['bounding_box']['height'],.035)
+        self.assertEqual(job.payload,saved);self.assertEqual(self.source().extracted_text,text)
+        self.assertEqual(self.db.query(ProcessingJob).count(),1);provider.assert_not_called()
+
+    def test_unavailable_display_image_never_reuses_the_coarse_rectangle(self):
+        location={'status':'located','method':'vision_grid','bounding_box':dict(x=.1,y=.61,width=.7,height=.01)}
+        job=self.job(locations={'source':location});job.status='completed';self.db.commit()
+        with patch('services.source_location_service.page_source_locations',return_value={'sources':{}}), \
+             patch('services.answer_location_service.page_image',side_effect=OSError('Synthetic unavailable image')):
+            result=get_source_locations('s',Response(),0,self.db,SimpleNamespace(institution_id='i'))
+        self.assertEqual(result['sources']['source']['status'],'unverified')
+        self.assertNotIn('bounding_box',result['sources']['source'])
+        self.assertEqual(job.payload['locations']['source'],location)
+
     def test_missing_duplicate_or_unknown_source_is_rejected(self):
         for locations in [[], [{'source_id': 'unknown', 'found': False}],
                           [{'source_id': 'part_1', 'found': False}]*2]:

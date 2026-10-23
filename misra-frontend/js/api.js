@@ -68,6 +68,10 @@
 
   window.MisraAPI = {
     baseUrl: API_BASE,
+    pilotStudies: () => request('/pilot-studies'),
+    pilotStudy: id => request(`/pilot-studies/${encodeURIComponent(id)}`),
+    pilotPaper: (id,paper) => request(`/pilot-studies/${encodeURIComponent(id)}/papers/${encodeURIComponent(paper)}`),
+    pilotPageUrl: (id,paper,page) => `${API_BASE}/pilot-studies/${encodeURIComponent(id)}/papers/${encodeURIComponent(paper)}/pages/${page}`,
     health: () => request('/health'),
     currentUser: () => request('/auth/me'),
     logout: () => request('/auth/logout', { method: 'POST', body: '{}' }),
@@ -138,6 +142,7 @@
     approveRubric: (versionId) => request(`/rubric-versions/${encodeURIComponent(versionId)}/approve`, { method: 'POST', body: '{}' }),
     assessmentGuide: (examId) => request(`/exams/${encodeURIComponent(examId)}/marking-guide`),
     approveAssessmentGuide: (examId, body) => request(`/exams/${encodeURIComponent(examId)}/marking-guide/approve`, { method: 'POST', body: JSON.stringify(body) }),
+    reopenAssessmentGuide: (examId, body) => request(`/exams/${encodeURIComponent(examId)}/marking-guide/reopen`, { method: 'POST', body: JSON.stringify(body) }),
     gradingPolicy: (questionId) => request(`/questions/${encodeURIComponent(questionId)}/grading-policy`),
     updateGradingPolicy: (questionId, body) => request(`/questions/${encodeURIComponent(questionId)}/grading-policy`, { method: 'PUT', body: JSON.stringify(body) }),
     uploadExam: (formData) => request('/upload-exam', { method: 'POST', body: formData }),
@@ -176,6 +181,8 @@
     gradeSubmission: (submissionId, mode = 'auto') => request(`/submissions/${encodeURIComponent(submissionId)}/grade`, { method: 'POST', body: JSON.stringify({ mode }) }),
     reviewQueue: (examId) => request(`/review-queue${examId ? `?exam_id=${encodeURIComponent(examId)}` : ''}`),
     resolveReview: (answerId, body) => request(`/answers/${encodeURIComponent(answerId)}/resolve-review`, { method: 'POST', body: JSON.stringify(body) }),
+    reopenReview: (answerId, body) => request(`/answers/${encodeURIComponent(answerId)}/reopen-review`, { method: 'POST', body: JSON.stringify(body) }),
+    reviewEvents: (answerId) => request(`/answers/${encodeURIComponent(answerId)}/review-events`),
     evaluation: (examId) => request(`/evaluation${examId ? `?exam_id=${encodeURIComponent(examId)}` : ''}`),
     gradeExportPreflight: (examId, identifier = 'student_number') => request(`/exams/${encodeURIComponent(examId)}/exports/preflight?identifier=${encodeURIComponent(identifier)}`),
     gradeExportCsvUrl: (examId, profile = 'generic', identifier = 'student_number') => `${API_BASE}/exams/${encodeURIComponent(examId)}/exports/grades.csv?profile=${encodeURIComponent(profile)}&identifier=${encodeURIComponent(identifier)}`,

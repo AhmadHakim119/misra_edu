@@ -94,6 +94,28 @@ Capturing every historical disagreement while flagging nearly every answer does
 not establish a low-workload grading workflow. No raw confidence threshold is
 fitted or relabeled as a calibrated correctness probability in these diagnostics.
 
+Decision-check v10 adds located numerical-policy checks in
+`services/grading_policy_checks.py`. A `numeric_check` identifies the literal
+student result and either a key value or a visible substituted expression, with
+earlier criterion IDs for claimed follow-through. The server recomputes the
+arithmetic and approved `rounding_tolerance_percent`; a zero target gets no
+invented absolute tolerance. Numeric credit does not follow merely from calling
+a fresh error "rounding". Pure method and partial-level credit remain separate.
+
+`numeric_penalty_cap_points` is optional and defaults to no structured cap;
+`cross_part_follow_through` defaults to `criterion_specific`. Only explicit guide
+approval permits `allow_prior_error`. Never infer these settings from leniency,
+student text or historical overrides. Restating an already approved prose rule
+in typed fields needs recorded provenance, with the earlier snapshot preserved.
+The cap counts marks lost, including multi-point criteria, rather than counting
+deducted criteria. Missing/unsupported traces and circular dependencies need review.
+
+These checks preserve the original proposal and never assign replacement marks.
+The saved decision review includes the arithmetic audit; verifier concurrence
+cannot clear a detected conflict. Literal arithmetic does not verify which
+quantity a quote represents, a physical method, units, or handwriting. Synthetic
+regressions and locally annotated diagnostic traces are not fresh AI accuracy.
+
 `services/evaluation_error_profile.py` reports the counts above, below and exactly
 at a supplied reference separately. Opposing errors can cancel in mean bias while
 both remain important. Normalized RMSE, worst normalized error, unflagged error
@@ -103,3 +125,11 @@ provenance is explicit: being above a historical teacher mark does not by itself
 establish overgrading under a different approved guide. Failed and abstained
 attempts remain coverage gaps, never zero scores or numeric errors. Add these as
 new diagnostic reports; never retrofit them into sealed historical results.
+
+The local [evaluation workflow](../evaluation/README.md) now assembles these
+existing metrics into one scorecard, with criterion-level differences and review
+risk/coverage curves. `misra_backend/evaluation_cli.py` freezes configuration,
+artifact/input hashes, exposure metadata and the metric policy, then imports
+separate local labels and saved predictions without inference. The bundled
+synthetic example bank is a draft requiring instructor approval; its software
+demonstration does not measure model accuracy or alter production grading.

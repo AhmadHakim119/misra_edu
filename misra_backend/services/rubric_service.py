@@ -205,6 +205,7 @@ def suggest_rubric(
     policy: RubricPolicy | None = None,
     current_rubric: dict | None = None,
     course_sources: dict | None = None,
+    instructor_context: dict | None = None,
 ) -> RubricV2:
     resolved_policy = policy_for_approach(grading_approach, policy)
     prompt = RUBRIC_SUGGESTION_PROMPT.format(
@@ -232,6 +233,8 @@ def suggest_rubric(
             'Do not invent extra question requirements or change instructor policy. '
             'Cite the source title/page in draft notes when it supports a criterion. '
             'A proposed scope is not approved grading authority.\n')
+    from services.account_settings_service import profile_prompt
+    prompt += profile_prompt(instructor_context)
     raw_response = generate(contents=prompt, json_mode=True)
 
     try:

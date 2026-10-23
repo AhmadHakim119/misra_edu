@@ -1,5 +1,6 @@
 (function(){
   'use strict';const {$}=MisraApp;
+  $('survey-saved').dataset.i18n='';
   const intro=document.querySelector('.page-heading p');intro.textContent='Twelve grading scenarios help MISRA remember your marking preferences.';intro.dataset.i18n='';MisraLocale.apply();
   const returnExam=MisraApp.params.get('return_exam_id');
   if(returnExam){const href=MisraApp.link('setup',{exam_id:returnExam});$('survey-continue').href=href;$('survey-continue').textContent=MisraLocale.text('Back to marking guide');document.querySelector('.page-heading a').href=href;}

@@ -325,7 +325,7 @@
 
     return `<section class="instructor-grade-editor">
       <div class="instructor-grade-head"><div><h3>Instructor grade</h3><p>This is the score used in totals and exports. You can override the AI without regrading the paper.</p></div>${MisraUI.badge(statusLabel, statusTone)}</div>
-      <form data-instructor-grade-form data-answer-id="${answer.id}" data-ai-score="${Number(answer.score)}">
+      <form data-instructor-grade-form data-review-token="${MisraUI.escapeHTML(answer.review_token || '')}" data-answer-id="${answer.id}" data-ai-score="${Number(answer.score)}">
         <div class="instructor-score-row">
           <label for="instructor-score-${answer.id}">Recorded score</label>
           <div><input class="input instructor-score-input" id="instructor-score-${answer.id}" name="human_score" type="number" inputmode="decimal" min="0" max="${maxScore}" step="0.01" value="${Number(currentScore)}" required><span>/ ${number(maxScore)}</span></div>
@@ -547,6 +547,7 @@
     try {
       await MisraAPI.resolveReview(form.dataset.answerId, {
         action: isOverride ? 'override' : 'approve',
+        expected_review_token: form.dataset.reviewToken,
         apply_as_current: true,
         human_score: isOverride ? humanScore : null,
         human_criteria_scores: isOverride ? humanCriteriaScores : null,
@@ -607,6 +608,7 @@
     try {
       if (restore) {
         await MisraAPI.resolveReview(restore.dataset.restoreAi, {
+          expected_review_token: restore.closest('[data-instructor-grade-form]').dataset.reviewToken,
           action: 'approve',
           apply_as_current: true,
           was_review_warranted: true,

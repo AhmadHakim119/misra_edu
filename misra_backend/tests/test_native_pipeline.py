@@ -1,4 +1,5 @@
 """Isolated provider/verification/transcription contracts; no external inference."""
+from services.review_state_service import review_token
 import json
 import os
 import unittest
@@ -112,10 +113,10 @@ class NativePipelineTests(unittest.TestCase):
         from schemas.public_results import ReviewResolutionRecord, ReviewRecord
         user=SimpleNamespace(id='teacher',institution_id='i')
         self.answer.score=2;self.answer.max_score=2;self.db.commit()
-        accepted=resolve_review('a',ReviewResolutionRequest(action='approve',was_review_warranted=False),self.db,user)
+        accepted=resolve_review('a',ReviewResolutionRequest(expected_review_token=review_token(self.db.get(Answer, 'a')), action='approve',was_review_warranted=False),self.db,user)
         public=ReviewResolutionRecord.model_validate(accepted).model_dump()
         self.assertEqual(public['answer']['review_status'],'approved')
-        resolve_review('a',ReviewResolutionRequest(action='override',human_score=1,was_review_warranted=True,review_reason_codes=['rubric_issue']),self.db,user)
+        resolve_review('a',ReviewResolutionRequest(expected_review_token=review_token(self.db.get(Answer, 'a')), action='override',human_score=1,was_review_warranted=True,review_reason_codes=['rubric_issue']),self.db,user)
         records=[ReviewRecord.model_validate(row).model_dump() for row in review_history('a',self.db,user)]
         self.assertEqual(len(records),2)
         self.assertEqual({r['human_score'] for r in records},{1,2})
@@ -175,7 +176,7 @@ class NativePipelineTests(unittest.TestCase):
                 result=await client.get('/api/results/s');self.assertEqual(result.status_code,200,result.text)
                 self.assertEqual(result.json()['answers'][0]['score'],2)
                 self.assertNotIn('original_file_path',result.json()['submission'])
-                review=await client.post('/api/answers/a/resolve-review',json={'action':'approve','was_review_warranted':False})
+                review=await client.post('/api/answers/a/resolve-review',json={'expected_review_token':(await client.get('/api/results/s')).json()['answers'][0]['review_token'],'action':'approve','was_review_warranted':False})
                 self.assertEqual(review.status_code,200,review.text)
                 self.assertEqual(review.json()['answer']['review_status'],'approved')
                 result=await client.get('/api/results/s');self.assertEqual(len(result.json()['latest_review_labels']),1)

@@ -150,7 +150,9 @@ def consult_sources(package, candidate, context, *, reasons, page_loader=None,
          'page_index': area['page_index'], 'bounding_box': deepcopy(area['bounding_box'])}
         for area in package.get('selected_answer_areas', [])
         if 'source:' + area['source_id'] in evidence_to_alias]
+    from services.grading_policy_checks import remap_numeric_refs
     for criterion in projected['criteria_scores']:
+        remap_numeric_refs(criterion, {**evidence_to_alias, **reference_to_alias})
         # The second retrieval can have different aliases/passages. Only cite
         # references present in its own snapshot; original citations stay local.
         criterion['evidence_refs'] = [evidence_to_alias[ref] for ref in criterion['evidence_refs'] if ref in evidence_to_alias]

@@ -1,5 +1,6 @@
 from enum import Enum
 from typing import Literal, Optional
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -36,12 +37,21 @@ PREFERENCE_REASON_CODES = frozenset({
 PREFERENCE_REASON_VALUES = frozenset(code.value for code in PREFERENCE_REASON_CODES)
 
 
+class ReopenReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    expected_reviewed_at: datetime
+    expected_run_id: str | None = None
+    expected_label_id: str | None = None
+    reason: str = Field(min_length=1, max_length=300)
+
+
 class ReviewResolutionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["approve", "override"]
     grading_run_id: Optional[str] = None
     apply_as_current: bool = True
+    expected_review_token: str | None = Field(default=None, min_length=64, max_length=64)
     was_review_warranted: bool
     human_score: Optional[float] = Field(default=None, ge=0)
     human_criteria_scores: Optional[list[HumanCriterionScore]] = None

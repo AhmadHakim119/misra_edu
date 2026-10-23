@@ -28,7 +28,7 @@ def authenticated_instructor(request: Request, db: Session = Depends(get_db)) ->
     if request.method.upper() not in SAFE_METHODS:
         cookie_token = request.cookies.get(CSRF_COOKIE, "")
         header_token = request.headers.get("X-CSRF-Token", "")
-        if not cookie_token or not hmac.compare_digest(cookie_token, header_token):
+        if not cookie_token or not hmac.compare_digest(cookie_token.encode('utf-8'), header_token.encode('utf-8')):
             record_audit_event(
                 db,
                 institution_id=user.institution_id,

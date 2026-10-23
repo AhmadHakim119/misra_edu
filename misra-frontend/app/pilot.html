@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Physics pilot · MISRA</title>
+<link rel="icon" href="../assets/logo.png"><link rel="stylesheet" href="ledger.css"><link rel="stylesheet" href="app.css"><link rel="stylesheet" href="pilot.css">
+<script src="../js/app.js" defer></script><script src="../js/api.js" defer></script><script src="common.js" defer></script><script src="locale.js" defer></script><script src="app-shell.js" defer></script><script src="review-explanations.js" defer></script><script src="pilot.js" defer></script></head>
+<body><main class="page-main"><header class="page-heading"><div><h1>Physics pilot papers</h1><p>Inspect saved proposals, review concerns and the rubric used for each answer.</p></div><button id="pilot-refresh" type="button">Refresh saved records</button></header>
+<p id="pilot-error" role="alert" class="page-error"></p><p id="pilot-status" role="status">Loading saved pilot…</p>
+<div class="pilot-filters"><label for="pilot-year">Exam<select id="pilot-year"><option value="">All exams</option></select></label><label for="pilot-paper">Paper<select id="pilot-paper" disabled></select></label><label><input id="pilot-flagged" type="checkbox"> Needs review only</label></div>
+<section id="pilot-metrics" class="native-panel" hidden></section>
+<section id="pilot-paper-summary" aria-label="Paper review summary"></section>
+<div class="pilot-columns"><section><div class="pilot-answer-picker"><label for="pilot-answer">Question</label><select id="pilot-answer" disabled></select></div><div id="pilot-answer-detail"></div></section>
+<aside aria-label="Original paper"><div class="inline-actions"><label for="pilot-page">Original page</label><select id="pilot-page" disabled></select><a id="pilot-page-link" target="_blank" rel="noopener" hidden>Open full size</a></div><p class="muted">Original marked paper, for instructor inspection. Teacher marks are visible here; the grading study used separate cleaned inputs.</p><p id="pilot-image-status" role="status"></p><div class="pilot-original"><img id="pilot-image" alt="Original paper page" hidden></div></aside></div>
+</main></body></html>

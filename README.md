@@ -529,8 +529,10 @@ implemented. Password change/recovery, global session invalidation,
 administrator-provisioned instructor accounts, and database-backed recovery
 throttling are also implemented. Durable Redis-backed OCR and grading jobs are
 implemented for the local prototype. The browser-origin allowlist is
-configurable through `APP_ORIGINS`, but production CORS validation, login
-throttling, HTTPS, managed encrypted file storage, retention automation,
+configurable through `APP_ORIGINS`. Login attempts are limited per email and
+client address using database audit records (10/email and 50/address per 15 minutes).
+Successful logout requires CSRF and invalidates existing sessions on all devices.
+Production CORS validation, distributed abuse/load testing, HTTPS, managed encrypted file storage, retention automation,
 centralized secrets, durable Redis monitoring, and deployment monitoring remain
 before public use.
 

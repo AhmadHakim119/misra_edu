@@ -4,12 +4,48 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Answer, GradingRun, ReviewLabel, Submission, User
-from schemas.review_input import PREFERENCE_REASON_CODES, ReviewResolutionRequest
+from schemas.review_input import PREFERENCE_REASON_CODES, ReviewResolutionRequest, ReopenReviewRequest
 from services.auth_dependencies import require_instructor
 from services.audit_service import record_audit_event
 from schemas.public_results import ReviewResolutionRecord, ReviewRecord
 
 router = APIRouter(prefix="/api", tags=["review"])
+
+
+@router.post('/answers/{answer_id}/reopen-review')
+def reopen_review(answer_id: str, request: ReopenReviewRequest,
+                  db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    from models import ProcessingJob
+    from schemas.public_results import AnswerRecord
+    answer = db.query(Answer).join(Submission, Submission.id == Answer.submission_id).filter(
+        Answer.id == answer_id, Submission.institution_id == user.institution_id).first()
+    if not answer:
+        raise HTTPException(404, 'Answer not found')
+    db.query(Submission).filter(Submission.id == answer.submission_id).with_for_update().one()
+    db.refresh(answer, with_for_update=True)
+    from services.review_state_service import latest_operational_label
+    latest = latest_operational_label(db, answer)
+    if (answer.review_status not in {'approved','overridden'} or answer.reviewed_at is None
+            or answer.reviewed_at.replace(tzinfo=None) != request.expected_reviewed_at.replace(tzinfo=None)
+            or (answer.grading_raw_response or {}).get('grading_run_id') != request.expected_run_id
+            or (latest.id if latest else None) != request.expected_label_id):
+        raise HTTPException(409, 'The saved decision changed. Reload its history before reopening.')
+    if db.query(ProcessingJob).filter(ProcessingJob.submission_id == answer.submission_id,
+            ProcessingJob.institution_id == user.institution_id,
+            ProcessingJob.status.in_(('queued','processing','retrying'))).first():
+        raise HTTPException(409, 'Paper processing is active. Wait for it to finish before reopening review.')
+    raw = dict(answer.grading_raw_response or {})
+    raw['review_reopened'] = {'reason':request.reason.strip(), 'previous_review_status':answer.review_status}
+    answer.grading_raw_response = raw
+    answer.review_status = 'pending'
+    answer.needs_review = True
+    # Previous human score/notes and immutable labels remain available, but the
+    # answer is no longer finalized. Reopening is not a new reference label.
+    record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
+        action='grade_review_reopened', entity_type='answer', entity_id=answer.id,
+        details={'previous_reviewed_at':answer.reviewed_at.isoformat(), 'reason':request.reason.strip()})
+    db.commit(); db.refresh(answer)
+    return AnswerRecord.model_validate(answer)
 
 
 @router.get("/answers/{answer_id}/review-history", response_model=list[ReviewRecord])
@@ -20,6 +56,20 @@ def review_history(answer_id: str, db: Session = Depends(get_db), user: User = D
         raise HTTPException(status_code=404, detail="Answer not found")
     return db.query(ReviewLabel).filter(ReviewLabel.answer_id == answer_id).order_by(
         ReviewLabel.created_at.asc(), ReviewLabel.id.asc()).all()
+
+
+@router.get('/answers/{answer_id}/review-events')
+def review_events(answer_id: str, db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    from models import AuditLog
+    answer = db.query(Answer).join(Submission, Submission.id == Answer.submission_id).filter(
+        Answer.id == answer_id, Submission.institution_id == user.institution_id).first()
+    if not answer:
+        raise HTTPException(404, 'Answer not found')
+    rows = db.query(AuditLog).filter(AuditLog.institution_id == user.institution_id,
+        AuditLog.entity_type == 'answer', AuditLog.entity_id == answer_id,
+        AuditLog.action.in_(('grade_approved','grade_overridden','grade_review_reopened'))).order_by(AuditLog.created_at, AuditLog.id).all()
+    return [dict(id=row.id, action=row.action, created_at=row.created_at,
+        **{key:((row.extra_data or {}).get('details') or {}).get(key) for key in ('reason','ai_score','human_score','apply_as_current','grading_run_id','review_label_id')}) for row in rows]
 
 
 @router.post("/answers/{answer_id}/resolve-review", response_model=ReviewResolutionRecord)
@@ -47,6 +97,9 @@ def resolve_review(
         db.query(Submission).filter(Submission.id==answer.submission_id,
             Submission.institution_id==user.institution_id).with_for_update().one()
         db.refresh(answer,with_for_update=True)
+        from services.review_state_service import review_token
+        if request.expected_review_token != review_token(answer):
+            raise HTTPException(409, 'This decision changed or the page is out of date. Reload the saved decision before submitting your edits again.')
         running=db.query(ProcessingJob).filter(ProcessingJob.institution_id==user.institution_id,
             ProcessingJob.submission_id==answer.submission_id,
             ProcessingJob.status.in_(('queued','processing','retrying')),
@@ -66,25 +119,8 @@ def resolve_review(
             detail="Grade the answer before resolving its review.",
         )
 
-    operational_run = None
-    operational_run_id = (answer.grading_raw_response or {}).get("grading_run_id")
-    if operational_run_id:
-        operational_run = (
-            db.query(GradingRun)
-            .filter(
-                GradingRun.id == operational_run_id,
-                GradingRun.answer_id == answer.id,
-            )
-            .first()
-        )
-    if not operational_run:
-        displayed_mode = (answer.grading_raw_response or {}).get("mode")
-        query = db.query(GradingRun).filter(GradingRun.answer_id == answer.id)
-        if displayed_mode in {"text_only", "image_text"}:
-            query = query.filter(GradingRun.mode == displayed_mode)
-        operational_run = query.order_by(
-            GradingRun.created_at.desc(), GradingRun.id.desc()
-        ).first()
+    from services.review_state_service import operational_run as find_operational_run
+    operational_run = find_operational_run(db, answer)
 
     selected_run = operational_run
     if request.grading_run_id:
@@ -167,6 +203,10 @@ def resolve_review(
             )
 
     if request.apply_as_current:
+        raw = dict(answer.grading_raw_response or {})
+        raw.pop('review_reopened', None)
+        raw.pop('guide_review_required', None)
+        answer.grading_raw_response = raw
         if request.action == "override":
             answer.teacher_override_score = human_score
             answer.review_status = "overridden"
@@ -223,6 +263,10 @@ def resolve_review(
         selected_run.rubric_version_id if selected_run else None
     )
 
+    db.flush()
+    if request.apply_as_current:
+        answer.grading_raw_response = {**(answer.grading_raw_response or {}),
+                                       'applied_review_label_id': label.id}
     record_audit_event(
         db,
         institution_id=user.institution_id,
@@ -236,6 +280,7 @@ def resolve_review(
             "ai_score": ai_score,
             "human_score": human_score,
             "apply_as_current": request.apply_as_current,
+            "review_label_id": label.id,
             "review_reason_codes": label.review_reason_codes,
             "preference_reason_codes": [
                 code.value

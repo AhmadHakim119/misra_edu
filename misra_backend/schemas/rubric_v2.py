@@ -82,6 +82,9 @@ class RubricPolicy(BaseModel):
         "single_penalty", "penalize_each", "criterion_specific"
     ] = "single_penalty"
     rounding_tolerance_percent: float | None = Field(default=None, ge=0, le=100)
+    # No cap/cross-part exception is inferred from leniency or override history.
+    numeric_penalty_cap_points: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    cross_part_follow_through: Literal["criterion_specific", "allow_prior_error"] = "criterion_specific"
     units_policy: Literal[
         "required", "required_when_applicable", "do_not_penalize"
     ] = "required_when_applicable"

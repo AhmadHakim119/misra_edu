@@ -96,7 +96,12 @@ class NumericChecksTests(unittest.TestCase):
         self.assertEqual(safe['numeric_checks']['checks'][0]['value'],6)
         self.assertEqual(safe['numeric_checks']['checks'][0]['evidence_ref'],'student:segment:1')
         self.assertEqual(safe['policy'],{})
-        self.assertEqual(safe['rubric'],original['rubric'])
+        scoring_rubric = deepcopy(safe['rubric'])
+        for criterion in scoring_rubric['criteria']:
+            hints = criterion.pop('citation_requirements')
+            self.assertTrue(hints['course_reference_required'])
+            self.assertFalse(hints['answer_key_alone_sufficient'])
+        self.assertEqual(scoring_rubric,original['rubric'])
         self.assertEqual(safe['course_references']['mode'],'required')
         self.assertNotIn('numeric_checks',safe['student_evidence'][0])
         self.assertNotIn('score',safe['numeric_checks'])

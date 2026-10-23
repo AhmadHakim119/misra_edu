@@ -49,6 +49,29 @@ def _mean(values):
     return round(sum(values) / len(values), 4) if values else None
 
 
+def review_safety_metrics(records):
+    """Grade-disagreement detection, distinct from human-labelled review need.
+
+    Only frozen review snapshots count; current mutable flags never substitute.
+    Matching grades may still warrant review for evidence or reasoning issues.
+    """
+    known = [r for r in records if r.get('ai_needs_review') is not None]
+    caught = sum(r['absolute_error'] >= EPSILON and r['ai_needs_review'] for r in known)
+    missed = sum(r['absolute_error'] >= EPSILON and not r['ai_needs_review'] for r in known)
+    matching_flagged = sum(r['absolute_error'] < EPSILON and r['ai_needs_review'] for r in known)
+    flagged = sum(r['ai_needs_review'] for r in known)
+    unflagged = len(known)-flagged
+    return dict(event='saved_grade_disagreement_detection', labelled_answers=len(records),
+        known_review_snapshots=len(known), missing_review_snapshots=len(records)-len(known),
+        disagreements_caught=caught, disagreements_missed=missed,
+        disagreement_recall=_rate(caught,caught+missed),
+        flagged_matching_grades=matching_flagged, flagged_answers=flagged,
+        review_rate=_rate(flagged,len(known)), disagreement_precision=_rate(caught,flagged),
+        unflagged_disagreement_rate=_rate(missed,unflagged),
+        interpretation='Latest labelled answer snapshots only. A matching total is not proof that a review flag was unnecessary. '
+            'Human-labelled review need is measured separately. Missing snapshots are unknown, not unflagged successes.')
+
+
 def build_evaluation_report(
     db: Session,
     *,
@@ -136,6 +159,7 @@ def build_evaluation_report(
             "model_name": grading_run.model_name if grading_run else None,
             "final_confidence": confidence,
             "was_review_warranted": bool(label.was_review_warranted),
+            "ai_needs_review": bool(label.ai_needs_review_snapshot) if label.ai_needs_review_snapshot is not None else None,
             "review_reason_codes": list(label.review_reason_codes or []),
             "review_reason_note": label.review_reason_note,
             "preference_reason_codes": [
@@ -232,6 +256,7 @@ def build_evaluation_report(
         "overall": overall,
         "review_warranted_rate": _rate(review_warranted_count, len(records)),
         "review_flag_metrics": review_metrics,
+        "review_safety_metrics": review_safety_metrics(list(latest_answers.values())),
         "high_confidence_error_count": len(high_confidence_errors),
         "high_confidence_errors": high_confidence_errors,
         "per_question": {
