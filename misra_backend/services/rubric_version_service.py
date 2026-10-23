@@ -14,6 +14,18 @@ def validate_rubric_v2(rubric_json: dict) -> RubricV2:
         raise ValueError(f"Invalid Rubric V2 document: {error}") from error
 
 
+def require_guide_review(question, db, *, active_version_id=None):
+    """Invalidate current approval, never the mark, run or immutable human label."""
+    for answer in db.query(Answer).filter(Answer.question_id == question.id,
+            Answer.institution_id == question.institution_id, Answer.score.is_not(None)).with_for_update().all():
+        raw = dict(answer.grading_raw_response or {})
+        raw['guide_review_required'] = {'active_version_id':active_version_id,
+            'reason':'The marking guide was reopened or replaced after this proposal. Compare its saved snapshot before finalizing again.'}
+        answer.grading_raw_response = raw
+        answer.needs_review = True
+        answer.review_status = 'pending'
+
+
 def get_effective_rubric(
     question: Question,
     db: Session,
@@ -157,6 +169,8 @@ def approve_rubric_version(
     question.active_rubric_version_id = version.id
     question.rubric_json = rubric.model_dump()
     question.max_score = rubric.max_score
+    if previous_version_id != version.id:
+        require_guide_review(question, db, active_version_id=version.id)
 
     has_prior_runs = (
         db.query(GradingRun)

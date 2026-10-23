@@ -26,7 +26,9 @@ def owned_import(db, user, exam_id, job_id, lock=False):
 
 def public_import(job):
     payload = job.payload or {}
+    profile = (payload.get('source_package') or {}).get('instructor_profile')
     return dict(job=job_to_dict(job), questions=payload.get('draft_questions', []),
+        instructor_profile={k:profile[k] for k in ('profile_id','version_number','sha256')} if profile else None,
         origin=payload.get('purpose', 'uploaded_exam'), source_passages=(payload.get('source_package') or {}).get('passages', []),
         warnings=payload.get('warnings', []), imported_question_ids=payload.get('imported_question_ids', []),
         documents=[dict(role=d['role'], page_count=d['page_count']) for d in payload.get('documents', [])])
@@ -42,7 +44,8 @@ def draft_source_questions(exam_id: str, payload: SourceQuestionDraftRequest,
         raise HTTPException(503, 'Back up and run the grading-foundation and course-material upgrades before generating source questions.')
     db.query(Exam).filter(Exam.id == exam.id).with_for_update().one()
     try:
-        package = source_package(db, exam, payload)
+        from services.account_settings_service import profile_context
+        package = source_package(db, exam, payload, profile_context(db, user))
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
     request = payload.model_dump()
@@ -50,7 +53,8 @@ def draft_source_questions(exam_id: str, payload: SourceQuestionDraftRequest,
         ProcessingJob.job_type == 'exam_setup', ProcessingJob.status.in_(['queued', 'processing', 'retrying']),
         ProcessingJob.payload['exam_id'].as_string() == exam.id).all()
     for job in existing:
-        if (job.payload or {}).get('purpose') == PURPOSE and job.payload.get('generation_request') == request:
+        if ((job.payload or {}).get('purpose') == PURPOSE and job.payload.get('generation_request') == request
+                and (job.payload.get('source_package') or {}).get('instructor_profile') == package.get('instructor_profile')):
             return public_import(job)
     job = ProcessingJob(institution_id=user.institution_id, requested_by=user.id, job_type='exam_setup',
         status='queued', max_attempts=2, progress_total=1, progress_message='Waiting to generate source-grounded question drafts',

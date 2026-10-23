@@ -22,6 +22,18 @@ from services.grade_export_service import (  # noqa: E402
 
 
 class GradeExportTests(unittest.TestCase):
+    def test_metadata_and_csv_header_cannot_be_spreadsheet_formulas(self):
+        export = build_grade_export('exam-1', 'institution-1', self.db)
+        export.exam.title = '=1+1'
+        export.course.title = '@SUM(1,1)'
+        export.course.course_code = '+1+1'
+        export.course.term = '-1+1'
+        content, _ = build_csv(export, 'blackboard', 'student_number')
+        self.assertIn("'=1+1", content.decode('utf-8-sig'))
+        workbook = load_workbook(io.BytesIO(build_xlsx(export)), data_only=False)
+        for row in workbook['Export notes'].iter_rows(min_row=2):
+            self.assertNotEqual(row[1].data_type, 'f')
+
     def setUp(self):
         engine = create_engine("sqlite+pysqlite:///:memory:")
         Base.metadata.create_all(engine)

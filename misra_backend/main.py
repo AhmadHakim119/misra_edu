@@ -17,6 +17,7 @@ from routers import exam_setup
 from routers import course_materials
 from routers import material_library
 from routers import answer_areas
+from routers import pilot_archives
 
 load_dotenv()
 
@@ -41,6 +42,10 @@ app.add_middleware(
 @app.middleware("http")
 async def prevent_sensitive_page_caching(request, call_next):
     response = await call_next(request)
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['Content-Security-Policy'] = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
     path = request.url.path
     if path.startswith(("/api/", "/app/", "/legacy/", "/js/")):
         response.headers["Cache-Control"] = "no-store, max-age=0"
@@ -72,6 +77,7 @@ app.include_router(exam_setup.router, dependencies=protected)
 app.include_router(course_materials.router, dependencies=protected)
 app.include_router(material_library.router, dependencies=protected)
 app.include_router(answer_areas.router, dependencies=protected)
+app.include_router(pilot_archives.router, dependencies=protected)
 
 @app.get("/")
 def read_root():

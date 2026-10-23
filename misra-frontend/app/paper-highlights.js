@@ -1,29 +1,27 @@
-/* Automatic locations and versioned, instructor-confirmed extraction corrections. */
+/* Automatic locations and versioned, instructor-confirmed extraction corrections.
+ * Unversioned device-only rectangles never override current server evidence. */
 (function () {
   'use strict';
   const $=id=>document.getElementById(id), esc=value=>MisraUI.escapeHTML(String(value??''));
-  const prefix='misra-highlight:';
   const t=value=>window.MisraLocale?.text(value)||value;
   let context=null, selected='', editing=false, draft=null, changed=false, drag=null;
   let locating=false, locationTimer=null, locationEpoch=0, locationMessage='';
   let areaJob=null,areaPreview=null,areaText='',completeArea=false,areaBusy=false,areaTimer=null,areaEpoch=0;
   const copy=box=>box?{...box}:null;
-  const key=id=>prefix+context.paperId+':'+context.pageIndex+':'+id;
-  function saved(id){if(context?.locations[id]?.method==='instructor_confirmed_area')return null;try{const value=JSON.parse(localStorage.getItem(key(id)));return value?.version===1?MisraEvidence.validBox(value.box):null;}catch(_){return null;}}
   function base(source){return MisraEvidence.location(source,context.locations);}
   function boxStyle(box){return `left:${box.x*100}%;top:${box.y*100}%;width:${box.width*100}%;height:${box.height*100}%`;}
   function draw(){
     if(!context || !$('evidence-boxes'))return;
-    let matched=0, approximate=0, located=0, confirmed=0, adjusted=0, unavailable=0, unsaved=0;
+    let matched=0, approximate=0, located=0, confirmed=0, unavailable=0, unsaved=0;
     $('evidence-boxes').innerHTML=context.sources.map(source=>{
-      const original=base(source), override=saved(source.id), isDraft=editing&&selected===source.id;
-      const box=isDraft?draft:override||original.box;
+      const original=base(source), isDraft=editing&&selected===source.id;
+      const box=isDraft?draft:original.box;
       if(!box){unavailable++;return '';}
-      if(isDraft&&changed)unsaved++;else if(override)adjusted++;else if(original.confirmed)confirmed++;else if(original.verified)matched++;else if(context.locations[source.id]?.method==='vision_grid')located++;else approximate++;
-      const kind=isDraft?'editing':override||original.confirmed?'adjusted':original.verified?'':'approximate';
+      if(isDraft&&changed)unsaved++;else if(original.confirmed)confirmed++;else if(original.verified)matched++;else if(context.locations[source.id]?.method==='vision_grid')located++;else approximate++;
+      const kind=isDraft?'editing':original.confirmed?'adjusted':original.verified?'':'approximate';
       return `<span class="evidence-box ${kind}" style="${boxStyle(box)}" aria-hidden="true"></span>`;
     }).join('');
-    $('location-note').innerHTML=`${matched} <span data-i18n>text-matched</span>, ${approximate} <span data-i18n>approximate OCR regions</span>${confirmed?`, ${confirmed} <span data-i18n>instructor-selected areas</span>`:''}${located?`, ${located} <span data-i18n>AI-located regions</span>`:''}${adjusted?`, ${adjusted} <span data-i18n>adjusted on this device</span>`:''}${unsaved?`, ${unsaved} <span data-i18n>unsaved adjustment</span>`:''}. <span data-i18n>Full page retained. Highlights do not verify marks.</span>${unavailable?' <span data-i18n>Highlight unavailable for some extracted parts.</span>':''}`;
+    $('location-note').innerHTML=`${matched} <span data-i18n>text-matched</span>, ${approximate} <span data-i18n>approximate OCR regions</span>${confirmed?`, ${confirmed} <span data-i18n>instructor-selected areas</span>`:''}${located?`, ${located} <span data-i18n>AI-located regions</span>`:''}${unsaved?`, ${unsaved} <span data-i18n>unsaved adjustment</span>`:''}. <span data-i18n>Full page retained. Highlights do not verify marks.</span>${unavailable?' <span data-i18n>Highlight unavailable for some extracted parts.</span>':''}`;
     $('evidence-boxes').classList.toggle('highlight-drawing',editing);
     $('evidence-boxes').tabIndex=editing?0:-1;
     if(editing){$('evidence-boxes').setAttribute('role','group');$('evidence-boxes').setAttribute('aria-label',t('Draw answer highlight. Arrow keys move; Shift and arrow keys resize.'));}
@@ -42,7 +40,7 @@
     host.innerHTML=`<div class="inline-actions"><button type="button" id="adjust-highlight" ${editing?'hidden':''}>Select answer area</button>${!editing&&pending?'<button type="button" id="continue-area">Continue area review</button>':''}</div>${editing?`<div class="highlight-editor"><label for="highlight-part" ${context.sources.length===1?'hidden':''}>Extracted part</label><select id="highlight-part" ${context.sources.length===1?'hidden':''} ${areaBusy?'disabled':''}>${context.sources.map((source,index)=>`<option value="${esc(source.id)}" ${source.id===selected?'selected':''}>${esc(source.area_label||String(index+1))}</option>`).join('')}</select><p data-i18n>Drag around the complete answer for this part.</p><div class="inline-actions"><button type="button" id="read-answer-area" ${areaBusy||areaPreview?'disabled':''}>Read selected area</button><button type="button" id="cancel-highlight">Cancel</button></div>${areaPreview?`<label for="area-text">Review extracted text<textarea id="area-text" dir="auto" maxlength="50000">${esc(areaText)}</textarea></label><label class="check-row"><input type="checkbox" id="complete-area" ${completeArea?'checked':''}> This area contains the complete answer for this part</label><button type="button" id="save-highlight" class="primary" disabled>Save corrected extraction</button>`:''}</div>`:''}<p id="highlight-status" role="status" data-i18n>${esc(message)}</p>`;
     draw();
   }
-  function start(id){++areaEpoch;clearTimeout(areaTimer);areaJob=areaPreview=null;areaText='';completeArea=false;areaBusy=false;selected=id;const source=context.sources.find(s=>s.id===id);draft=copy(saved(id)||base(source).box||{x:.1,y:.4,width:.8,height:.2});changed=false;drag=null;editing=true;controls();}
+  function start(id){++areaEpoch;clearTimeout(areaTimer);areaJob=areaPreview=null;areaText='';completeArea=false;areaBusy=false;selected=id;const source=context.sources.find(s=>s.id===id);draft=copy(base(source).box||{x:.1,y:.4,width:.8,height:.2});changed=false;drag=null;editing=true;controls();}
   function canLeave(){if((changed||areaPreview)&&!confirm(t('Discard the unsaved highlight adjustment?')))return false;++areaEpoch;clearTimeout(areaTimer);areaPreview=areaJob=null;areaBusy=false;editing=false;changed=false;draft=null;drag=null;controls();return true;}
   function mount(value){locationMessage='';context=value;selected=value.sources.some(source=>source.id===value.selectedSourceId)?value.selectedSourceId:value.sources[0]?.id||'';editing=changed=false;draft=drag=null;controls();locate();}
   function clear(){++areaEpoch;clearTimeout(areaTimer);areaPreview=areaJob=null;areaBusy=false;context?.onDirtyChange?.(false);++locationEpoch;clearTimeout(locationTimer);locating=false;locationMessage='';context=null;editing=changed=false;draft=drag=null;const host=$('highlight-tools');if(host){host.replaceChildren();host.hidden=true;}}
@@ -57,7 +55,7 @@
     locating=false;
     if(job.status==='completed'){
       try{const locations=await MisraEvidence.pageLocations(value.paperId,value.pageIndex);if(token!==locationEpoch||!samePage(value))return;context.locations=locations;
-        locationStatus(editing?'Automatic highlighting finished. Your manual selection is unchanged.':context.sources.some(source=>saved(source.id))?'Your selected answer area is kept.':context.sources.some(source=>base(source).box)?'Answer areas selected automatically. You can correct them if needed.':'AI could not select an answer area. Select the area manually.');
+        locationStatus(editing?'Automatic highlighting finished. Your manual selection is unchanged.':context.sources.some(source=>base(source).box)?'Answer areas selected automatically. You can correct them if needed.':'AI could not select an answer area. Select the area manually.');
         const box=$('evidence-boxes')?.querySelector('.evidence-box'),viewport=$('paper-viewport');if(!editing&&box&&viewport)viewport.scrollTop=Math.max(0,box.offsetTop-(viewport.clientHeight-box.offsetHeight)/2);}
       catch(_){if(token===locationEpoch&&samePage(value))locationStatus('Locations could not load. Refresh to retry.');}
     }else locationStatus('AI could not select an answer area. Select the area manually.');
@@ -74,7 +72,7 @@
   }
   async function locate(){
     if(!context?.sources.length||locating)return;
-    if(context.sources.every(source=>saved(source.id)||base(source).confirmed||base(source).verified||context.locations[source.id]?.method==='vision_grid'))return;
+    if(context.sources.every(source=>base(source).confirmed||base(source).verified||context.locations[source.id]?.method==='vision_grid'))return;
     const value=context,token=++locationEpoch;clearTimeout(locationTimer);locating=true;
     locationStatus('Locating answer areas automatically…');
     try{const response=await MisraAPI.locateAnswers(value.paperId,value.pageIndex,true);

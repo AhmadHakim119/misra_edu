@@ -154,7 +154,13 @@ class InstructorPreferenceTests(unittest.TestCase):
             correct_result_without_working='key_steps',illegible_handwriting='manual_review',
             incomplete_solution='completed_criteria',contradictory_answers='manual_review')
         answers=[{'scenario_id':key,'selected_option':value} for key,value in selected.items()]
-        created=self.create(explicit_preferences={},scenario_answers=answers)
+        context={'subjects':['Physics'],'course_level':'undergraduate','marking_style':'lenient',
+            'question_types':['calculation','short_answer','multiple_choice','diagram','other'],
+            'other_question_types':'تفسير تجارب عملية','exam_language':'ar',
+            'question_style_notes':'Connected physics problems with methods and numerical results.',
+            'marking_style_notes':'Credit valid methods and apply follow-through.',
+            'rubric_style_notes':'Give separate method and result marks.'}
+        created=self.create(explicit_preferences={'teaching_context':context},scenario_answers=answers)
         self.assertEqual(len(created['scenario_answers']),12)
         proposal=created['derived_proposal'];self.assertEqual(proposal['rounding_tolerance_percent'],0.1)
         self.assertEqual(proposal['units_policy'],'required_when_applicable')
@@ -164,7 +170,25 @@ class InstructorPreferenceTests(unittest.TestCase):
         self.assertEqual(created['proposal_provenance']['units_policy']['derivation_version'],'survey-v2')
         approved=instructor_preferences.approve_version(created['id'],self.db,self.user)
         self.assertEqual(approved['scenario_answers'],answers)
+        self.assertEqual(approved['explicit_preferences']['teaching_context'],context)
+        self.assertEqual(instructor_preferences.list_versions(self.db,self.user)[0]['explicit_preferences']['teaching_context'],context)
         self.assertEqual(self.db.query(RubricVersion).count(),0)
+
+    def test_language_and_other_types_are_bounded_and_compatible_with_old_context(self):
+        from schemas.instructor_preferences import InstructorTeachingContext
+        old = InstructorTeachingContext(subjects=['Physics'], question_types=['calculation'])
+        self.assertEqual(old.exam_language, 'unspecified')
+        self.assertEqual(old.other_question_types, '')
+        for language in ('unspecified', 'en', 'ar', 'mixed'):
+            with self.subTest(language=language):
+                context = InstructorTeachingContext(exam_language=language,
+                    question_types=['other'], other_question_types='تفسير مخطط')
+                created = self.create(explicit_preferences={'teaching_context':context.model_dump()})
+                self.assertEqual(created['explicit_preferences']['teaching_context'], context.model_dump())
+        for changes in ({'exam_language':'invented'}, {'other_question_types':'x'*501},
+                        {'question_types':['unrecognized']}):
+            with self.subTest(changes=list(changes)), self.assertRaises(ValidationError):
+                InstructorTeachingContext(**changes)
 
     def test_new_survey_does_not_rewrite_old_approved_profile_and_rejects_bad_choices(self):
         from copy import deepcopy

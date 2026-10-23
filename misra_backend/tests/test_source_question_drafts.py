@@ -73,6 +73,31 @@ class SourceQuestionDraftTests(unittest.TestCase):
         self.assertEqual(self.db.query(Question).count(),0)
         self.assertNotIn("original_file_path",json.dumps(setup_api.public_import(first),default=str))
 
+    def test_profile_snapshot_is_pinned_for_generation_retry_and_import(self):
+        from models import InstructorPreferenceVersion
+        profile=InstructorPreferenceVersion(id='teaching-profile',user_id='u',institution_id='i',version_number=1,
+            status='approved',created_by='u',scenario_answers=[],derived_proposal={},proposal_provenance={},
+            explicit_preferences={'teaching_context':{'subjects':['Physics'],'question_style_notes':'Original design context',
+                'question_types':['other'],'other_question_types':'تفسير مخطط','exam_language':'ar'}})
+        self.db.add(profile);self.db.commit()
+        job=self.queue()
+        profile.explicit_preferences={'teaching_context':{'subjects':['Other'],'question_style_notes':'Changed after request'}}
+        self.db.commit()
+        job,provider=self.generate(job)
+        self.assertIn('Original design context',provider.call_args.args[0])
+        self.assertIn('تفسير مخطط',provider.call_args.args[0])
+        self.assertIn('"exam_language": "ar"',provider.call_args.args[0])
+        self.assertNotIn('Changed after request',provider.call_args.args[0])
+        self.assertNotIn('teacher@example',provider.call_args.args[0])
+        with patch('services.source_question_draft_service.complete_free') as retry:
+            generate_source_questions(job,self.db,lambda *args:None)
+            retry.assert_not_called()
+        metadata=setup_api.public_import(job)['instructor_profile']
+        self.assertEqual(metadata['profile_id'],profile.id)
+        self.assertNotIn('teaching_context',metadata)
+        result=setup_api.confirm('e',job.id,self.reviewed(job),self.db,self.user)
+        self.assertEqual(len(result['question_ids']),1)
+
     def test_source_generation_is_not_available_across_institutions(self):
         with self.assertRaises(HTTPException) as error: self.queue(self.other)
         self.assertEqual(error.exception.status_code,404)

@@ -1,3 +1,4 @@
+from services.review_state_service import review_token
 import unittest
 
 from fastapi import HTTPException
@@ -137,7 +138,7 @@ class ReviewReasonTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as context:
             resolve_review(
                 self.answer.id,
-                ReviewResolutionRequest(
+                ReviewResolutionRequest(expected_review_token=review_token(self.db.get(Answer, self.answer.id)),
                     action="approve",
                     grading_run_id=self.run.id,
                     was_review_warranted=False,
@@ -157,7 +158,7 @@ class ReviewReasonTests(unittest.TestCase):
     def test_reasons_persist_and_ocr_reason_is_not_preference_evidence(self):
         response = resolve_review(
             self.answer.id,
-            ReviewResolutionRequest(
+            ReviewResolutionRequest(expected_review_token=review_token(self.db.get(Answer, self.answer.id)),
                 action="override",
                 grading_run_id=self.run.id,
                 human_score=2.5,
@@ -215,7 +216,7 @@ class ReviewReasonTests(unittest.TestCase):
 
         first = resolve_review(
             self.answer.id,
-            ReviewResolutionRequest(
+            ReviewResolutionRequest(expected_review_token=review_token(self.db.get(Answer, self.answer.id)),
                 action="approve",
                 was_review_warranted=True,
             ),
@@ -227,7 +228,7 @@ class ReviewReasonTests(unittest.TestCase):
 
         second = resolve_review(
             self.answer.id,
-            ReviewResolutionRequest(
+            ReviewResolutionRequest(expected_review_token=review_token(self.db.get(Answer, self.answer.id)),
                 action="override",
                 human_score=3,
                 was_review_warranted=True,

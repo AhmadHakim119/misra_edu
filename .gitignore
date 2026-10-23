@@ -39,6 +39,7 @@ pytorch_model*.bin
 # Uploaded assessment papers contain student PII. Never commit them.
 misra_backend/storage/uploads/*
 !misra_backend/storage/uploads/.gitkeep
+misra_backend/storage/pilot_archives/
 
 # Local OCR/debug artifacts and paper copies
 tmp/

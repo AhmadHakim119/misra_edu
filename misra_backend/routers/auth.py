@@ -19,6 +19,7 @@ from services.auth_service import (
     create_csrf_token,
     create_session_token,
     hash_password,
+    dummy_password_hash,
     read_session_token,
     verify_password,
 )
@@ -52,10 +53,14 @@ def _clear_auth_cookies(response: Response) -> None:
 
 
 @router.post("/login")
-def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
+def login(payload: LoginRequest, request: Request, response: Response, db: Session = Depends(get_db)):
     email = payload.email.strip().lower()
+    from services.login_security_service import record_login_attempt
+    record_login_attempt(db, email, request.client.host if request.client else None)
     users = db.query(User).filter(func.lower(User.email) == email).limit(2).all()
-    if len(users) != 1 or not users[0].is_active or not verify_password(payload.password, users[0].hashed_password):
+    candidate = users[0] if len(users) == 1 and users[0].is_active else None
+    password_valid = verify_password(payload.password, candidate.hashed_password if candidate else dummy_password_hash())
+    if not candidate or not password_valid:
         candidate = users[0] if len(users) == 1 else None
         record_audit_event(
             db,
@@ -178,7 +183,12 @@ def logout(request: Request, response: Response, db: Session = Depends(get_db)):
     token = request.cookies.get(SESSION_COOKIE)
     session = read_session_token(token) if token else None
     user = db.query(User).filter(User.id == session.user_id).first() if session else None
-    if user:
+    if user and user.is_active and user.session_version == session.session_version:
+        # Validate CSRF before invalidating credentials. The version revokes
+        # existing sessions on all devices, including copies of this cookie.
+        authenticated_instructor(request, db)
+        db.refresh(user, with_for_update=True)
+        user.session_version = (user.session_version or 1) + 1
         record_audit_event(
             db,
             institution_id=user.institution_id,

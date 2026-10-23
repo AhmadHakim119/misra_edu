@@ -6,6 +6,8 @@ merely because their assessment guide is published.
 """
 import hashlib
 import json
+from copy import deepcopy
+from sqlalchemy import func, or_
 
 from sqlalchemy import inspect
 from models import (Question, RubricVersion, AnswerKeyVersion, MaterialVersion, CourseMaterial, QuestionGradingPolicy,
@@ -153,4 +155,46 @@ def approve_guide(db, exam, user, expected_token):
     if default and default['status'] == 'draft':
         sources.approve_default(db, exam, db.get(AssessmentMaterialScopeVersion, default['id']), user)
         changed.append(default['id'])
+    return changed
+
+
+def reopen_guide(db, exam, user, expected_token):
+    """Retain approved snapshots; prefill correction drafts and suspend new grading."""
+    from models import ProcessingJob, Submission
+    db.query(type(exam)).filter(type(exam).id == exam.id).with_for_update().one()
+    questions = db.query(Question).filter(Question.exam_id == exam.id,
+        Question.institution_id == user.institution_id).with_for_update().all()
+    if review_guide(db, exam)['review_token'] != expected_token:
+        raise ValueError('The guide changed. Refresh before reopening it.')
+    submissions = db.query(Submission.id).filter(Submission.exam_id == exam.id)
+    if db.query(ProcessingJob).filter(ProcessingJob.institution_id == user.institution_id,
+            ProcessingJob.status.in_(('queued','processing','retrying')),
+            or_(ProcessingJob.submission_id.in_(submissions),
+                ProcessingJob.payload['exam_id'].as_string() == exam.id)).first():
+        raise ValueError('Assessment processing is active. Wait before reopening its guide.')
+    changed = []
+    for question in questions:
+        versions = db.query(RubricVersion).filter(RubricVersion.question_id == question.id).with_for_update().all()
+        approved = next((v for v in versions if v.id == question.active_rubric_version_id and v.status == 'approved'), None)
+        if not approved and versions:
+            continue  # Already suspended; keep an existing correction draft.
+        draft = next((v for v in sorted(versions, key=lambda v:v.version_number, reverse=True) if v.status == 'draft'), None)
+        if not draft:
+            value = deepcopy(approved.rubric_json if approved else question.rubric_json)
+            value.setdefault('schema_version', 2)
+            for criterion in value.get('criteria', []):
+                criterion.setdefault('title', (criterion.get('description') or 'Criterion')[:160])
+            validate_rubric_v2(value)
+            draft = RubricVersion(question_id=question.id, version_number=max((v.version_number for v in versions), default=0)+1,
+                schema_version=2, rubric_json=value, grading_approach=(value.get('policy') or {}).get('grading_approach','balanced'),
+                source='manual', status='draft', created_by=user.id,
+                change_summary='Reopened guide for correction; previous approved snapshot retained.')
+            db.add(draft); db.flush()
+        if approved:
+            approved.status = 'superseded'
+        question.active_rubric_version_id = None
+        from services.rubric_version_service import require_guide_review
+        require_guide_review(question, db)
+        changed.append(draft.id)
+    db.flush()
     return changed

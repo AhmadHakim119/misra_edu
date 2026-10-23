@@ -1,7 +1,7 @@
 """Explicit instructor-facing records; internal storage paths never cross the API."""
 from datetime import datetime
 from typing import Any
-from pydantic import BaseModel, ConfigDict, field_serializer
+from pydantic import BaseModel, ConfigDict, computed_field, field_serializer
 
 
 def public_snapshot(value):
@@ -49,6 +49,17 @@ class AnswerRecord(BaseModel):
     teacher_override_score: float | None = None
     teacher_notes: str | None = None
     reviewed_at: datetime | None = None
+    @computed_field
+    @property
+    def review_token(self) -> str:
+        from services.review_state_service import review_token
+        return review_token(self)
+    @computed_field
+    @property
+    def review_explanation(self) -> dict:
+        from services.review_explanation_service import explain_review
+        return explain_review(self.grading_raw_response, self.criteria_scores,
+            needs_review=self.needs_review, review_status=self.review_status)
     @field_serializer('grading_raw_response')
     def safe_snapshot(self,value): return public_snapshot(value)
 

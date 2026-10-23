@@ -1,3 +1,4 @@
+from services.review_state_service import review_token
 import os
 import unittest
 from unittest.mock import patch
@@ -313,7 +314,7 @@ class RubricV2Tests(unittest.TestCase):
 
         resolve_review(
             answer.id,
-            ReviewResolutionRequest(
+            ReviewResolutionRequest(expected_review_token=review_token(self.db.get(Answer, answer.id)),
                 action="approve",
                 grading_run_id=run.id,
                 was_review_warranted=False,
@@ -340,7 +341,7 @@ class RubricV2Tests(unittest.TestCase):
 
         resolve_review(
             answer.id,
-            ReviewResolutionRequest(
+            ReviewResolutionRequest(expected_review_token=review_token(self.db.get(Answer, answer.id)),
                 action="override",
                 grading_run_id=run.id,
                 human_score=2.5,
@@ -380,7 +381,7 @@ class RubricV2Tests(unittest.TestCase):
         with self.assertRaises(HTTPException) as context:
             resolve_review(
                 answer.id,
-                ReviewResolutionRequest(
+                ReviewResolutionRequest(expected_review_token=review_token(self.db.get(Answer, answer.id)),
                     action="approve",
                     grading_run_id=run.id,
                     was_review_warranted=False,

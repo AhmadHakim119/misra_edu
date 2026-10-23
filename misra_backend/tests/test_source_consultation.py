@@ -193,3 +193,20 @@ class SourceConsultationTests(unittest.TestCase):
         self.assertEqual(merged['criteria'][0]['verdict'], 'needs_review')
         self.assertEqual(initial, original)
         self.assertEqual(merged['initial_check'], original)
+
+    def test_numeric_trace_uses_provider_aliases_and_preserves_local_candidate(self):
+        self.candidate['criteria_scores'][0]['numeric_check'] = {
+            'student': {'ref': 'source:one', 'quote': '246'},
+            'target': {'ref': 'key:one', 'quote': '246'},
+            'basis': 'reference', 'depends_on': []}
+        before = deepcopy(self.candidate)
+        seen = []
+        def complete(contents, **kwargs):
+            seen.append(contents[0])
+            return self.response(self.finding)
+        consult_sources(self.package, self.candidate, self.context, reasons=['criterion_uncertainty'], completion_fn=complete)
+        self.assertEqual(self.candidate, before)
+        self.assertNotIn('source:one', seen[0])
+        self.assertNotIn('key:one', seen[0])
+        self.assertIn('student:segment:1', seen[0])
+        self.assertIn('instructor:answer_key', seen[0])

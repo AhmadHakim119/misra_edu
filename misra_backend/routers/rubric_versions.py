@@ -82,6 +82,29 @@ def _owned_question(db: Session, question_id: str, user: User) -> Question:
     return question
 
 
+@router.post('/exams/{exam_id}/marking-guide/reopen')
+def reopen_assessment_guide(exam_id: str, payload: AssessmentGuideApprovalRequest,
+    db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    from services.assessment_guide_service import reopen_guide
+    if not payload.confirm_reviewed:
+        raise HTTPException(422, 'Confirm reopening the guide for corrections.')
+    exam = _guide_exam(db, exam_id, user)
+    try:
+        changed = reopen_guide(db, exam, user, payload.review_token)
+        record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
+            action='assessment_guide_reopened', entity_type='exam', entity_id=exam.id,
+            details={'review_token':payload.review_token, 'draft_version_ids':changed})
+        db.commit()
+        return {'exam_id':exam.id, 'draft_version_ids':changed,
+            'message':'Guide reopened with saved correction drafts. New grading requires approval again. Previous results and versions remain in history.'}
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(409, str(error)) from error
+    except Exception:
+        db.rollback()
+        raise
+
+
 def _owned_rubric_version(
     db: Session,
     version_id: str,
@@ -152,6 +175,8 @@ def suggest_existing_question_rubric_version(
             model = QuestionMaterialScopeVersion if guide_row['source_exception'] and guide_row['source_exception']['mode'] != 'inherit' else AssessmentMaterialScopeVersion
             context = provider_sources(retrieve_for_question(db, question, current_rubric,
                 proposal_scope=db.get(model, scope_data['id'])))[0]
+        from services.account_settings_service import profile_context
+        instructor_profile = profile_context(db, user)
         rubric = suggest_rubric(
             question_text=question.question_text,
             subject=exam.title,
@@ -165,6 +190,7 @@ def suggest_existing_question_rubric_version(
             policy=payload.policy,
             current_rubric=current_rubric,
             course_sources=context,
+            instructor_context=instructor_profile,
         )
     except ValueError as error:
         raise HTTPException(
@@ -178,10 +204,12 @@ def suggest_existing_question_rubric_version(
             rubric_json=rubric.model_dump(),
             source="ai",
             change_summary=(
-                payload.change_summary
-                or "AI-generated Rubric V2 draft for instructor review."
+                (payload.change_summary or "AI-generated Rubric V2 draft for instructor review.")
+                + (f" Instructor profile v{instructor_profile['version_number']} ({instructor_profile['profile_id']}, SHA256 {instructor_profile['sha256']})."
+                    if instructor_profile else "")
             ),
             db=db,
+            created_by=user.id,
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

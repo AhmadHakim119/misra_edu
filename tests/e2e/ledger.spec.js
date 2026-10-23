@@ -1,14 +1,16 @@
 const { test, expect } = require('@playwright/test');
 
-async function fixture(page,{failSave=false,delayPaper=false,blockGrading=false,scanHighlight=false,savedNote='',autoLocation=null}={}) {
+async function fixture(page,{failSave=false,delayPaper=false,blockGrading=false,scanHighlight=false,savedNote='',autoLocation=null,reviewed=false}={}) {
   const writes=[];writes.locationStarts=0;let locationRequested=false,locationCompleted=false;
   const locationJob={id:'auto-location',submission_id:'s',job_type:'ocr_submission',operation:'locate_answers',page_index:1,status:'queued'};
   const questions=[{id:'q1',question_number:'1',question_text:'State the formula for work.',max_score:2},{id:'q2',question_number:'2',question_text:'A constant force of 82.0 N moves a box 3.00 m in the direction of the force. What is the work done?',max_score:2}];
   const papers=[{id:'s',exam_id:'e',extracted_student_name:'Pilot B',extracted_student_number:'TEST002',page_count:2,status:'graded',readiness:{bulk_grading_allowed:true},grading_summary:{recorded_score:3.5,max_score:4,complete:true,review_count:1,graded_count:2,expected_count:2}},{id:'other',exam_id:'e',extracted_student_name:'Pilot C',page_count:2,status:'extracted',readiness:{bulk_grading_allowed:!blockGrading},grading_summary:{recorded_score:null,max_score:4,complete:false,review_count:0}}];
   const criteria=[{criterion_id:'formula-id',points_earned:1,max_points:1,feedback:'Correct formula.'},{criterion_id:'calculation-id',points_earned:.5,max_points:1,feedback:'Correct units; arithmetic error.'}];
   const pack={rubric_version_id:'r',rubric:{criteria:[{id:'formula-id',title:'Formula',description:'Apply W = Fd'},{id:'calculation-id',title:'Calculation & units',description:'Compute 246 J'}]},course_references:{scope_origin:'assessment',scope_version_number:1,passages:[{title:'Chapter 7',text:'W = Fd.',material_version_number:1,page_index:1}]},answer_key:{mode:'reference',reference_text:'W = (82.0 N)(3.00 m) = 246 J.'},policy:{arithmetic_error_policy:'Partial credit for units'}};
-  let answer={id:'a2',question_id:'q2',score:1.5,max_score:2,needs_review:true,llm_confidence:79,raw_ocr_text:'W = Fd. W = 82 × 3 = 200 J.',criteria_scores:criteria,reasoning:'Correct method, arithmetic error.',grading_raw_response:{grading_run_id:'run2',grading_package:pack}};
+  let answer={id:'a2',review_token:'a'.repeat(64),question_id:'q2',score:1.5,max_score:2,needs_review:true,llm_confidence:79,raw_ocr_text:'W = Fd. W = 82 × 3 = 200 J.',criteria_scores:criteria,reasoning:'Correct method, arithmetic error.',grading_raw_response:{grading_run_id:'run2',grading_package:pack}};
   answer.teacher_notes=savedNote;
+  if(reviewed)Object.assign(answer,{needs_review:false,review_status:'overridden',teacher_override_score:2,reviewed_at:'2026-10-23T12:00:00'});
+  const labels=reviewed?[{id:'saved-label',answer_id:'a2',grading_run_id:'run2',human_score:2}]:[];
   pack.course_references.passages[0]= {...pack.course_references.passages[0],id:'material:cp',material_id:'m',material_version_id:'mv',criterion_ids:['formula-id','calculation-id']};
   pack.student_evidence=[{id:'source:src1',kind:'ocr_segment',page_index:1,segment_index:0,text:answer.raw_ocr_text}];
   criteria.forEach(c=>{c.reference_refs=['material:cp'];c.evidence_refs=['source:src1'];});
@@ -18,7 +20,7 @@ async function fixture(page,{failSave=false,delayPaper=false,blockGrading=false,
     else if(path==='/exams') body=[{id:'e',title:'Work & energy',course_code:'GPHY171',course_title:'Synthetic demonstration',submission_count:2},{id:'e2',title:'Mechanics quiz',course_code:'TEST',submission_count:0}];
     else if(path==='/jobs') body={items:[]};
     else if(path==='/submissions') body=new URL(route.request().url()).searchParams.get('exam_id')==='e2' ? [] : papers;
-    else if(path.startsWith('/results/')) { const id=path.split('/').at(-1); if(delayPaper && id==='s') await new Promise(resolve=>setTimeout(resolve,450)); const paper=papers.find(p=>p.id===id);body={submission:paper,answers:id==='s' ? [{id:'a1',question_id:'q1',score:2,max_score:2},answer] : [],latest_review_labels:[]}; }
+    else if(path.startsWith('/results/')) { const id=path.split('/').at(-1); if(delayPaper && id==='s') await new Promise(resolve=>setTimeout(resolve,450)); const paper=papers.find(p=>p.id===id);body={submission:paper,answers:id==='s' ? [{id:'a1',question_id:'q1',score:2,max_score:2},answer] : [],latest_review_labels:labels}; }
     else if(path.endsWith('/extraction-review')) { const id=path.split('/')[2];body={submission:papers.find(p=>p.id===id),questions:questions.map((question,i)=>({question,sources:[{id:`src${i}`,page_index:i,extracted_text:i ? answer.raw_ocr_text:'W = Fd',ocr_segment:{bounding_box:{x:.1,y:.25,width:.6,height:.15}}}],mapping_flags:[]})),readiness:{bulk_grading_allowed:id==='s' || !blockGrading,blocking_reasons:blockGrading ? ['Original answer coverage needs checking.'] : []},grading_scope:{kind:'all'}}; }
     else if(path.endsWith('/locate-answers')) {if(!locationRequested){locationRequested=true;writes.locationStarts++;}const index=Number(new URL(route.request().url()).searchParams.get('page_index'));body={job:{...locationJob,page_index:index,status:autoLocation?'queued':'failed'}};}
     else if(path==='/jobs/auto-location') {locationCompleted=true;body={...locationJob,status:'completed'};}
@@ -26,6 +28,7 @@ async function fixture(page,{failSave=false,delayPaper=false,blockGrading=false,
     else if(path.endsWith('/source-locations')) body={page_index:Number(new URL(route.request().url()).searchParams.get('page_index')),sources:scanHighlight?{}:{src1:{status:'located',method:'native_pdf_text',bounding_box:{x:.06,y:.18,width:.8,height:.23}}}};
     else if(path.includes('/pages/')) return route.fulfill({contentType:'image/svg+xml',body:`<svg xmlns="http://www.w3.org/2000/svg" width="550" height="700"><rect width="550" height="700" fill="white"/><g font-family="serif" font-size="17" fill="black"><text x="45" y="50">Synthetic paper · full original page</text><text x="45" y="${scanHighlight?200:150}">Question 2</text><text x="45" y="${scanHighlight?480:200}">W = Fd</text><text x="45" y="${scanHighlight?520:235}">W = 82 × 3 = 200 J</text><text x="45" y="640">Page end — evidence is not cropped</text></g></svg>`});
     else if(path.endsWith('/resolve-review')) { writes.push(route.request().postDataJSON());if(failSave) return route.fulfill({status:409,json:{detail:'Synthetic newer grading run'}});answer={...answer,teacher_override_score:writes.at(-1).human_score,needs_review:false,review_status:'overridden'};body={answer}; }
+    else if(path.endsWith('/reopen-review')){writes.push({reopen:route.request().postDataJSON()});answer={...answer,needs_review:true,review_status:'pending'};body=answer;}
     else if(path.endsWith('/grade')) {writes.push({grade:true});body={job:{id:'job',status:'queued'}};}
     await route.fulfill({json:body});
   });
@@ -95,20 +98,38 @@ test('answer region editing is linked to Extraction and grading remains read-onl
 test('override requires a reason, pins the displayed run, and keeps the current question after saving',async({page})=>{
   const writes=await fixture(page);
   await page.getByLabel('Instructor score',{exact:true}).fill('2');
-  await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
+  if(await page.locator('#review-evidence-checked').count())await page.locator('#review-evidence-checked').check();await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
   await expect(page.locator('#grade-error')).toContainText('Choose a decision reason');expect(writes).toHaveLength(0);
   await page.locator('#decision-reason').selectOption('minor_notation');
-  await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
+  if(await page.locator('#review-evidence-checked').count())await page.locator('#review-evidence-checked').check();await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
   await expect(page.locator('#save-status')).toContainText('Instructor override recorded');
   await expect(page.locator('#question-select')).toHaveValue('q2');
-  expect(writes[0]).toMatchObject({action:'override',human_score:2,grading_run_id:'run2',review_reason_codes:['minor_notation'],was_review_warranted:true});
+  expect(writes[0]).toMatchObject({expected_review_token:'a'.repeat(64),action:'override',human_score:2,grading_run_id:'run2',review_reason_codes:['minor_notation'],was_review_warranted:true});
+});
+
+test('flagged grade cannot be accepted before acknowledging an evidence check',async({page})=>{
+  const writes=await fixture(page);
+  await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
+  expect(writes).toHaveLength(0);await expect(page.locator('#review-evidence-checked')).not.toBeChecked();
+  await page.locator('#review-evidence-checked').check();
+  await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
+  await expect.poll(()=>writes.length).toBe(1);expect(writes[0].action).toBe('approve');
+});
+
+test('saved decision can reopen with a pinned label while retaining the human mark',async({page})=>{
+  const writes=await fixture(page,{reviewed:true});
+  page.once('dialog',dialog=>dialog.accept('Approved before inspecting the sign'));
+  await page.locator('#reopen-grade-review').click();
+  await expect(page.locator('#review-evidence-checked')).toBeVisible();
+  await expect(page.locator('#instructor-score')).toHaveValue('2');
+  expect(writes[0].reopen).toMatchObject({expected_label_id:'saved-label',expected_run_id:'run2',reason:'Approved before inspecting the sign'});
 });
 
 test('failed override and cancelled question navigation retain the instructor draft',async({page})=>{
   await fixture(page,{failSave:true});await page.getByLabel('Instructor score',{exact:true}).fill('1');
   page.once('dialog',d=>d.dismiss());await page.locator('#question-select').selectOption('q1');
   await expect(page.locator('#question-select')).toHaveValue('q2');await expect(page.locator('#instructor-score')).toHaveValue('1');
-  await page.locator('#decision-reason').selectOption('other');await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
+  await page.locator('#decision-reason').selectOption('other');if(await page.locator('#review-evidence-checked').count())await page.locator('#review-evidence-checked').check();await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
   await expect(page.locator('#grade-error')).toContainText('Synthetic newer grading run');await expect(page.locator('#instructor-score')).toHaveValue('1');
 });
 
@@ -116,7 +137,7 @@ test('criterion edits sum correctly and record criterion-level human scores',asy
   const writes=await fixture(page);await page.getByText('Adjust criterion marks (optional)',{exact:true}).click();
   await page.locator('[data-criterion="calculation-id"]').fill('1');
   await expect(page.locator('#instructor-score')).toHaveValue('2.00');await page.locator('#decision-reason').selectOption('method_credit');
-  await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
+  if(await page.locator('#review-evidence-checked').count())await page.locator('#review-evidence-checked').check();await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
   await expect.poll(()=>writes.length).toBe(1);expect(writes[0].human_criteria_scores).toHaveLength(2);
 });
 
@@ -136,7 +157,7 @@ test('discarding grade edits restores saved marks, criteria and note without an 
 
 test('failed save can be discarded locally and saved instructor notes survive refresh',async({page})=>{
   const writes=await fixture(page,{failSave:true,savedNote:'Keep <this> feedback'});
-  await page.locator('#instructor-score').fill('1');await page.locator('#decision-reason').selectOption('other');await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
+  await page.locator('#instructor-score').fill('1');await page.locator('#decision-reason').selectOption('other');if(await page.locator('#review-evidence-checked').count())await page.locator('#review-evidence-checked').check();await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
   await expect(page.locator('#grade-error')).toBeVisible();await page.getByRole('button',{name:'Discard changes',exact:true}).click();
   await expect(page.locator('#grade-error')).toBeHidden();expect(writes).toHaveLength(1);
   await page.reload();await expect(page.locator('#instructor-note')).toHaveValue('Keep <this> feedback');
@@ -195,6 +216,50 @@ test('an unlocated automatic result never reuses the incorrect rectangle',async(
   await expect(page.locator('.evidence-box')).toHaveCount(0);
   await expect(page.getByRole('link',{name:'Edit answer area in Extraction',exact:true})).toBeVisible();
   await expect(page.getByAltText('Full original submitted paper, page 2')).toBeVisible();
+});
+
+test('unversioned device rectangles cannot override current or rejected evidence',async({page})=>{
+  await fixture(page);
+  await page.evaluate(()=>localStorage.setItem('misra-highlight:s:1:src1',JSON.stringify({version:1,box:{x:.1,y:.9,width:.4,height:.05}})));
+  await page.locator('#page-select').selectOption('0');await page.locator('#page-select').selectOption('1');
+  await expect(page.locator('.evidence-box')).toHaveAttribute('style',/top:18%/);
+  await page.route('**/api/submissions/s/source-locations*',route=>route.fulfill({json:{page_index:1,sources:{src1:{status:'unverified',method:'vision_grid',reason:'no_ink_support_at_reported_location',geometry_check:'ink_support_unavailable',reported_bounding_box:{x:.1,y:.9,width:.4,height:.05}}}}}));
+  await page.locator('#page-select').selectOption('0');await page.locator('#page-select').selectOption('1');
+  await expect(page.locator('.evidence-box')).toHaveCount(0);
+  await expect(page.locator('#location-note')).toContainText('Highlight unavailable');
+});
+
+test('per-paper and per-question rectangles scale with different page shapes and zoom',async({page},info)=>{
+  const writes=await fixture(page);
+  await page.route('**/api/submissions/*/source-locations*',route=>{
+    const url=new URL(route.request().url()),index=Number(url.searchParams.get('page_index')),other=url.pathname.includes('/other/');
+    const box=other?{x:.1,y:.35,width:.8,height:.2}:index===0?{x:.15,y:.12,width:.7,height:.1}:{x:.2,y:.6,width:.5,height:.15};
+    return route.fulfill({json:{page_index:index,sources:{['src'+index]:{status:'located',method:'native_pdf_text',bounding_box:box}}}});
+  });
+  await page.route('**/api/submissions/*/pages/*',route=>{
+    const path=new URL(route.request().url()).pathname,wide=path.includes('/other/'),first=path.endsWith('/0');
+    return route.fulfill({contentType:'image/svg+xml',body:`<svg xmlns="http://www.w3.org/2000/svg" width="${wide?1600:600}" height="${wide?900:1000}"><rect width="100%" height="100%" fill="white"/><text x="50" y="70" font-size="24">Synthetic original page</text><text x="${wide?224:first?114:144}" y="${wide?387:first?180:670}" font-size="${wide?64:28}">Answer: W = Fd = 246 J</text></svg>`});
+  });
+  async function aligned(box){
+    await expect(page.locator('.evidence-box')).toHaveCount(1);
+    await expect.poll(()=>page.locator('.evidence-box').evaluate((el,box)=>{
+      const r=el.getBoundingClientRect(),im=document.querySelector('#original-paper').getBoundingClientRect();
+      return Math.max(Math.abs((r.left-im.left)/im.width-box.x),Math.abs((r.top-im.top)/im.height-box.y),Math.abs(r.width/im.width-box.width),Math.abs(r.height/im.height-box.height));
+    },box)).toBeLessThan(.01);
+  }
+  await page.locator('#question-select').selectOption('q1');
+  await aligned({x:.15,y:.12,width:.7,height:.1});
+  await page.locator('#question-select').selectOption('q2');
+  await aligned({x:.2,y:.6,width:.5,height:.15});
+  await page.locator('#zoom-in').click();await aligned({x:.2,y:.6,width:.5,height:.15});
+  await page.locator('[data-paper="other"]').click();await page.locator('#question-select').selectOption('q2');
+  await aligned({x:.1,y:.35,width:.8,height:.2});
+  for(const theme of ['light','dark']){
+    const wanted=await page.locator('html').getAttribute('data-theme');if(wanted!==theme)await page.locator('#theme').click();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+    await page.screenshot({path:`.impeccable/review/highlight-multiple-pages-${theme}-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  }
+  expect(writes).toHaveLength(0);
 });
 
 test('pending automatic localization resumes after refresh with an Arabic extraction link',async({page})=>{

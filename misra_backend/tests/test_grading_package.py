@@ -14,11 +14,13 @@ from schemas.rubric_v2 import RubricPolicy
 from services.grading_package_service import (
     build_grading_package,
     provider_grading_package,
+    with_criterion_citation_requirements,
     validate_evidence_references,
 )
 from services.grading_service import (GradingResult, process_grading, process_grading_with_policy,
-    _aggregate_criterion_total, _validate_grading_against_rubric)
+    _aggregate_criterion_total, _validate_grading_against_rubric, GRADING_PROMPT_VERSION)
 from services.grading_errors import GradingResponseValidationError
+from services.grading_decision_service import DECISION_CHECK_VERSION
 from services.run_comparison_service import apply_material_disagreement_gate
 from tests.inference_fixtures import isolate_grading_provider
 from tests.test_grading_decisions import check
@@ -87,6 +89,32 @@ class GradingPackageTests(unittest.TestCase):
         self.assertIn('model_total_discrepancy', snapshot['review_policy']['reasons'])
         self.db.expire_all()
         self.assertEqual(self.db.query(GradingRun).one().response_json, snapshot)
+
+    def test_numeric_policy_audit_is_persisted_without_rewriting_proposal(self):
+        self.answer.raw_ocr_text = 'x=0.08'
+        self.db.query(AnswerSource).one().extracted_text = 'x=0.08'
+        rubric = deepcopy(self.rubric)
+        rubric['reference_context'] = 'x=0.086'
+        rubric['policy']['rounding_tolerance_percent'] = 2
+        self.db.query(RubricVersion).one().rubric_json = rubric
+        self.q.rubric_json = deepcopy(rubric)
+        self.db.commit()
+        response = self.result(evidence_refs=['student:segment:1'], reference_refs=['instructor:answer_key'],
+            decision_check=check(criterion_kind='result', method_status='valid',
+                error_type='calculation', error_origin='calculation'),
+            numeric_check=dict(student=dict(ref='student:segment:1', quote='0.08'),
+                target=dict(ref='instructor:answer_key', quote='0.086'), basis='reference', depends_on=[]))
+        with patch('services.grading_service.generate', return_value=json.dumps(response)):
+            process_grading('a', self.db)
+        run = self.db.query(GradingRun).one()
+        self.assertEqual(run.score, 2)
+        self.assertTrue(run.needs_review)
+        audit = run.response_json['decision_review']['policy_arithmetic']
+        self.assertFalse(audit['score_changed'])
+        self.assertFalse(audit['comparisons'][0]['within_tolerance'])
+        self.assertEqual(run.criteria_scores[0]['numeric_check']['student']['ref'], 'source:source')
+        self.assertEqual(run.response_json['original_model_response']['attempts'][0], response)
+        self.assertIn('numeric_credit_outside_tolerance', run.response_json['review_policy']['reasons'])
 
     def test_aggregation_never_relaxes_criterion_or_original_benchmark_validation(self):
         response = self.result()
@@ -233,6 +261,71 @@ class GradingPackageTests(unittest.TestCase):
             'criterion_id':'logic','reference_refs':['instructor:source:1'],
             'required_course_reference_refs':['instructor:source:1']}])
 
+    def test_required_grounding_is_attached_to_each_criterion_without_changing_approved_rubric(self):
+        package, *_ = build_grading_package(self.answer, self.q, self.db, 'text_only')
+        package['rubric']['criteria'].append({'id':'result','description':'Numerical result','points':1})
+        package['course_references'] = {'mode':'required','passages':[
+            {'id':'material:method','title':'Synthetic chapter','page_index':0,
+             'printed_page_label':'1','text':'Applicable relation','criterion_ids':['logic']},
+            {'id':'material:result','title':'Synthetic chapter','page_index':1,
+             'printed_page_label':'2','text':'Applicable result concept','criterion_ids':['result']}]}
+        before = deepcopy(package)
+        safe, *_ = provider_grading_package(package)
+        for row, source in zip(safe['rubric']['criteria'], ['instructor:source:1','instructor:source:2']):
+            rule = row['citation_requirements']
+            self.assertEqual(rule['allowed_course_reference_refs'], [source])
+            self.assertEqual(rule['tracked_evidence_refs'], ['student:segment:1'])
+            self.assertEqual(rule['allowed_policy_applied'], list(package['policy']))
+            self.assertFalse(rule['answer_key_alone_sufficient'])
+            self.assertTrue(rule['course_reference_required'])
+            original = next(c for c in package['rubric']['criteria'] if c['id']==row['id'])
+            self.assertEqual({k:v for k,v in row.items() if k!='citation_requirements'}, original)
+        self.assertEqual(package, before)
+        choices = [{'criterion_id':'result','choices':[{'level_id':'level-1','description':'Visible result'}]}]
+        attached = with_criterion_citation_requirements(choices, safe['citation_contract'], course_required=True)
+        self.assertEqual(attached[0]['citation_requirements']['allowed_course_reference_refs'], ['instructor:source:2'])
+        self.assertNotIn('citation_requirements', choices[0])
+
+    def test_key_only_result_remains_rejected_despite_grounding_hints(self):
+        package, *_ = build_grading_package(self.answer, self.q, self.db, 'text_only')
+        package['course_references'] = {'mode':'required','passages':[
+            {'id':'material:relation','title':'Synthetic chapter','page_index':0,
+             'printed_page_label':'1','text':'Applicable relation','criterion_ids':['logic']}]}
+        safe, *_ = provider_grading_package(package)
+        self.assertFalse(safe['rubric']['criteria'][0]['citation_requirements']['answer_key_alone_sufficient'])
+        with self.assertRaisesRegex(ValueError, 'every criterion'):
+            validate_evidence_references(GradingResult(**self.result()), package)
+        correct = GradingResult(**self.result(reference_refs=['key:legacy','material:relation']))
+        validate_evidence_references(correct, package)
+        self.assertEqual(correct.score, 2)
+
+    def test_optional_grounding_and_missing_required_sources_are_not_fabricated(self):
+        package, *_ = build_grading_package(self.answer, self.q, self.db, 'text_only')
+        before = deepcopy(package['rubric'])
+        safe, *_ = provider_grading_package(package)
+        self.assertEqual(safe['rubric'], before)
+        package['course_references'] = {'mode':'required','passages':[]}
+        safe, *_ = provider_grading_package(package)
+        self.assertEqual(safe['rubric']['criteria'][0]['citation_requirements']['allowed_course_reference_refs'], [])
+        with self.assertRaisesRegex(ValueError, 'every criterion'):
+            validate_evidence_references(GradingResult(**self.result()), package)
+
+    def test_custom_rule_names_do_not_bypass_policy_field_validation(self):
+        package, *_ = build_grading_package(self.answer, self.q, self.db, 'text_only')
+        package['policy'] = {'custom_instructions':'Accept valid cross-part follow-through.'}
+        package['course_references'] = {'mode':'required','passages':[
+            {'id':'material:relation','title':'Synthetic chapter','page_index':0,
+             'printed_page_label':'1','text':'Applicable relation','criterion_ids':['logic']}]}
+        safe, *_ = provider_grading_package(package)
+        self.assertEqual(safe['rubric']['criteria'][0]['citation_requirements']['allowed_policy_applied'], ['custom_instructions'])
+        refs = ['key:legacy','material:relation']
+        with self.assertRaisesRegex(ValueError, 'unknown marking-policy field'):
+            validate_evidence_references(GradingResult(**self.result(
+                reference_refs=refs,policy_applied=['cross_part_follow_through'])), package)
+        corrected = GradingResult(**self.result(reference_refs=refs,policy_applied=['custom_instructions']))
+        validate_evidence_references(corrected, package)
+        self.assertEqual(corrected.score,2)
+
     def test_no_fixed_key_citation_repair_uses_empty_reference_list(self):
         key = AnswerKeyVersion(id='no-key',question_id='q',version_number=1,
             status='approved',mode='no_fixed_answer',reference_text='',
@@ -256,7 +349,7 @@ class GradingPackageTests(unittest.TestCase):
             process_grading("a", self.db)
         run = self.db.query(GradingRun).one()
         original = deepcopy(run.response_json["grading_package"])
-        self.assertEqual(run.prompt_version, "v14-approved-data-copy-error")
+        self.assertEqual(run.prompt_version, GRADING_PROMPT_VERSION)
         self.assertIn("GRADING PACKAGE JSON", generate.call_args.kwargs["contents"])
         self.q.question_text = "Changed question"
         self.db.query(RubricVersion).first().rubric_json = {**self.rubric, "reference_context": "Changed reference"}
@@ -588,7 +681,7 @@ class GradingPackageTests(unittest.TestCase):
         self.assertEqual(run.response_json['original_model_response']['attempts'][0]['score'], 0)
         self.db.expire_all()
         saved = self.db.query(GradingRun).one().response_json
-        self.assertEqual(saved['decision_review']['version'], '2026-10-19.v8')
+        self.assertEqual(saved['decision_review']['version'], DECISION_CHECK_VERSION)
         self.assertTrue(saved['validation']['evidence_issues'][0]['decision_checks'])
 
     def test_new_decision_guard_preserves_instructor_override_and_earlier_run(self):

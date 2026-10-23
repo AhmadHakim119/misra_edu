@@ -105,6 +105,7 @@
     reasonError.hidden = true;
     const body = {
       action,
+      expected_review_token: state.selected.review_token,
       was_review_warranted: form.get('was_review_warranted') === 'on',
       reviewer_notes: form.get('reviewer_notes') || null,
       review_reason_codes: reasonCodes,
@@ -188,6 +189,7 @@
     approveSelected.disabled = true;
     approveSelected.textContent = 'Approving…';
     const outcomes = await Promise.allSettled(selectedAnswers.map((answer) => MisraAPI.resolveReview(answer.id, {
+      expected_review_token: answer.review_token,
       action: 'approve',
       was_review_warranted: true,
       reviewer_notes: 'Bulk-approved from the instructor review queue.',

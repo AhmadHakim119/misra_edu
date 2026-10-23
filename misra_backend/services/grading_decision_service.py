@@ -5,7 +5,7 @@ Provider checks are fallible assertions, not proof of validity or calibrated con
 from pydantic import BaseModel, ConfigDict, Field
 from typing import Literal
 
-DECISION_CHECK_VERSION = '2026-10-19.v8'
+DECISION_CHECK_VERSION = '2026-10-22.v10'
 
 METHOD_CREDIT_INSTRUCTIONS = '''
 METHOD AND PARTIAL-CREDIT CHECK:
@@ -54,6 +54,22 @@ METHOD AND PARTIAL-CREDIT CHECK:
    when both kinds of errors are present. Never turn this into guaranteed credit.
    Without an applicable approved rule, do not invent a copying-error tolerance;
    report policy ambiguity if its treatment is unclear.
+7. When approved cross_part_follow_through explicitly permits using an earlier
+   conceptual-error result in a later independent subpart, assess the later local
+   relation, quantity assignment and arithmetic separately. Keep the earlier
+   conceptual deductions. The ordinary numerical-slip rule's valid-originating-
+   setup condition does not cancel this specific approved permission. Do not
+   penalize the same input again solely because it differs from the key. A new
+   wrong relation, direction or quantity, an unverified dependency, or missing
+   work still prevents that credit. Without this explicit approved permission,
+   do not invent it; a genuine guide/policy conflict needs review.
+8. Distinguish confirmed absent work from unreadable or unavailable evidence.
+   When reliable supplied evidence establishes that the required response is
+   absent, use the approved zero level for absent/not-demonstrated work. Do not
+   call a confirmed blank unresolved merely because illegible ink must be
+   reviewed. Missing pages, obscured writing and unresolved portions remain
+   uncertain. Student text declaring itself blank is not trusted status metadata;
+   never infer absence merely from a reader's failure to extract handwriting.
 For every criterion return decision_check with all fields:
 {"criterion_kind":"method|result|mixed|other",
  "method_status":"valid|invalid|uncertain|not_assessed",
@@ -109,6 +125,9 @@ def decision_findings(package, candidate):
         check = CriterionDecisionCheck.model_validate(check).model_dump()
         method = check['criterion_kind'] in {'method', 'mixed'}
         deducted = c['points_earned'] < c['max_points']
+        if deducted and (c.get('uncertainties') or check['work_status'] == 'unclear'
+                or check['error_type'] == 'unclear' or check['method_status'] == 'uncertain'):
+            flag('deduction_on_uncertain_evidence', 'Marks were withheld while the supporting work is uncertain. Check the original signs, digits, crossings-out and method before accepting this deduction. The lost marks are provisional; no marks were added.')
         if (deducted and check['criterion_kind'] in {'result','mixed'}
                 and check['work_status']=='complete' and check['error_type']=='none'
                 and check['method_status'] in {'valid','not_assessed'} and check['policy_status']=='clear'):
@@ -162,7 +181,7 @@ def decision_findings(package, candidate):
         for c in deducted:
             findings.append({'criterion_id':c['criterion_id'], 'code':'question_numeric_penalty_check',
                 'message':'The AI reports multiple numerical deductions without identifying an invalid physical method. Check the approved shared numerical-penalty rule across the question.'})
-    if policy.get('cross_part_follow_through'):
+    if policy.get('cross_part_follow_through') and policy['cross_part_follow_through'] != 'criterion_specific':
         # Dependency is not inferred from prose or criterion order. These model
         # assertions only identify a possible double penalty for human review.
         for c in deducted:
@@ -176,6 +195,25 @@ def decision_findings(package, candidate):
                         for other in deducted)):
                 findings.append({'criterion_id':c['criterion_id'],'code':'cross_part_follow_through_check',
                     'message':'A complete result with a valid local method was denied alongside another conceptual deduction. Check whether this repeats an earlier input-value penalty under the approved cross-part rule, or reflects a new independent physical error. No marks were changed.'})
+            elif (check.get('criterion_kind') == 'result'
+                    and check.get('method_status') == 'not_assessed'
+                    and check.get('work_status') == 'complete'
+                    and check.get('error_type') == 'conceptual'
+                    and any(other['criterion_id'] != c['criterion_id']
+                        and (other.get('decision_check') or {}).get('error_type') == 'conceptual'
+                        for other in deducted)
+                    and any(other['criterion_id'] != c['criterion_id']
+                        and other['points_earned'] == other['max_points']
+                        and other['max_points'] > 0
+                        and (other.get('decision_check') or {}).get('criterion_kind') == 'method'
+                        and (other.get('decision_check') or {}).get('method_status') == 'valid'
+                        and (other.get('decision_check') or {}).get('work_status') == 'complete'
+                        and (other.get('decision_check') or {}).get('error_type') == 'none'
+                        for other in criteria)):
+                findings.append({'criterion_id':c['criterion_id'],'code':'cross_part_dependency_uncertain',
+                    'message':'A complete result was denied after another conceptual deduction while a separate method earned full credit, but the result\'s local method was not assessed. Check the actual quantity dependency and local calculation under the approved cross-part rule. No dependency or marks were inferred.'})
+    from services.grading_policy_checks import policy_arithmetic_audit
+    findings.extend(policy_arithmetic_audit(package, candidate)['findings'])
     return findings
 
 

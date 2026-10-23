@@ -11,6 +11,56 @@ def observation(i, **changes):
 
 
 class ReliabilityTests(unittest.TestCase):
+    def test_default_historical_event_is_unchanged(self):
+        result = summarize_reliability([observation(1)])
+        self.assertEqual(result['event'], 'exact_historical_reference_agreement')
+        self.assertIn('Historical labels', result['interpretation'])
+
+    def test_reference_provenance_changes_label_not_metric_accounting(self):
+        rows = [observation(1), observation(2, score=3, needs_review=True),
+                observation(3, status='abstained', score=None, needs_review=True)]
+        before = deepcopy(rows)
+        baseline = summarize_reliability(rows)
+        events = {
+            'instructor_adjudicated': 'exact_instructor_adjudicated_reference_agreement',
+            'project_user_adjudicated': 'exact_project_user_adjudicated_reference_agreement',
+            'agent_development_audit': 'exact_agent_development_audit_agreement',
+        }
+        for kind, event in events.items():
+            with self.subTest(kind=kind):
+                result = summarize_reliability(rows, reference_kind=kind)
+                self.assertEqual(result['event'], event)
+                for key in baseline.keys() - {'event', 'interpretation'}:
+                    self.assertEqual(result[key], baseline[key], key)
+        self.assertEqual(rows, before)
+
+    def test_agent_and_project_user_labels_are_not_called_instructor_labels(self):
+        agent = summarize_reliability([observation(1)], reference_kind='agent_development_audit')
+        user = summarize_reliability([observation(1)], reference_kind='project_user_adjudicated')
+        self.assertIn('not independent human adjudication', agent['interpretation'])
+        self.assertIn('distinct from instructor adjudication', user['interpretation'])
+        self.assertNotIn('instructor_adjudicated', agent['event'])
+        self.assertNotIn('instructor_adjudicated', user['event'])
+
+    def test_unknown_reference_kind_rejected_even_for_empty_data(self):
+        for kind in [None, '', 'validated_accuracy', 'mixed', [], True]:
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                summarize_reliability([], reference_kind=kind)
+
+    def test_replicates_preserve_explicit_reference_provenance(self):
+        runs = [{'replicate_id': 'one', 'observations': [observation(1)]},
+                {'replicate_id': 'two', 'observations': [observation(1, score=3)]}]
+        result = summarize_replicates(runs, reference_kind='agent_development_audit')
+        self.assertEqual(result['unique_answer_count'], 1)
+        self.assertEqual(result['consistently_exact_rate'], 0)
+        for report in result['per_replicate'].values():
+            self.assertEqual(report['event'], 'exact_agent_development_audit_agreement')
+
+    def test_replicates_reject_unknown_reference_kind_before_reporting(self):
+        with self.assertRaises(ValueError):
+            summarize_replicates([{'replicate_id': 'one', 'observations': [observation(1)]}],
+                                 reference_kind='validated_accuracy')
+
     def test_failures_stay_in_target_denominator_without_becoming_zero_grades(self):
         rows = [observation(i) for i in range(4)] + [observation(4, status='failed', score=None)]
         before = deepcopy(rows)

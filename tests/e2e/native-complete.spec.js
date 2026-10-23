@@ -63,7 +63,7 @@ test('native rubric → upload → extraction correction → grading → feedbac
   await page.locator('#native-exam-navigation a[href^="upload"]').click();await expect(page.locator('#ledger-upload')).toBeVisible();
   await page.locator('#ledger-files').setInputFiles({name:'synthetic.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic')});await page.locator('#ledger-upload-submit').click();await expect(page.locator('#upload-accepted')).toContainText('completed');await page.locator('[data-open-saved-paper="s"]').first().click();await expect(page).toHaveURL(/\/app\/extraction.html/);
   await page.locator('[data-source="seg"] textarea').fill('W = Fd = 246 J.');await page.getByRole('button',{name:'Save correction',exact:true}).click();await expect(page.locator('#extraction-state')).toContainText('ready');expect(state.text).toBe('W = Fd = 246 J.');
-  await page.locator('#start-grading').click();await expect(page).toHaveURL(/\/app\/grading.html/);await expect(page.locator('.agent-strip')).toContainText('Verification agent');await expect(page.locator('#original-paper')).toBeVisible();await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();await expect.poll(()=>state.reviewed).toBe(true);
+  await page.locator('#start-grading').click();await expect(page).toHaveURL(/\/app\/grading.html/);await expect(page.locator('.agent-strip')).toContainText('Verification agent');await expect(page.locator('#original-paper')).toBeVisible();if(await page.locator('#review-evidence-checked').count())await page.locator('#review-evidence-checked').check();await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();await expect.poll(()=>state.reviewed).toBe(true);
   await page.locator('#native-exam-navigation a[href^="feedback"]').click();await expect(page.locator('#learning-insights')).toContainText('1 graded');
   await page.locator('#native-exam-navigation a[href^="results"]').click();await expect(page.locator('#native-export-checks')).toContainText('1 included');const download=page.waitForEvent('download');await page.locator('#native-export-csv').click();expect((await download).suggestedFilename()).toBe('synthetic-grades.csv');
   expect(state.writes.some(w=>w.path.endsWith('/marking-guide/approve'))).toBeTruthy();
@@ -74,6 +74,18 @@ test('transcription conflict retains edits and prevents navigation on cancellati
   await fixture(page,{graded:false,failCorrection:true});await page.goto('/app/extraction.html?exam_id=e&submission_id=s');
   await page.locator('[data-source="seg"] textarea').fill('Keep this unsaved correction');await page.getByRole('button',{name:'Save correction',exact:true}).click();await expect(page.locator('#native-page-notice')).toContainText('conflict');await expect(page.locator('[data-source="seg"] textarea')).toHaveValue('Keep this unsaved correction');
   page.once('dialog',d=>d.dismiss());await page.locator('#go-grading').click();await expect(page).toHaveURL(/extraction.html/);
+});
+
+test('approved guide can be reopened without discarding its saved criteria',async({page})=>{
+  const state=await fixture(page);
+  await page.route('**/api/exams/e/marking-guide/reopen',async route=>{
+    state.writes.push({path:'/exams/e/marking-guide/reopen',body:route.request().postDataJSON()});
+    await route.fulfill({json:{exam_id:'e',draft_version_ids:['draft'],message:'Guide reopened with saved correction drafts.'}});
+  });
+  await page.goto('/app/setup.html?exam_id=e');await page.locator('#guide-review-tab').click();
+  page.once('dialog',d=>d.accept());await page.locator('#guide-reopen').click();
+  await expect(page.locator('#guide-approval-state')).toContainText('reopened');
+  expect(state.writes.find(w=>w.path.endsWith('/reopen')).body).toEqual({review_token:'a'.repeat(64),confirm_reviewed:true});
 });
 
 test('dashboard, history and reviews use real API-shaped records with native destinations',async({page},info)=>{

@@ -35,6 +35,29 @@ SCENARIO_OPTIONS: dict[str, set[str]] = {
 }
 
 
+class InstructorTeachingContext(BaseModel):
+    """Instructor-authored design context, never a replacement for an approved guide."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    subjects: list[str] = Field(default_factory=list, max_length=12)
+    course_level: Literal["unspecified", "school", "undergraduate", "postgraduate"] = "unspecified"
+    marking_style: Literal["unspecified", "lenient", "balanced", "strict"] = "unspecified"
+    question_types: list[Literal["calculation", "short_answer", "multiple_choice", "essay", "proof", "code", "data_analysis", "diagram", "other"]] = Field(default_factory=list, max_length=9)
+    other_question_types: str = Field(default="", max_length=500)
+    exam_language: Literal["unspecified", "en", "ar", "mixed"] = "unspecified"
+    question_style_notes: str = Field(default="", max_length=1500)
+    marking_style_notes: str = Field(default="", max_length=1500)
+    rubric_style_notes: str = Field(default="", max_length=1500)
+
+    @model_validator(mode="after")
+    def bounded_subjects(self):
+        if any(not subject.strip() or len(subject) > 120 for subject in self.subjects):
+            raise ValueError("Subjects must contain 1–120 characters each.")
+        self.subjects = list(dict.fromkeys(subject.strip() for subject in self.subjects))
+        self.question_types = list(dict.fromkeys(self.question_types))
+        return self
+
+
 class InstructorExplicitPreferences(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -54,6 +77,7 @@ class InstructorExplicitPreferences(BaseModel):
     alternative_valid_methods: Literal[
         "criterion_specific", "allow", "disallow"
     ] | None = None
+    teaching_context: InstructorTeachingContext | None = None
 
 
 class InstructorScenarioAnswer(BaseModel):

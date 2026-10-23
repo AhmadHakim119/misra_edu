@@ -220,7 +220,36 @@ def provider_grading_package(package):
             for criterion in safe_package["rubric"].get("criteria", [])
         ],
     }
+    safe_package["rubric"]["criteria"] = with_criterion_citation_requirements(
+        safe_package["rubric"].get("criteria", []), safe_package["citation_contract"],
+        course_required=safe_sources["mode"] == "required",
+    )
     return safe_package, evidence_aliases, reference_aliases
+
+
+def with_criterion_citation_requirements(criteria, contract, *, course_required):
+    """Place the existing citation contract beside each provider-facing criterion.
+
+    Also accepts symbolic level choices (criterion_id instead of id). This only
+    copies already allowed provider aliases; it never attaches citations to a
+    model response or modifies approved criteria, marks, or local snapshots.
+    """
+    rows = deepcopy(criteria)
+    if not course_required:
+        return rows
+    by_id = {row["criterion_id"]: row for row in contract["criteria"]}
+    for row in rows:
+        identifier = row.get("id", row.get("criterion_id"))
+        rule = by_id[identifier]
+        row["citation_requirements"] = {
+            "course_reference_required": True,
+            "allowed_course_reference_refs": deepcopy(rule["required_course_reference_refs"]),
+            "allowed_reference_refs": deepcopy(rule["reference_refs"]),
+            "tracked_evidence_refs": deepcopy(contract["tracked_evidence_refs"]),
+            "allowed_policy_applied": deepcopy(contract["policy_applied"]),
+            "answer_key_alone_sufficient": False,
+        }
+    return rows
 
 
 def restore_provider_citations(result, evidence_aliases, reference_aliases):
@@ -228,6 +257,11 @@ def restore_provider_citations(result, evidence_aliases, reference_aliases):
     for criterion in result.criteria_scores:
         criterion.evidence_refs = [evidence_aliases.get(ref, ref) for ref in criterion.evidence_refs]
         criterion.reference_refs = [reference_aliases.get(ref, ref) for ref in criterion.reference_refs]
+        if getattr(criterion, 'numeric_check', None):
+            from services.grading_policy_checks import NumericPolicyCheck, remap_numeric_refs
+            value = {'numeric_check': criterion.numeric_check.model_dump()}
+            remap_numeric_refs(value, {**evidence_aliases, **reference_aliases})
+            criterion.numeric_check = NumericPolicyCheck.model_validate(value['numeric_check'])
 
 
 def reference_images(key):

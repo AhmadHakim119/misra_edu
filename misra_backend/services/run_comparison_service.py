@@ -2,7 +2,7 @@ from sqlalchemy.orm import Session
 
 from models import Answer, GradingRun, QuestionGradingPolicy
 from services.confidence_config import ACTIVE_CONFIG
-from services.review_state_service import resolved_review_status
+from services.review_state_service import resolved_review_status, pending_reopening
 
 DEFAULT_ABSOLUTE_THRESHOLD = 0.5
 DEFAULT_RELATIVE_THRESHOLD = 0.20
@@ -157,6 +157,9 @@ def apply_material_disagreement_gate(
             if flagged_policies:
                 remaining['paired_review_policies'] = flagged_policies
             answer.review_reasons = remaining or None
+        if pending_reopening(answer):
+            answer.needs_review = True
+            answer.review_status = 'pending'
         return False
 
     if human_review_status:

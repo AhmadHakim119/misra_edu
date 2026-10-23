@@ -7,12 +7,12 @@ from collections import defaultdict
 import random
 
 from services.benchmark_metrics import EPSILON, identifier, number, on_grid
-from services.evaluation_reliability import summarize_reliability
+from services.evaluation_reliability import REFERENCE_EVENTS, summarize_reliability
 
 
 EXPOSURE_FIELDS = ('answer_previously_used', 'question_previously_used', 'student_previously_used')
 INPUT_MODES = {'checked_text', 'raw_ocr', 'reviewed_ocr'}
-REFERENCE_KINDS = {'historical_teacher', 'instructor_adjudicated'}
+REFERENCE_KINDS = frozenset(REFERENCE_EVENTS)
 
 
 def _exposure(row):
@@ -82,7 +82,7 @@ def summarize_transfer(rows, *, target=.8, bootstrap_samples=2000, seed=171):
             raise ValueError('Declare the actual grading input stage.')
         modes.add(row['input_mode'])
         if row.get('reference_kind') not in REFERENCE_KINDS:
-            raise ValueError('Keep historical and adjudicated reference provenance explicit.')
+            raise ValueError('Keep reference provenance explicit.')
         maximum = number(row['max_score'], 'max_score')
         step = number(row.get('score_step'), 'score_step')
         if step <= 0 or not on_grid(maximum,step) or not on_grid(number(row['reference_score'],'reference_score'), step):
@@ -100,13 +100,14 @@ def summarize_transfer(rows, *, target=.8, bootstrap_samples=2000, seed=171):
         raise ValueError('Report raw OCR and checked-text grading in separate reports.')
 
     def summary(values):
-        result=summarize_reliability(values,target=target)
         kinds={r['reference_kind'] for r in values}
-        result['event']=('exact_historical_reference_agreement' if kinds=={'historical_teacher'}
-            else 'exact_instructor_adjudicated_reference_agreement' if kinds=={'instructor_adjudicated'}
-            else 'exact_mixed_reference_agreement' if kinds else 'exact_reference_agreement')
-        if kinds != {'historical_teacher'}:
+        result=summarize_reliability(values,target=target,
+            reference_kind=next(iter(kinds)) if len(kinds)==1 else 'historical_teacher')
+        if len(kinds)>1:
+            result['event']='exact_mixed_reference_agreement'
             result['interpretation']='Agreement with the declared local reference labels. Reference provenance is reported separately; this is not instructor satisfaction or automatic finalization.'
+        elif not kinds:
+            result['event']='exact_reference_agreement'
         return result
 
     base=summary(rows)

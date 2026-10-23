@@ -8,6 +8,7 @@ import os
 import secrets
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 
 
 SESSION_COOKIE = "misra_session"
@@ -73,6 +74,12 @@ def verify_password(password: str, encoded: str) -> bool:
         return hmac.compare_digest(digest, _b64decode(expected))
     except (TypeError, ValueError):
         return False
+
+
+@lru_cache(maxsize=1)
+def dummy_password_hash() -> str:
+    """Unknown accounts still perform the same expensive password check."""
+    return hash_password('synthetic-non-account-password')
 
 
 def create_session_token(user_id: str, remember: bool = False, session_version: int = 1) -> tuple[str, int]:

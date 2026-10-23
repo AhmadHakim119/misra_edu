@@ -7,6 +7,7 @@ Scans, altered text and ambiguous repeats retain explicitly approximate OCR boxe
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 import re
 import shutil
 import subprocess
@@ -119,3 +120,91 @@ def page_source_locations(path: Path, page_index: int, sources: Iterable[TextSou
     words = read_page_words(path, page_index)
     return {"page_index": page_index, "display_only": True,
             "sources": {source.id: locate_text(source.extracted_text or "", words) for source in sources}}
+
+
+def refine_scan_location(image, location: dict) -> dict:
+    """Bounded display refinement of a coarse grid rectangle, without reading text.
+
+    Expand intersecting ink bands, excluding near-continuous ruled lines. A seed
+    on blank space is rejected, never moved to a different nearby answer. This
+    checks geometry only: ink presence does not verify the answer's identity.
+    Original provider coordinates remain in the saved run and are returned here
+    as reported_bounding_box. No extraction, grade or confirmation is changed.
+    """
+    from schemas.ocr_evidence import NormalizedBoundingBox
+    from pydantic import ValidationError
+    from PIL import Image
+
+    if location.get('method') != 'vision_grid' or location.get('status') != 'located':
+        return deepcopy(location)
+    result = deepcopy(location)
+    reported = result.pop('bounding_box', None)
+    result['reported_bounding_box'] = reported
+    def unavailable(reason):
+        return {**result, 'status': 'unverified', 'reason': reason,
+                'geometry_check': 'ink_support_unavailable'}
+    try:
+        box = NormalizedBoundingBox.model_validate(reported).model_dump()
+    except (ValidationError, TypeError):
+        return unavailable('invalid_reported_rectangle')
+    page = image.convert('L')
+    page.thumbnail((1800, 1800))
+    width, height = page.size
+    # Search at most two 40-grid cells beyond the seed. Never select a band
+    # that does not intersect the original proposed vertical extent.
+    margin = 2 / 40
+    left = max(0, math.floor((box['x'] - margin) * width))
+    top = max(0, math.floor((box['y'] - margin) * height))
+    right = min(width, math.ceil((box['x'] + box['width'] + margin) * width))
+    bottom = min(height, math.ceil((box['y'] + box['height'] + margin) * height))
+    if right - left < 3 or bottom - top < 3:
+        return unavailable('reported_rectangle_too_small')
+    mask = page.crop((left, top, right, bottom)).point(lambda value: 255 if value < 140 else 0)
+    span, depth = mask.size
+    rows, active = [], []
+    rule = re.compile(b'\xff{%d,}' % max(30, round(span * .08)))
+    for y in range(depth):
+        line = mask.crop((0, y, span, y + 1))
+        pixels = bytearray(line.tobytes())
+        joined = re.sub(b'(?<=\xff)\x00{1,3}(?=\xff)', lambda match: b'\xff' * len(match[0]), bytes(pixels))
+        for match in rule.finditer(joined):
+            pixels[match.start():match.end()] = b'\x00' * (match.end() - match.start())
+        count = pixels.count(255)
+        line = Image.frombytes('L', (span, 1), bytes(pixels))
+        # Page rules are not answer ink. Leave their pixels out of the bounds.
+        useful = max(2, math.ceil(span * .003)) <= count < span * .7
+        rows.append(line if useful else None)
+        if useful:
+            active.append(y)
+    if not active:
+        return unavailable('no_ink_support_at_reported_location')
+    bands = []
+    gap = max(2, round(height * .002))
+    for y in active:
+        if not bands or y - bands[-1][-1] > gap:
+            bands.append([y])
+        else:
+            bands[-1].append(y)
+    seed_top, seed_bottom = box['y'] * height - top, (box['y'] + box['height']) * height - top
+    selected = [band for band in bands if band[-1] >= seed_top and band[0] < seed_bottom]
+    if not selected:
+        return unavailable('no_ink_support_at_reported_location')
+    ink_rows = [y for band in selected for y in band]
+    # Search-edge contact means the complete ink band is not established.
+    if min(ink_rows) <= 1 or max(ink_rows) >= depth - 2:
+        return unavailable('ink_extends_beyond_location_search')
+    seed_left = max(0, math.floor(box['x'] * width) - left)
+    seed_right = min(span, math.ceil((box['x'] + box['width']) * width) - left)
+    if not any(rows[y].crop((seed_left, 0, seed_right, 1)).getbbox() for y in ink_rows):
+        return unavailable('no_ink_support_at_reported_location')
+    pad = max(2, round(min(width, height) * .003))
+    # Keep the proposed horizontal scope. Ruled lines can extend beyond the
+    # writing and must not stretch a box across neighbouring answer columns.
+    x0, x1 = box['x'] * width, min(width, (box['x'] + box['width']) * width)
+    y0 = max(0, min(box['y'] * height, top + min(ink_rows)) - pad)
+    y1 = min(height, max((box['y'] + box['height']) * height, top + max(ink_rows) + 1) + pad)
+    result.update(bounding_box={'x': x0 / width, 'y': y0 / height,
+                               'width': (x1 - x0) / width, 'height': (y1 - y0) / height},
+                  geometry_check='vertical_ink_extent_checked',
+                  geometry_note='Vertical display extent checked against nearby ink; horizontal placement and answer identity remain unverified.')
+    return result

@@ -303,7 +303,7 @@ class AnswerAreaTests(unittest.TestCase):
         app.dependency_overrides[require_instructor]=lambda:self.user
         async def exercise():
             async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test') as client:
-                approved=await client.post('/api/answers/a/resolve-review',json={'action':'approve','grading_run_id':old_run,'was_review_warranted':False})
+                approved=await client.post('/api/answers/a/resolve-review',json={'expected_review_token':(await client.get('/api/results/s')).json()['answers'][0]['review_token'],'action':'approve','grading_run_id':old_run,'was_review_warranted':False})
                 self.assertEqual(approved.status_code,200,approved.text)
                 with patch('services.job_queue_service.dispatch_processing_job',side_effect=lambda job,db:job):
                     queued=await client.post('/api/answer-sources/source/area-preview',json={'bounding_box':self.box,'expected_text':'My solution'})
@@ -329,7 +329,7 @@ class AnswerAreaTests(unittest.TestCase):
                     accepted=await client.post('/api/answers/a/regrade-corrected',json=request)
                 self.assertEqual(accepted.status_code,202,accepted.text)
                 regrade_id=accepted.json()['job']['id']
-                blocked=await client.post('/api/answers/a/resolve-review',json={'action':'approve','grading_run_id':old_run,'was_review_warranted':False})
+                blocked=await client.post('/api/answers/a/resolve-review',json={'expected_review_token':(await client.get('/api/results/s')).json()['answers'][0]['review_token'],'action':'approve','grading_run_id':old_run,'was_review_warranted':False})
                 self.assertEqual(blocked.status_code,409,blocked.text)
                 proposal=self.result(points_earned=0);proposal['score']=0
                 with patch('services.job_execution_service.SessionLocal',return_value=self.db),patch.object(self.db,'close'), \
