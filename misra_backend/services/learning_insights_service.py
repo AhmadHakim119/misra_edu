@@ -5,7 +5,7 @@ import json
 import math
 
 from models import Answer, Question, Submission
-from services.grading_scope_service import is_external_question
+from services.grading_scope_service import is_external_question, active_questions
 
 
 def finite(value):
@@ -19,6 +19,7 @@ def finite(value):
 def learning_insights(db, exam):
     questions = db.query(Question).filter(Question.exam_id == exam.id,
         Question.institution_id == exam.institution_id).order_by(Question.order_index).all()
+    questions = active_questions(questions)
     papers = db.query(Submission).filter(Submission.exam_id == exam.id,
         Submission.institution_id == exam.institution_id).all()
     rows = db.query(Answer).join(Submission, Answer.submission_id == Submission.id).filter(

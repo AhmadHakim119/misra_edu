@@ -127,8 +127,12 @@ Copy-Item .\.env.example .\misra_backend\.env
 Edit `misra_backend/.env` and supply the real database URL, Gemini key, and a
 random recovery and authentication signing key. Never put secrets in
 `.env.example`. The example also documents configurable upload boundaries:
-25 MB per file, 100 MB per batch request, 25 files per batch, 50 pages per PDF,
-and 40 million pixels per image.
+25 MB per file, 100 MB per batch request, 25 files per batch, 50 pages per student
+paper, and 40 million pixels per image. A combined class PDF with **Pages per
+student** set can contain up to 250 pages (`MAX_BATCH_PDF_PAGES`). Each split
+paper remains bounded by `MAX_PDF_PAGES`; without a split, the ordinary 50-page
+limit applies. For example, a 55-page combined PDF split every 11 pages creates
+five papers. Restart the API after changing upload-limit configuration.
 
 Create an empty database and a least-privilege local user. Example MariaDB SQL:
 

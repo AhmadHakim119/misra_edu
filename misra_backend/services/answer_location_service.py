@@ -11,7 +11,7 @@ from pdf2image import convert_from_path
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, model_validator
 from sqlalchemy import or_
 
-from models import Answer, AnswerSource, ProcessingJob, Submission
+from models import Answer, AnswerSource, ProcessingJob, Question, Submission
 from services.inference_service import complete
 
 OPERATION = 'locate_answers'
@@ -44,11 +44,13 @@ class LocationResponse(BaseModel):
 
 
 def sources_for_page(db, submission, page_index):
-    return (db.query(AnswerSource).join(Answer, Answer.id == AnswerSource.answer_id)
+    rows = (db.query(AnswerSource, Question).join(Answer, Answer.id == AnswerSource.answer_id).join(Question,Question.id == Answer.question_id)
             .filter(Answer.submission_id == submission.id,
                     Answer.institution_id == submission.institution_id,
                     AnswerSource.page_index == page_index)
             .order_by(AnswerSource.segment_index, AnswerSource.id).all())
+    from services.grading_scope_service import is_removed_question
+    return [source for source,question in rows if not is_removed_question(question)]
 
 
 def fingerprint(sources):

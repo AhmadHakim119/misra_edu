@@ -80,7 +80,7 @@ def confirm_source_area(source_id:str,job_id:str,payload:AreaConfirmRequest,db:S
 @router.post('/answers/{answer_id}/regrade-corrected',status_code=202)
 def regrade_area_answer(answer_id:str,payload:AreaRegradeRequest,db:Session=Depends(get_db),user:User=Depends(require_instructor)):
     from routers.grading import _require_verified_mapping
-    from services.grading_scope_service import is_external_question
+    from services.grading_scope_service import is_paper_question
     answer=db.query(Answer).filter(Answer.id==answer_id,Answer.institution_id==user.institution_id).first()
     if not answer:raise HTTPException(404,'Answer not found')
     submission=db.query(Submission).filter(Submission.id==answer.submission_id,
@@ -97,7 +97,7 @@ def regrade_area_answer(answer_id:str,payload:AreaRegradeRequest,db:Session=Depe
     if (answer.grading_raw_response or {}).get('grading_run_id')!=payload.expected_run_id:
         raise HTTPException(409,'A newer grade is available. Reload before regrading.')
     question=db.get(Question,answer.question_id)
-    if not question or is_external_question(question):raise HTTPException(409,'This question is not assessed here.')
+    if not question or not is_paper_question(question):raise HTTPException(409,'This question is not assessed here. Restore a removed question in Extraction before regrading.')
     sources=db.query(AnswerSource).filter(AnswerSource.answer_id==answer.id).order_by(AnswerSource.page_index,AnswerSource.segment_index).all()
     revisions=answer_revisions(db,answer,sources,for_update=True)
     if len(set(payload.revision_ids))!=len(payload.revision_ids) or sorted(payload.revision_ids)!=sorted(r['id'] for r in revisions):

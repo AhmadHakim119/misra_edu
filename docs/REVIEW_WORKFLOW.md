@@ -2,6 +2,13 @@
 
 ## Instructor workflow
 
+- **Course library → Open original PDF** opens a saved source independently of
+  text review. The embedded reviewer permits same-origin framing only for a
+  successful source-PDF response; account and institution checks still apply.
+  Other pages, non-PDF responses and errors retain framing protection. Switching
+  courses remounts the reader and ignores delayed chapter-index responses. Failed
+  loads can be retried without showing another course's files; unsaved edits can
+  cancel switching. Approved content remains immutable.
 - **Dashboard → Review concerns** previews the stated reason and the next check.
   **Review** opens the complete queue. **AI grading** shows the saved rationale,
   affected criterion, evidence references, original page and instructor controls.
@@ -106,8 +113,54 @@ Do not put student records into the profile's free-text teaching notes.
 
 ## Local operation and checks
 
+Setup imports checkpoint each successfully validated exam/key page. Retrying an
+existing failed import skips those pages; an invalid or failed page is not saved
+as completed. Temporary OpenRouter 500/502/503/504 errors get at most three
+attempts for the identical free-model request, waiting 2 and then 4 seconds.
+Authentication, credit and quota errors are not immediately retried by this
+transport handler. The existing queued-job retry limit still applies afterward;
+these bounds do not guarantee provider availability or sufficient daily quota.
+
+The setup reader supplies its JSON schema and permits one same-page format
+repair if the response fails validation. Missing question text is never silently
+dropped or filled from a student's solution, and unknown marks remain unknown.
+Unusable responses do not approve or import questions. Error messages and repair
+prompts contain validation field names/types, not the invalid response content.
+Restart the RQ worker to load these changes, then use **Activity → Retry safely**
+on the existing failed setup request instead of uploading the documents again.
+
 No new dependencies or database migration are required. Restart the API after
 updating backend code; restart workers before using the revised grading checks.
+Chapter selection now uses one approval flow: tick chapters, continue to the
+marking guide, then confirm **Approve guide and selected sources**. Continuing
+saves the selection draft. The final review lists exact source titles/pages and
+fingerprints their content; that single explicit action approves their readable
+source drafts, reference scopes, keys and criteria atomically. Merely ticking a
+chapter publishes nothing. Unfinished ingestion, blank selected text, changed
+files, stale reviews and cross-course references block publication. A late
+failure rolls back every source and guide approval. Existing separate library
+approval remains available, and old API clients must opt in with
+`approve_selected_sources: true` to include pending source pages.
+For completed exam/key imports, **Add selected questions to the marking guide**
+now identifies missing fields, opens a collapsed invalid field and focuses it.
+Select **Multiple choice** for an MCQ: a separate written guide may stay empty
+when its reference answer is recorded. An empty mark value starts at an editable
+1 mark on selection; existing values are retained. The saved draft then uses a
+binary correct-option criterion. Written answers still require a marking guide,
+and every question still needs positive marks. Failed saves preserve edits and
+excluded rows; pending confirmation is locked against duplicate submission.
+These are draft-authoring changes, not approval or regrading of existing work.
+Restart the API and refresh the page to use them; recover the completed request
+through **Check saved quiz requests** rather than running extraction again.
+An imported question's **Total marks** can also be corrected in its editable
+rubric draft without deleting the question. Criteria must add up to that draft
+total. Whole-guide review displays the proposed total and warns when it differs
+from the current question total; the additive `current_max_score` field retains
+the latter for comparison. Saving/reviewing the draft does not change the current
+total. Explicit whole-guide approval applies it through the existing version
+approval service, preserves prior runs and marks, and flags existing proposals
+for renewed review. Approved/current definitions still require matching totals
+in grading preflight; this is not a relaxation of grading validation.
 Opening the profile, review queue and saved-pilot archive starts no inference.
 Live extraction/grading viewers retain their existing automatic answer-location
 jobs, which can use the configured OCR provider when no location is available;

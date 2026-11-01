@@ -8,10 +8,12 @@ The new instructor workspace supports a connected teaching cycle at
    control accepts up to 25 PDFs / 100 MB per selection, sending each file through
    the existing validated material-upload endpoint. Each becomes a separate draft
    with its own background reading job. These are not student submissions.
-2. Check the extracted content against the original, especially equations. Approve
-   only checked pages in the existing course-library reviewer. Scans without text
-   still need transcription; this change does not create a new OCR provider.
-3. Choose the checked material taught for this assessment. **Use all currently
+2. Preview extracted content against the original where needed, especially
+   equations. Select the chapters taught, then continue to the marking guide;
+   the final guide confirmation can approve their listed source pages together.
+   Separate library approval remains optional. Scans without readable text still
+   need transcription; unfinished or corrupt material cannot be approved.
+3. Choose the material taught for this assessment. **Use all currently
    approved course materials** copies the latest current approved version/page
    selections into an editable assessment-source draft, up to 64 materials. New
    uploads/approvals are never silently added to a published assessment. Detailed
@@ -24,8 +26,10 @@ The new instructor workspace supports a connected teaching cycle at
    Alternatively, **Use an existing quiz or exam instead** imports its questions
    and optional key without generating replacement questions. Neither route creates
    student submissions. Saved requests survive leaving/reloading the page.
-5. Review and approve the whole marking guide once. Existing per-question source
-   exceptions are retained. Student upload remains gated by approved definitions.
+5. Review and approve the whole marking guide once, including any listed selected
+   source drafts. Publication is atomic and bound to the reviewed content; a
+   source edit invalidates that review. Existing per-question source exceptions
+   are retained. Student upload remains gated by approved definitions.
 6. Upload papers, inspect extraction and grade through the existing worker flow.
    Required-source retrieval searches only approved selected pages, using question
    and criterion text—not student text—to select bounded BM25 passages. Exact

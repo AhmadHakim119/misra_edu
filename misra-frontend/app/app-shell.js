@@ -20,7 +20,7 @@
   const params=new URLSearchParams(location.search);
   async function examNavigation(){const id=params.get('exam_id');document.querySelectorAll('[data-exam-route]').forEach(a=>a.href=link(a.dataset.examRoute,{exam_id:id}));if(!id)return;
     const nav=document.createElement('nav');nav.className='exam-navigation';nav.setAttribute('aria-label','Exam workflow');
-    nav.innerHTML=[['setup','Rubric'],['upload','Upload papers'],['extraction','Extraction'],['grading','AI grading'],['feedback','Feedback'],['results','Results']].map(([route,title])=>`<a href="${link(route,{exam_id:id})}" data-i18n="${title}" ${location.pathname.endsWith('/'+route+'.html')?'aria-current="page"':''}>${title}</a>`).join('');document.querySelector('main').prepend(nav);locale();}
+    nav.innerHTML=[['setup','Rubric'],['upload','Upload papers'],['extraction','Extraction'],['grading','View & grade'],['feedback','Feedback'],['results','Results']].map(([route,title])=>`<a href="${link(route,{exam_id:id})}" data-i18n="${title}" ${location.pathname.endsWith('/'+route+'.html')?'aria-current="page"':''}>${title}</a>`).join('');document.querySelector('main').prepend(nav);locale();}
   const ready=window.MisraCurrentUser.then(user=>{if(user.must_change_password&&!location.pathname.endsWith('/account.html')){location.replace('account.html?required=1');return user;}if(user.role==='admin'){const a=document.createElement('a');a.href='admin.html';a.dataset.i18n='Administration';a.textContent='Administration';header?.querySelector('nav').append(a);}locale();return user;});
   ready.catch(e=>showToast(e.message,'error'));
   window.MisraApp={$,esc,number,link,params,ready,operation,locale,language,setDirty:value=>dirty=value,isBusy:()=>busy};

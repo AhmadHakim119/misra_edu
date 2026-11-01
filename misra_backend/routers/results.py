@@ -29,7 +29,7 @@ from schemas.page_recovery_input import (
 )
 from schemas.source_mapping_input import SourceMappingRequest, UnmatchedSegmentResolutionRequest
 from schemas.source_mapping_input import BulkSegmentResolutionRequest
-from schemas.source_mapping_input import SourceTextCorrectionRequest
+from schemas.source_mapping_input import SourceTextCorrectionRequest, SourceExclusionRequest
 from schemas.public_results import ResultRecord, AnswerRecord
 from schemas.submission_metadata_input import SubmissionMetadataUpdate
 from services.extraction_review_service import (
@@ -132,6 +132,8 @@ async def get_results(
     from models import Question
     from services.grading_scope_service import scope_summary
     grading_scope = scope_summary(db.query(Question).filter(Question.exam_id == submission.exam_id).all())
+    removed_answers = [a for a in answers if a.question_id in grading_scope['removed_question_ids']]
+    answers = [a for a in answers if a.question_id not in grading_scope['removed_question_ids']]
     external_answers = [a for a in answers if a.question_id in grading_scope["external_question_ids"]]
     answers = [a for a in answers if a.question_id not in grading_scope["external_question_ids"]]
     latest_review_labels = []
@@ -147,6 +149,7 @@ async def get_results(
         "latest_review_labels": latest_review_labels,
         "grading_scope": grading_scope,
         "external_answers": external_answers,
+        "removed_answers": removed_answers,
     }
 
 
@@ -655,6 +658,32 @@ def correct_source_text(source_id: str, payload: SourceTextCorrectionRequest,
     return build_extraction_review(answer.submission_id, db)
 
 
+@router.post('/answer-sources/{source_id}/exclude')
+def exclude_extracted_source(source_id: str, payload: SourceExclusionRequest,
+    db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    source=_owned_source(source_id,db,user)
+    if not source:
+        raise HTTPException(404,'Answer source not found')
+    if not payload.confirm_reviewed:
+        raise HTTPException(422,'Confirm removal from this paper.')
+    from services.extraction_review_service import _assert_answer_is_ungraded, source_removal_token
+    from services.answer_area_service import latest_revision
+    answer=db.query(Answer).filter_by(id=source.answer_id).with_for_update().populate_existing().one()
+    source=db.query(AnswerSource).filter_by(id=source_id).with_for_update().populate_existing().one()
+    try:
+        _assert_answer_is_ungraded(answer,db)
+        if source_removal_token(source,latest_revision(db,source,user.institution_id)) != payload.review_token:
+            raise ValueError('This extracted entry changed. Refresh Extraction before removing it.')
+        record_audit_event(db,institution_id=user.institution_id,actor_id=user.id,
+            action='extracted_entry_excluded',entity_type='answer_source',entity_id=source.id,
+            details={'submission_id':answer.submission_id,'question_id':answer.question_id})
+        return bulk_resolve_segments(submission_id=answer.submission_id,action='ignore',question_id=None,
+            source_ids=[source.id],unmatched_indices=[],db=db)
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(409,str(error)) from None
+
+
 @router.delete("/answer-sources/{source_id}")
 def delete_manually_assigned_answer_source(
     source_id: str,
@@ -741,4 +770,5 @@ async def get_review_queue(
     from models import Question
     from services.grading_scope_service import is_external_question
     questions = {q.id: q for q in db.query(Question).filter(Question.id.in_([a.question_id for a in answers])).all()}
-    return [a for a in answers if a.question_id in questions and not is_external_question(questions[a.question_id])]
+    from services.grading_scope_service import is_paper_question
+    return [a for a in answers if a.question_id in questions and is_paper_question(questions[a.question_id])]

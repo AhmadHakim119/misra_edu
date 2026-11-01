@@ -163,7 +163,8 @@ Do not include question numbers or claim independent source/answer verification.
 
 def exam_questions(db, exam_id):
     from models import Question
-    return db.query(Question).filter(Question.exam_id == exam_id).all()
+    from services.grading_scope_service import active_questions
+    return active_questions(db.query(Question).filter(Question.exam_id == exam_id).all())
 
 
 def validated_import_sources(job, reviewed_questions, db, user):

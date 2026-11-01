@@ -55,6 +55,37 @@ class LoginBudgetTests(unittest.TestCase):
 
 
 class ResponseHeaderTests(unittest.TestCase):
+    def test_only_successful_source_pdfs_allow_same_origin_framing(self):
+        from fastapi import FastAPI, Response
+        from fastapi.testclient import TestClient
+        from main import prevent_sensitive_page_caching
+        app = FastAPI()
+        app.middleware('http')(prevent_sensitive_page_caching)
+        @app.get('/api/materials/{material}/versions/{version}/document')
+        def document(material: str, version: str):
+            if version == 'html':
+                return Response('<html>Synthetic</html>', media_type='text/html')
+            if version == 'missing':
+                return Response(b'%PDF-synthetic', media_type='application/pdf', status_code=404)
+            return Response(b'%PDF-synthetic', media_type='application/pdf', status_code=206 if version == 'range' else 200)
+        @app.get('/api/unrelated-pdf')
+        def unrelated():
+            return Response(b'%PDF-synthetic', media_type='application/pdf')
+        with TestClient(app) as client:
+            for version in ('pdf', 'range'):
+                with self.subTest(version=version):
+                    result = client.get(f'/api/materials/synthetic/versions/{version}/document')
+                    self.assertEqual(result.headers['X-Frame-Options'], 'SAMEORIGIN')
+                    self.assertIn("frame-ancestors 'self'", result.headers['Content-Security-Policy'])
+                    self.assertIn('no-store', result.headers['Cache-Control'])
+                    self.assertEqual(result.headers['X-Content-Type-Options'], 'nosniff')
+            for path in ('/api/materials/synthetic/versions/html/document',
+                         '/api/materials/synthetic/versions/missing/document', '/api/unrelated-pdf'):
+                with self.subTest(path=path):
+                    result = client.get(path)
+                    self.assertEqual(result.headers['X-Frame-Options'], 'DENY')
+                    self.assertIn("frame-ancestors 'none'", result.headers['Content-Security-Policy'])
+
     def test_sensitive_responses_and_reset_links_have_protective_headers(self):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient

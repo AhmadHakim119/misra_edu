@@ -4,6 +4,7 @@ import json
 import os
 import unittest
 import asyncio
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 from fastapi import HTTPException
@@ -12,6 +13,7 @@ from models import Answer, AnswerSource, GradingRun, User
 from services.free_model_gateway import FreeCompletion
 from services.inference_service import complete, configuration
 from services.verification_agent import verify
+from services.grading_errors import GradingResponseValidationError
 from services.grading_service import process_grading
 from schemas.source_mapping_input import SourceTextCorrectionRequest
 from schemas.public_results import ResultRecord
@@ -70,6 +72,45 @@ class NativePipelineTests(unittest.TestCase):
              patch('services.verification_agent.verify',side_effect=ValueError('Invalid verifier response')):
             with self.assertRaises(ValueError): process_grading('a',self.db)
         self.assertIsNone(self.answer.score);self.assertEqual(self.db.query(GradingRun).count(),0)
+
+    def test_malformed_verifier_corrects_without_repeating_assessment(self):
+        response = {'criteria': [{'criterion_id': 'logic', 'verdict': 'needs_review',
+            'explanation': 'Synthetic evidence needs inspection.'}], 'summary': 'Inspect the evidence.'}
+        malformed = json.dumps({'criteria': [response['criteria'][0], 'decision_check']})
+        with patch.dict(os.environ, {'VERIFICATION_ENABLED': 'true', 'GRADING_PROVIDER': 'gemini'}), \
+             patch('services.grading_service.generate', return_value=json.dumps(self.result())) as assessor, \
+             patch('services.verification_agent.complete', side_effect=[FreeCompletion(malformed, {}),
+                 FreeCompletion(json.dumps(response), {})]) as verifier:
+            process_grading('a', self.db)
+        assessor.assert_called_once()
+        self.assertEqual(verifier.call_count, 2)
+        self.assertEqual(self.answer.score, 2)
+        self.assertEqual(self.db.query(GradingRun).count(), 1)
+        self.assertTrue(self.answer.grading_raw_response['verification']['inference']['format_correction_performed'])
+
+    def test_invalid_verifier_preserves_existing_grade_run_and_instructor_override(self):
+        with patch.dict(os.environ, {'VERIFICATION_ENABLED': 'false', 'GRADING_PROVIDER': 'gemini'}), \
+             patch('services.grading_service.generate', return_value=json.dumps(self.result())):
+            process_grading('a', self.db)
+        self.answer.teacher_override_score = 1.5
+        self.answer.review_status = 'overridden'
+        self.db.commit()
+        snapshot = deepcopy(self.answer.grading_raw_response)
+        run_snapshot = deepcopy(self.db.query(GradingRun).one().response_json)
+        with patch.dict(os.environ, {'VERIFICATION_ENABLED': 'true', 'GRADING_PROVIDER': 'gemini'}), \
+             patch('services.grading_service.generate', return_value=json.dumps(self.result())) as assessor, \
+             patch('services.verification_agent.complete', return_value=FreeCompletion(
+                 '{"criteria":["decision_check"]}', {})) as verifier:
+            with self.assertRaises(GradingResponseValidationError):
+                process_grading('a', self.db)
+        assessor.assert_called_once()
+        self.assertEqual(verifier.call_count, 2)
+        self.db.expire_all()
+        self.assertEqual(self.answer.score, 2)
+        self.assertEqual(float(self.answer.teacher_override_score), 1.5)
+        self.assertEqual(self.answer.review_status, 'overridden')
+        self.assertEqual(self.answer.grading_raw_response, snapshot)
+        self.assertEqual(self.db.query(GradingRun).one().response_json, run_snapshot)
 
     def test_transcription_correction_preserves_original_and_rejects_stale_or_foreign(self):
         user=SimpleNamespace(id='teacher',institution_id='i')

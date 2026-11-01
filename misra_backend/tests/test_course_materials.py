@@ -117,6 +117,7 @@ class CourseMaterialTests(unittest.TestCase):
         material,version = self.material()
         for call in [lambda:api.list_materials("c",self.db,self.other),
                      lambda:api.get_pages(material["id"],version.id,0,10,self.db,self.other),
+                     lambda:api.get_document(material["id"],version.id,self.db,self.other),
                      lambda:api.list_scopes("q",self.db,self.other)]:
             with self.assertRaises(HTTPException) as error: call()
             self.assertEqual(error.exception.status_code,404)

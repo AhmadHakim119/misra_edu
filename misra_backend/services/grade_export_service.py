@@ -13,7 +13,7 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy.orm import Session
 
 from models import Answer, Course, Exam, Question, Student, Submission
-from services.grading_scope_service import is_external_question, scope_summary
+from services.grading_scope_service import is_external_question, is_paper_question, scope_summary
 
 
 FORMULA_PREFIXES = ("=", "+", "-", "@")
@@ -60,7 +60,7 @@ def build_grade_export(exam_id: str, institution_id: str, db: Session) -> GradeE
         .all()
     )
     grading_scope = scope_summary(questions)
-    questions = [q for q in questions if not is_external_question(q)]
+    questions = [q for q in questions if is_paper_question(q)]
     paper_ids = {q.id for q in questions}
     submissions = (
         db.query(Submission)

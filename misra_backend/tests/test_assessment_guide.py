@@ -49,6 +49,89 @@ class AssessmentGuideTests(unittest.TestCase):
         self.assertEqual(self.q.active_rubric_version_id,draft.id)
         self.assertEqual(reviewed['questions'][0]['source_references'][0]['title'],'Synthetic chapter')
 
+    def correction(self, number='p6.1', text='Corrected printed question'):
+        from services.question_definition_service import current_definition
+        draft=self.draft();value=deepcopy(draft.rubric_json)
+        value['question_definition']=dict(question_number=number,question_text=text,
+            language='en',previous=current_definition(self.q))
+        from services.rubric_version_service import update_rubric_version
+        return update_rubric_version(version=draft,rubric_json=value,change_summary='Correct import',db=self.db)
+
+    def test_question_correction_is_reviewed_and_applied_without_rewriting_history(self):
+        from models import Answer, GradingRun
+        before=(self.q.question_number,self.q.question_text)
+        approved=deepcopy(self.db.get(RubricVersion,'r').rubric_json)
+        answer=self.db.get(Answer,'a');answer.score=1;answer.teacher_override_score=1.5;answer.review_status='approved'
+        snapshot={'question':{'number':before[0],'text':before[1]}}
+        run=GradingRun(id='definition-history',answer_id='a',rubric_version_id='r',mode='text_only',model_name='synthetic',
+            prompt_version='test',ocr_text_snapshot='Original work',rubric_snapshot=approved,score=1,max_score=2,
+            feedback='Original',reasoning='Original',criteria_scores=[],llm_confidence=40,final_confidence=40,
+            needs_review=False,response_json=deepcopy(snapshot))
+        self.db.add(run);self.db.commit()
+        draft=self.correction();self.assertEqual((self.q.question_number,self.q.question_text),before)
+        review=review_assessment_guide('e',self.db,self.user)
+        self.assertEqual(review['questions'][0]['question_number'],'p6.1')
+        self.assertEqual(review['questions'][0]['current_question_number'],before[0])
+        self.approve(review['review_token']);self.db.refresh(self.q)
+        self.assertEqual(self.q.question_text,'Corrected printed question')
+        self.assertEqual(self.q.question_number,'p6.1')
+        self.assertEqual(self.db.get(RubricVersion,'r').rubric_json,approved)
+        self.assertEqual(draft.rubric_json['question_definition']['previous']['question_text'],before[1])
+        self.db.refresh(answer);self.db.refresh(run)
+        self.assertEqual(run.response_json,snapshot);self.assertEqual(float(run.score),1)
+        self.assertEqual(float(answer.score),1);self.assertEqual(float(answer.teacher_override_score),1.5)
+        self.assertTrue(answer.needs_review)
+        from services.rubric_version_service import get_effective_rubric
+        effective,_=get_effective_rubric(self.q,self.db)
+        self.assertNotIn('question_definition',effective)
+        self.assertEqual(effective['criteria'],draft.rubric_json['criteria'])
+
+    def test_another_correction_can_follow_an_approved_correction(self):
+        self.correction();self.approve(review_assessment_guide('e',self.db,self.user)['review_token'])
+        from routers.rubric_versions import reopen_assessment_guide
+        review=review_assessment_guide('e',self.db,self.user)
+        reopen_assessment_guide('e',AssessmentGuideApprovalRequest(review_token=review['review_token'],confirm_reviewed=True),self.db,self.user)
+        draft=self.db.query(RubricVersion).filter_by(question_id='q',status='draft').one()
+        value=deepcopy(draft.rubric_json);value['question_definition']['question_text']='Second wording correction'
+        from services.rubric_version_service import update_rubric_version
+        update_rubric_version(version=draft,rubric_json=value,change_summary='Second correction',db=self.db)
+        review=review_assessment_guide('e',self.db,self.user);self.assertTrue(review['can_approve'],review['errors'])
+        self.approve(review['review_token']);self.assertEqual(self.q.question_text,'Second wording correction')
+
+    def test_question_correction_blocks_individual_approval_and_stale_definition(self):
+        from services.rubric_version_service import approve_rubric_version
+        draft=self.correction()
+        with self.assertRaisesRegex(ValueError,'whole-guide'):
+            approve_rubric_version(version=draft,db=self.db)
+        self.q.question_text='Changed by a different editor';self.db.commit()
+        review=review_assessment_guide('e',self.db,self.user)
+        self.assertFalse(review['can_approve'])
+        self.assertTrue(any('changed after' in e for e in review['errors']))
+
+    def test_duplicate_proposed_question_numbers_block_whole_approval(self):
+        from models import Question
+        self.db.add(Question(id='collision',institution_id='i',exam_id='e',question_number='P6.1',
+            question_text='Other question',max_score=2,rubric_json=self.rubric,order_index=2,language='en'))
+        self.db.commit();self.correction()
+        review=review_assessment_guide('e',self.db,self.user)
+        self.assertFalse(review['can_approve'])
+        self.assertTrue(any('used more than once' in e for e in review['errors']))
+
+    def test_whole_approval_can_renumber_a_cycle_atomically(self):
+        from models import Question
+        from services.question_definition_service import current_definition
+        other=Question(id='second',institution_id='i',exam_id='e',question_number='p6.1',
+            question_text='Other question',max_score=2,rubric_json=self.rubric,order_index=2,language='en')
+        self.db.add(other);self.db.commit();original=self.q.question_number
+        first=self.correction()
+        value=deepcopy(first.rubric_json)
+        value['question_definition']=dict(question_number=original,question_text=other.question_text,
+            language='en',previous=current_definition(other))
+        create_rubric_version(question=other,rubric_json=value,source='manual',change_summary='Number swap',db=self.db)
+        review=review_assessment_guide('e',self.db,self.user);self.assertTrue(review['can_approve'],review['errors'])
+        self.approve(review['review_token'])
+        self.assertEqual(self.q.question_number,'p6.1');self.assertEqual(other.question_number,original)
+
     def test_same_draft_edit_invalidates_review(self):
         draft=self.draft(); review=review_assessment_guide('e',self.db,self.user)
         updated=deepcopy(draft.rubric_json);updated['criteria'][0]['description']='Changed credit rule'
@@ -56,6 +139,56 @@ class AssessmentGuideTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as error:self.approve(review['review_token'])
         self.assertEqual(error.exception.status_code,409)
         self.assertEqual(self.db.get(RubricVersion,draft.id).status,'draft')
+
+    def test_draft_total_correction_is_reviewed_before_changing_current_marks(self):
+        draft=self.draft()
+        self.q.max_score=8
+        changed=deepcopy(draft.rubric_json)
+        changed['max_score']=4
+        changed['criteria'][0]['points']=4
+        draft.rubric_json=changed
+        self.db.commit()
+        review=review_assessment_guide('e',self.db,self.user)
+        self.assertTrue(review['can_approve'],review['errors'])
+        self.assertEqual(review['total_marks'],4)
+        row=review['questions'][0]
+        self.assertEqual(row['max_score'],4)
+        self.assertEqual(row['current_max_score'],8)
+        self.assertTrue(any('8' in w and '4' in w for w in row['warnings']))
+        self.db.refresh(self.q)
+        self.assertEqual(float(self.q.max_score),8)
+        self.assertEqual(self.q.active_rubric_version_id,'r')
+        self.approve(review['review_token'])
+        self.db.refresh(self.q)
+        self.assertEqual(float(self.q.max_score),4)
+        self.assertEqual(self.q.active_rubric_version_id,draft.id)
+        self.assertEqual(self.db.get(RubricVersion,'r').rubric_json,self.rubric)
+
+    def test_review_of_changed_draft_total_does_not_rewrite_previous_grade(self):
+        from models import Answer, GradingRun
+        draft=self.draft()
+        updated=deepcopy(draft.rubric_json)
+        updated['max_score']=4;updated['criteria'][0]['points']=4
+        draft.rubric_json=updated
+        answer=self.db.get(Answer,'a');answer.score=1;answer.review_status='approved'
+        run=GradingRun(id='old-total',answer_id='a',rubric_version_id='r',mode='text_only',model_name='synthetic',
+            prompt_version='test',ocr_text_snapshot='W=mgh',rubric_snapshot={'max_score':2},score=1,max_score=2,
+            feedback='old',reasoning='old',criteria_scores=[],llm_confidence=40,final_confidence=40,needs_review=False,response_json={})
+        self.db.add(run);self.db.commit()
+        reviewed=review_assessment_guide('e',self.db,self.user)
+        self.approve(reviewed['review_token'])
+        self.db.refresh(run);self.db.refresh(answer)
+        self.assertEqual(float(run.max_score),2)
+        self.assertEqual(run.rubric_snapshot,{'max_score':2})
+        self.assertEqual(float(answer.score),1)
+        self.assertTrue(answer.needs_review)
+        self.assertEqual(answer.review_status,'pending')
+
+    def test_approved_total_mismatch_still_blocks_guide(self):
+        self.q.max_score=8;self.db.commit()
+        reviewed=review_assessment_guide('e',self.db,self.user)
+        self.assertFalse(reviewed['can_approve'])
+        self.assertTrue(any('marks do not match' in e for e in reviewed['errors']))
 
     def test_failure_late_in_approval_rolls_back_every_version(self):
         draft=self.draft()

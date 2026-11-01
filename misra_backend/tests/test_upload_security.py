@@ -20,7 +20,7 @@ os.environ.setdefault("GEMINI_API_KEY", "test-key-not-used")
 from database import Base  # noqa: E402
 import models  # noqa: E402,F401
 from models import Course, Exam, Institution, Question, RubricVersion, Submission, User  # noqa: E402
-from routers.exams import upload_exam  # noqa: E402
+from routers.exams import upload_exam, upload_batch  # noqa: E402
 from services.ocr_service import create_submissions_from_stored_upload  # noqa: E402
 from services.upload_security_service import (  # noqa: E402
     StoredUpload,
@@ -326,6 +326,42 @@ class UploadRouteTests(unittest.TestCase):
                 )
 
         self.assertEqual(list(Path(self.temp.name).iterdir()), [])
+
+    def test_55_page_combined_batch_splits_into_five_11_page_papers(self):
+        with (
+            patch.dict(os.environ, {'MAX_PDF_PAGES':'50', 'MAX_BATCH_PDF_PAGES':'250'}),
+            patch('routers.exams.UPLOAD_DIR', self.temp.name),
+            patch('routers.exams.create_processing_job', return_value=(MagicMock(id='batch-job'), True)) as queue,
+            patch('routers.exams.job_to_dict', return_value={'id':'batch-job', 'status':'queued'}),
+            patch('services.ocr_service.convert_from_path', side_effect=lambda *args, **kwargs:
+                [Image.new('RGB', (20, 20), 'white') for _ in range(kwargs['last_page']-kwargs['first_page']+1)]) as render,
+        ):
+            result = asyncio.run(upload_batch(exam_id='exam-1',
+                files=[_upload('combined.pdf', _pdf_bytes(55), 'application/pdf')],
+                pages_per_student=11, db=self.db, user=self.teacher))
+        papers = self.db.query(Submission).all()
+        self.assertEqual(result['total_submissions'], 5)
+        self.assertEqual([paper.page_count for paper in papers], [11]*5)
+        self.assertEqual(render.call_count, 5)
+        self.assertEqual([(call.kwargs['first_page'],call.kwargs['last_page']) for call in render.call_args_list],
+            [(1,11),(12,22),(23,33),(34,44),(45,55)])
+        self.assertTrue(all(Path(paper.original_file_path).is_file() for paper in papers))
+        self.assertEqual(len(list(Path(self.temp.name).iterdir())), 5)
+        queue.assert_called_once()
+
+    def test_split_batch_cap_and_per_student_cap_still_reject_before_queuing(self):
+        with patch.dict(os.environ, {'MAX_PDF_PAGES':'50','MAX_BATCH_PDF_PAGES':'60'}), \
+                patch('routers.exams.UPLOAD_DIR', self.temp.name), \
+                patch('routers.exams.create_processing_job') as queue:
+            for pages, per_student in [(61, 11), (55, 51), (55, None)]:
+                with self.subTest(pages=pages,per_student=per_student), self.assertRaises(HTTPException) as error:
+                    asyncio.run(upload_batch(exam_id='exam-1',
+                        files=[_upload('combined.pdf',_pdf_bytes(pages),'application/pdf')],
+                        pages_per_student=per_student,db=self.db,user=self.teacher))
+                self.assertEqual(error.exception.status_code,413)
+                self.assertEqual(list(Path(self.temp.name).iterdir()),[])
+                self.assertEqual(self.db.query(Submission).count(),0)
+            queue.assert_not_called()
 
 
 if __name__ == "__main__":

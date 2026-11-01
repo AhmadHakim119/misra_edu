@@ -6,9 +6,40 @@
   const t=value=>window.MisraLocale?.text(value)||value;
   let context=null, selected='', editing=false, draft=null, changed=false, drag=null;
   let locating=false, locationTimer=null, locationEpoch=0, locationMessage='';
+  const locationAttempts=new Map();
+  let highlightsVisible=true;
   let areaJob=null,areaPreview=null,areaText='',completeArea=false,areaBusy=false,areaTimer=null,areaEpoch=0;
   const copy=box=>box?{...box}:null;
-  function base(source){return MisraEvidence.location(source,context.locations);}
+  function base(source){return context.locationsFailed&&!source.area_revision?{box:null,verified:false}:MisraEvidence.location(source,context.locations);}
+  const attemptKey=value=>JSON.stringify([value.paperId,value.pageIndex,value.sources.map(source=>[source.id,source.extracted_text,source.area_revision?.id])]);
+  const label=source=>source.question_number!=null?`${t('Question')} ${source.question_number} · ${t('Extracted part')} ${Number.isInteger(source.segment_index)?source.segment_index+1:1}`:source.area_label||`${t('Extracted part')} ${context.sources.indexOf(source)+1}`;
+  function selectionMessage(){
+    if(context?.locationsFailed)return 'Saved answer locations could not load. Retry locations or inspect the original page.';
+    if(context?.imageFailed)return 'Original page could not load. Reload the page image before checking an answer area.';
+    const source=context?.sources.find(source=>source.id===selected);
+    if(!source)return 'Answer location unavailable. Inspect the original page or select the answer area.';
+    const original=base(source);
+    return original.stale||original.blockedTextMatch||original.box?original.message:'Answer location unavailable. Inspect the original page or select the answer area.';
+  }
+  function reveal(explicit=false){
+    const image=$('paper-viewport')?.querySelector('img'),box=$('evidence-boxes')?.querySelector('.evidence-box.active'),viewport=$('paper-viewport');
+    if(!viewport)return;
+    if(explicit){const frame=viewport.getBoundingClientRect(),header=Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-bar-height'))||0;
+      if(frame.top<header||frame.top>innerHeight-100||frame.bottom<100)viewport.scrollIntoView({block:'center',inline:'nearest'});}
+    if(!image?.complete||!image.naturalWidth||!box)return;
+    const rect=box.getBoundingClientRect(),frame=viewport.getBoundingClientRect();
+    viewport.scrollTop+=rect.top-frame.top-Math.max(8,(viewport.clientHeight-rect.height)/2);
+    viewport.scrollLeft+=rect.left-frame.left-Math.max(8,(viewport.clientWidth-rect.width)/2);
+  }
+  function focusViewingControl(){
+    [$('retry-locations'),$('reload-original-page'),$('reveal-highlight'),$('adjust-highlight'),$('highlight-tools')?.querySelector('a'),$('toggle-highlights')].find(el=>el&&!el.disabled)?.focus({preventScroll:true});
+  }
+  async function retryLocations(){
+    const value=context,sourceId=selected;if(!value?.onRetryLocations)return;
+    try{await value.onRetryLocations();}
+    catch(_){if(samePage(value)){context.locationsFailed=true;locationStatus('Saved answer locations could not load. Retry locations or inspect the original page.');}}
+    if(samePage(value)&&selected===sourceId&&document.activeElement===document.body)focusViewingControl();
+  }
   function boxStyle(box){return `left:${box.x*100}%;top:${box.y*100}%;width:${box.width*100}%;height:${box.height*100}%`;}
   function draw(){
     if(!context || !$('evidence-boxes'))return;
@@ -19,9 +50,14 @@
       if(!box){unavailable++;return '';}
       if(isDraft&&changed)unsaved++;else if(original.confirmed)confirmed++;else if(original.verified)matched++;else if(context.locations[source.id]?.method==='vision_grid')located++;else approximate++;
       const kind=isDraft?'editing':original.confirmed?'adjusted':original.verified?'':'approximate';
-      return `<span class="evidence-box ${kind}" style="${boxStyle(box)}" aria-hidden="true"></span>`;
+      return `<span class="evidence-box ${kind}${selected===source.id?' active':''}" data-source-id="${esc(source.id)}" data-label="${esc(label(source))}" style="${boxStyle(box)}" aria-hidden="true"></span>`;
     }).join('');
     $('location-note').innerHTML=`${matched} <span data-i18n>text-matched</span>, ${approximate} <span data-i18n>approximate OCR regions</span>${confirmed?`, ${confirmed} <span data-i18n>instructor-selected areas</span>`:''}${located?`, ${located} <span data-i18n>AI-located regions</span>`:''}${unsaved?`, ${unsaved} <span data-i18n>unsaved adjustment</span>`:''}. <span data-i18n>Full page retained. Highlights do not verify marks.</span>${unavailable?' <span data-i18n>Highlight unavailable for some extracted parts.</span>':''}`;
+    const active=context.sources.find(source=>source.id===selected);
+    if(active)$('location-note').innerHTML+=` <span data-i18n>Selected answer:</span> <span dir="auto" data-no-translate>${esc(label(active))}</span>`;
+    const image=$('paper-viewport')?.querySelector('img');
+    $('evidence-boxes').hidden=!highlightsVisible||Boolean(context.imageFailed)||!image?.complete||!image.naturalWidth;
+    $('evidence-boxes').setAttribute('aria-busy','false');
     $('evidence-boxes').classList.toggle('highlight-drawing',editing);
     $('evidence-boxes').tabIndex=editing?0:-1;
     if(editing){$('evidence-boxes').setAttribute('role','group');$('evidence-boxes').setAttribute('aria-label',t('Draw answer highlight. Arrow keys move; Shift and arrow keys resize.'));}
@@ -35,15 +71,22 @@
     const host=$('highlight-tools');if(!host)return;
     host.hidden=!context?.sources.length;
     if(host.hidden){host.replaceChildren();return;}
-    if(!context.editable){host.innerHTML=`<a href="${esc(context.extractionUrl||'extraction.html')}">Edit answer area in Extraction</a><p id="highlight-status" role="status" data-i18n>${esc(message)}</p>`;draw();return;}
+    const displayMessage=context.locationsFailed||context.imageFailed?selectionMessage():message||selectionMessage();
+    const viewing=`<div class="inline-actions"><button type="button" id="toggle-highlights" aria-pressed="${highlightsVisible}">${highlightsVisible?'Hide answer highlights':'Show answer highlights'}</button><button type="button" id="reveal-highlight" ${base(context.sources.find(source=>source.id===selected)||context.sources[0]).box?'':'disabled'}>Show selected answer area</button>${context.locationsFailed?'<button type="button" id="retry-locations">Retry locations</button>':''}${context.imageFailed?'<button type="button" id="reload-original-page">Reload original page</button>':''}</div>`;
+    if(!context.editable){host.innerHTML=`${viewing}<a href="${esc(context.extractionUrl||'extraction.html')}">Edit answer area in Extraction</a><p id="highlight-status" role="status" data-i18n>${esc(displayMessage)}</p>`;draw();return;}
     const pending=context.sources.find(source=>source.pending_area_job_id);
-    host.innerHTML=`<div class="inline-actions"><button type="button" id="adjust-highlight" ${editing?'hidden':''}>Select answer area</button>${!editing&&pending?'<button type="button" id="continue-area">Continue area review</button>':''}</div>${editing?`<div class="highlight-editor"><label for="highlight-part" ${context.sources.length===1?'hidden':''}>Extracted part</label><select id="highlight-part" ${context.sources.length===1?'hidden':''} ${areaBusy?'disabled':''}>${context.sources.map((source,index)=>`<option value="${esc(source.id)}" ${source.id===selected?'selected':''}>${esc(source.area_label||String(index+1))}</option>`).join('')}</select><p data-i18n>Drag around the complete answer for this part.</p><div class="inline-actions"><button type="button" id="read-answer-area" ${areaBusy||areaPreview?'disabled':''}>Read selected area</button><button type="button" id="cancel-highlight">Cancel</button></div>${areaPreview?`<label for="area-text">Review extracted text<textarea id="area-text" dir="auto" maxlength="50000">${esc(areaText)}</textarea></label><label class="check-row"><input type="checkbox" id="complete-area" ${completeArea?'checked':''}> This area contains the complete answer for this part</label><button type="button" id="save-highlight" class="primary" disabled>Save corrected extraction</button>`:''}</div>`:''}<p id="highlight-status" role="status" data-i18n>${esc(message)}</p>`;
+    host.innerHTML=`${editing?'':viewing}<div class="inline-actions"><button type="button" id="adjust-highlight" ${editing?'hidden':''}>Select answer area</button>${!editing&&pending?'<button type="button" id="continue-area">Continue area review</button>':''}</div>${editing?`<div class="highlight-editor"><label for="highlight-part" ${context.sources.length===1?'hidden':''}>Extracted part</label><select id="highlight-part" ${context.sources.length===1?'hidden':''} ${areaBusy?'disabled':''}>${context.sources.map(source=>`<option value="${esc(source.id)}" ${source.id===selected?'selected':''}>${esc(label(source))}</option>`).join('')}</select><p data-i18n>Drag around the complete answer for this part.</p><div class="inline-actions"><button type="button" id="read-answer-area" ${areaBusy||areaPreview?'disabled':''}>Read selected area</button><button type="button" id="cancel-highlight">Cancel</button></div>${areaPreview?`<label for="area-text">Review extracted text<textarea id="area-text" dir="auto" maxlength="50000">${esc(areaText)}</textarea></label><label class="check-row"><input type="checkbox" id="complete-area" ${completeArea?'checked':''}> This area contains the complete answer for this part</label><button type="button" id="save-highlight" class="primary" disabled>Save corrected extraction</button>`:''}</div>`:''}<p id="highlight-status" role="status" data-i18n>${esc(displayMessage)}</p>`;
     draw();
   }
   function start(id){++areaEpoch;clearTimeout(areaTimer);areaJob=areaPreview=null;areaText='';completeArea=false;areaBusy=false;selected=id;const source=context.sources.find(s=>s.id===id);draft=copy(base(source).box||{x:.1,y:.4,width:.8,height:.2});changed=false;drag=null;editing=true;controls();}
   function canLeave(){if((changed||areaPreview)&&!confirm(t('Discard the unsaved highlight adjustment?')))return false;++areaEpoch;clearTimeout(areaTimer);areaPreview=areaJob=null;areaBusy=false;editing=false;changed=false;draft=null;drag=null;controls();return true;}
-  function mount(value){locationMessage='';context=value;selected=value.sources.some(source=>source.id===value.selectedSourceId)?value.selectedSourceId:value.sources[0]?.id||'';editing=changed=false;draft=drag=null;controls();locate();}
-  function clear(){++areaEpoch;clearTimeout(areaTimer);areaPreview=areaJob=null;areaBusy=false;context?.onDirtyChange?.(false);++locationEpoch;clearTimeout(locationTimer);locating=false;locationMessage='';context=null;editing=changed=false;draft=drag=null;const host=$('highlight-tools');if(host){host.replaceChildren();host.hidden=true;}}
+  function mount(value){locationMessage='';context=value;selected=value.sources.some(source=>source.id===value.selectedSourceId)?value.selectedSourceId:value.sources[0]?.id||'';editing=changed=false;draft=drag=null;
+    const image=$('paper-viewport')?.querySelector('img');
+    value.imageFailed=!image||image.complete&&!image.naturalWidth;
+    image?.addEventListener('load',()=>{if(context!==value)return;const recovering=value.imageFailed,returnFocus=document.activeElement?.id==='reload-original-page';value.imageFailed=false;if(recovering&&!editing)controls();else draw();if(value.revealSelected)reveal();if(returnFocus)focusViewingControl();},{once:true});
+    image?.addEventListener('error',()=>{if(context!==value)return;value.imageFailed=true;controls();},{once:true});
+    controls();if(value.revealSelected)reveal();if(!value.locationsFailed&&!value.imageFailed)locate();}
+  function clear(){++areaEpoch;clearTimeout(areaTimer);areaPreview=areaJob=null;areaBusy=false;context?.onDirtyChange?.(false);++locationEpoch;clearTimeout(locationTimer);locating=false;locationMessage='';context=null;editing=changed=false;draft=drag=null;const host=$('highlight-tools');if(host){host.replaceChildren();host.hidden=true;}const boxes=$('evidence-boxes');if(boxes){boxes.replaceChildren();boxes.hidden=true;boxes.classList.remove('highlight-drawing');}if($('location-note'))$('location-note').textContent='';}
   function status(message){$('highlight-status').textContent=t(message);}
   const samePage=value=>context&&context.paperId===value.paperId&&context.pageIndex===value.pageIndex;
   async function watchLocation(job,value,token){
@@ -56,8 +99,8 @@
     if(job.status==='completed'){
       try{const locations=await MisraEvidence.pageLocations(value.paperId,value.pageIndex);if(token!==locationEpoch||!samePage(value))return;context.locations=locations;
         locationStatus(editing?'Automatic highlighting finished. Your manual selection is unchanged.':context.sources.some(source=>base(source).box)?'Answer areas selected automatically. You can correct them if needed.':'AI could not select an answer area. Select the area manually.');
-        const box=$('evidence-boxes')?.querySelector('.evidence-box'),viewport=$('paper-viewport');if(!editing&&box&&viewport)viewport.scrollTop=Math.max(0,box.offsetTop-(viewport.clientHeight-box.offsetHeight)/2);}
-      catch(_){if(token===locationEpoch&&samePage(value))locationStatus('Locations could not load. Refresh to retry.');}
+        if(!editing&&value.revealSelected)reveal();}
+      catch(_){if(token===locationEpoch&&samePage(value)){context.locationsFailed=true;locationStatus('Saved answer locations could not load. Retry locations or inspect the original page.');}}
     }else locationStatus('AI could not select an answer area. Select the area manually.');
   }
   function locationStatus(message){locationMessage=message;if(editing){draw();status(t(message));}else controls(message);}
@@ -67,15 +110,15 @@
     locationTimer=setTimeout(async()=>{try{const current=await MisraAPI.job(job.id);if(current?.id!==job.id)throw new Error('Invalid task status');
       if(token!==locationEpoch||!samePage(value))return;
       if(['queued','processing','retrying'].includes(current.status))waitForTask(current,value,token);
-      else {locating=false;locate();}
+      else {locating=false;locationAttempts.delete(attemptKey(value));locate();}
     }catch(_){if(token===locationEpoch&&samePage(value)){locating=false;locationStatus('Automatic highlighting paused. You can select the answer area manually.');}}},3000);
   }
   async function locate(){
     if(!context?.sources.length||locating)return;
-    if(context.sources.every(source=>base(source).confirmed||base(source).verified||context.locations[source.id]?.method==='vision_grid'))return;
+    if(context.sources.every(source=>base(source).confirmed||base(source).verified||base(source).blockedTextMatch||base(source).stale||context.locations[source.id]?.method==='vision_grid'))return;
     const value=context,token=++locationEpoch;clearTimeout(locationTimer);locating=true;
     locationStatus('Locating answer areas automatically…');
-    try{const response=await MisraAPI.locateAnswers(value.paperId,value.pageIndex,true);
+    try{const key=attemptKey(value);if(!locationAttempts.has(key))locationAttempts.set(key,MisraAPI.locateAnswers(value.paperId,value.pageIndex,true));const response=await locationAttempts.get(key);
       if(token!==locationEpoch||!samePage(value))return;
       if(response?.waiting_for?.id){waitForTask(response.waiting_for,value,token);return;}
       const job=response?.job;
@@ -122,6 +165,10 @@
   }
   $('highlight-tools').addEventListener('click',event=>{
     const id=event.target.closest('button')?.id;
+    if(id==='toggle-highlights'){highlightsVisible=!highlightsVisible;controls();$('toggle-highlights')?.focus({preventScroll:true});return;}
+    if(id==='reveal-highlight'){highlightsVisible=true;controls();$('reveal-highlight')?.focus({preventScroll:true});reveal(true);return;}
+    if(id==='retry-locations'){retryLocations();return;}
+    if(id==='reload-original-page'){context.onRetryImage?.();return;}
     if(id==='adjust-highlight'){if(context.canEdit?.()===false){status('Wait for the current save to finish.');return;}start(selected||context.sources[0].id);$('evidence-boxes').focus({preventScroll:true});}
     if(id==='continue-area'){const source=context.sources.find(item=>item.pending_area_job_id);if(source){start(source.id);areaJob=source.pending_area_job_id;areaBusy=true;controls('Reading selected area…');watchArea(context,++areaEpoch,source.id,areaJob);}return;}
     if(id==='cancel-highlight'){changed=false;areaPreview=null;canLeave();$('adjust-highlight')?.focus({preventScroll:true});return;}
@@ -150,6 +197,8 @@
     else {const field=horizontal?'x':'y',size=horizontal?box.width:box.height;box[field]=Math.max(0,Math.min(1-size,box[field]+delta));}
     draft=box;changed=true;draw();
   });
-  window.MisraPaperHighlights={mount,clear,canLeave,hasUnsaved:()=>changed||Boolean(areaPreview),selectSource:id=>{if(context?.editable&&context.sources.some(source=>source.id===id)&&canLeave()){start(id);$('evidence-boxes').focus({preventScroll:true});}}};
+  function focusSource(id){if(!context?.sources.some(source=>source.id===id)||editing)return false;selected=id;highlightsVisible=true;context.revealSelected=true;controls('');reveal();return true;}
+  function revealSource(id=selected){if(!context||id!==selected)return;highlightsVisible=true;draw();reveal(true);}
+  window.MisraPaperHighlights={mount,clear,canLeave,focusSource,revealSource,hasUnsaved:()=>changed||Boolean(areaPreview),selectSource:id=>{if(context?.editable&&context.sources.some(source=>source.id===id)&&canLeave()){highlightsVisible=true;start(id);reveal(true);$('evidence-boxes').focus({preventScroll:true});}}};
   window.addEventListener('misra:language',draw);
 })();

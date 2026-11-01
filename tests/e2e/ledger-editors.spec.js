@@ -1,9 +1,10 @@
 const {test,expect}=require('@playwright/test');
-async function fixture(page,{failSave=false,failApprove=false,holdSave=false,holdQuestion=false,failCreate=false,withSources=false,multipleCriteria=false,expandedProfile=null,automaticPreferences=true,initialDraft=false,failDelete=false,holdDelete=false}={}) {
-  const writes=[];let releaseSave,releaseQuestion,releaseDelete;
-  const saveGate=new Promise(r=>releaseSave=r),questionGate=new Promise(r=>releaseQuestion=r),deleteGate=new Promise(r=>releaseDelete=r);
+async function fixture(page,{failSave=false,failApprove=false,holdSave=false,holdQuestion=false,failCreate=false,withSources=false,multipleCriteria=false,expandedProfile=null,automaticPreferences=true,initialDraft=false,failDelete=false,holdDelete=false,questionRows=null,holdKey=false,dropDefinition=false}={}) {
+  const writes=[];let releaseSave,releaseQuestion,releaseDelete,releaseKey;
+  const saveGate=new Promise(r=>releaseSave=r),questionGate=new Promise(r=>releaseQuestion=r),deleteGate=new Promise(r=>releaseDelete=r),keyGate=new Promise(r=>releaseKey=r);
   const base={schema_version:2,max_score:2,criteria:[{id:'work',title:'Work calculation',description:'Use W = Fd with units',points:2,scoring_type:'scaled',partial_credit_allowed:false,performance_levels:[{label:'Correct',description:'Correct result and units',points_earned:2}],common_errors:[{description:'Arithmetic error',guidance:'Follow method-credit policy'}],alternative_methods:['Equivalent rearrangement'],required_evidence:['Formula','Result']}],policy:{grading_approach:'strict',units_policy:'required',method_credit:'partial',arithmetic_error_policy:'criterion_specific',rounding_tolerance_percent:1,alternative_methods_allowed:false}};
   let qs=[{id:'q',question_number:'1',question_text:'Calculate work for 82 N acting through 3 m.',max_score:2}],vs=[{id:'r',version_number:1,status:'approved',rubric_json:base}],keys=[],materials=[];
+  if(questionRows)qs=questionRows;
   if(initialDraft)vs[0].status='draft';
   if(multipleCriteria) {
     base.criteria[0].points=1;base.criteria[0].performance_levels[0].points_earned=1;
@@ -37,11 +38,11 @@ async function fixture(page,{failSave=false,failApprove=false,holdSave=false,hol
     } else if(p.startsWith('/rubric-versions/')) {
       if(holdSave && method==='PUT') await saveGate;
       if(p.endsWith('/approve')) {writes.push({kind:'approve'});if(failApprove) return route.fulfill({status:503,json:{detail:'Synthetic approval outage'}});vs[0].status='approved';body={message:'Approved'};}
-      else {writes.push({kind:'save',body:req.postDataJSON()});if(failSave) return route.fulfill({status:422,json:{detail:'Synthetic validation rejection'}});vs[0].rubric_json=req.postDataJSON().rubric;body=vs[0];}
+      else {writes.push({kind:'save',body:req.postDataJSON()});if(failSave) return route.fulfill({status:422,json:{detail:'Synthetic validation rejection'}});vs[0].rubric_json=req.postDataJSON().rubric;if(dropDefinition)delete vs[0].rubric_json.question_definition;body=vs[0];}
     } else if(p.endsWith('/suggest-rubric-version')) {writes.push({kind:'suggest',body:req.postDataJSON()});body={id:'ai',version_number:2,status:'draft',rubric_json:base};vs=[body,...vs];}
     else if(p.endsWith('/grading-policy')) {if(method==='PUT') writes.push({kind:'routing',body:req.postDataJSON()});body={mode:'adaptive'};}
     else if(p.includes('/answer-key-versions')) {
-      if(method==='GET') body=keys;
+      if(method==='GET') {if(holdKey)await keyGate;body=keys;}
       else if(p.endsWith('/approve')) {writes.push({kind:'key-approve'});keys[0].status='approved';body=keys[0];}
       else {writes.push({kind:'key-save',body:req.postDataJSON()});body={id:'k',version_number:1,status:'draft',...req.postDataJSON()};keys=[body];}
     } else if(p.endsWith('/materials/text')) {writes.push({kind:'material',body:req.postDataJSON()});body={id:'m',title:req.postDataJSON().title,versions:[{id:'v',version_number:1,status:'draft',ingestion_status:'ready',media_type:'text/plain',page_count:1,approved_page_indices:[]}]};materials=[body];}
@@ -54,9 +55,133 @@ async function fixture(page,{failSave=false,failApprove=false,holdSave=false,hol
     await route.fulfill({json:body});
   });
   await page.goto('/app/index.html?exam_id=e');await expect(page.locator('#exam-title')).toHaveText('Synthetic physics pilot');await page.locator('#sources-link').click();
-  return {writes,releaseSave,releaseQuestion,releaseDelete};
+  return {writes,releaseSave,releaseQuestion,releaseDelete,releaseKey};
 }
 async function edit(page) {await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();await expect(page.locator('#ac-0-title')).toHaveValue('Work calculation');await page.getByRole('button',{name:'Create editable draft',exact:true}).click();await expect(page.getByRole('button',{name:'Save draft',exact:true})).toBeVisible();}
+
+test('saved question definition correction stays a draft and preserves the original definition',async({page},info)=>{
+  const state=await fixture(page);await edit(page);
+  await expect(page.locator('#author-question-text')).toBeEditable();await expect(page.locator('#author-number')).toBeEditable();
+  await page.locator('#author-number').fill('p6.1');await page.locator('#author-question-text').fill('Corrected printed question, without repeated wording.');
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();
+  const saved=state.writes.find(w=>w.kind==='save').body.rubric.question_definition;
+  expect(saved).toEqual({question_number:'p6.1',question_text:'Corrected printed question, without repeated wording.',language:'en',previous:{question_number:'1',question_text:'Calculate work for 82 N acting through 3 m.',language:'en'}});
+  await page.reload();await page.locator('#sources-link').click();await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
+  await expect(page.locator('#author-number')).toHaveValue('p6.1');await expect(page.locator('#author-question-text')).toHaveValue(saved.question_text);
+  expect(state.writes.filter(w=>w.kind==='approve')).toHaveLength(0);
+  for(const theme of ['light','dark'])for(const language of ['en','ar']){
+    await page.evaluate(({theme,language})=>{document.documentElement.dataset.theme=theme;localStorage.setItem('misra-language',language);MisraLocale.apply();},{theme,language});
+    await page.screenshot({path:`.impeccable/review/question-corrections-20261026/after-${theme}-${language}-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  }
+});
+
+test('failed question detail correction keeps number and wording edits',async({page})=>{
+  await fixture(page,{failSave:true});await edit(page);await page.locator('#author-number').fill('p6.2');await page.locator('#author-question-text').fill('Retain this corrected question wording.');
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();await expect(page.locator('#author-error')).toContainText('Synthetic validation rejection');
+  await expect(page.locator('#author-number')).toHaveValue('p6.2');await expect(page.locator('#author-question-text')).toHaveValue('Retain this corrected question wording.');
+});
+
+test('older API cannot silently discard question corrections and claim they were saved',async({page})=>{
+  const state=await fixture(page,{dropDefinition:true});await edit(page);await page.locator('#author-number').fill('p6.1');await page.locator('#author-question-text').fill('Retain this question correction.');
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();await expect(page.locator('#author-error')).toContainText('Restart the API');
+  await expect(page.locator('#author-number')).toHaveValue('p6.1');await expect(page.locator('#author-question-text')).toHaveValue('Retain this question correction.');
+  await expect(page.locator('#author-state')).toContainText('Unsaved changes');expect(state.writes.filter(w=>w.kind==='approve')).toHaveLength(0);
+});
+
+test('guide identifiers and complete mixed-language wording have separate readable space',async({page},info)=>{
+  const questionRows=[
+    {id:'q',question_number:'MCQ 5.2',question_text:'Which statement is correct? Explain the choice using conservation of energy, describe the assumptions, and distinguish the kinetic energy of the object from the work done by the applied force. Include all relevant units in your explanation.',max_score:2},
+    {id:'arabic',question_number:'سؤال 12.3',question_text:'احسب الشغل عندما تؤثر قوة مقدارها 82 N على جسم يتحرك مسافة 3 m. وضح طريقة الحل والافتراضات، واكتب النتيجة بوحدتها مع تفسير إشارة الشغل.',max_score:2},
+    {id:'short',question_number:'1',question_text:'Find the work.',max_score:2},
+  ];
+  const state=await fixture(page,{questionRows});await page.locator('#author-rubrics').click();
+  for(const direction of ['ltr','rtl'])for(const theme of ['light','dark']){
+    await page.evaluate(({direction,theme})=>{document.documentElement.dir=direction;document.documentElement.dataset.theme=theme;},{direction,theme});
+    await page.evaluate(()=>window.scrollTo(0,0));
+    await page.screenshot({path:`.impeccable/review/usability-20261026/guide-${direction}-${theme}-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+    for(const [index,q]of questionRows.entries()){
+      const row=page.locator('.guide-question-row').nth(index);
+      await expect(row.locator('h4')).toHaveText(q.question_text);
+      const bounds=await row.evaluate(el=>{const number=el.querySelector('.guide-question-number'),title=el.querySelector('h4');return{number:number.getBoundingClientRect().toJSON(),title:title.getBoundingClientRect().toJSON(),clipped:title.scrollHeight>title.clientHeight};});
+      expect(bounds.number.bottom).toBeLessThanOrEqual(bounds.title.top);
+      expect(bounds.clipped).toBeFalsy();
+      await expect(row.getByRole('button',{name:`Edit criteria for question ${q.question_number}`,exact:true})).toBeEnabled();
+    }
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  }
+  expect(state.writes).toHaveLength(0);
+  await page.locator('#guide-outline [data-guide-question="q"]').focus();await page.keyboard.press('Enter');
+  await expect(page.locator('#author-question-text')).toHaveValue(questionRows[0].question_text);
+  await expect(page.getByRole('button',{name:'Create editable draft',exact:true})).toBeVisible();
+});
+
+test('opening a new untouched question can return to the guide without saving invalid content',async({page},info)=>{
+  const state=await fixture(page,{initialDraft:true});await page.locator('#author-rubrics').click();await page.locator('#author-new-question').click();
+  await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/usability-20261026/new-question-initial-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  await page.locator('#author-back').click();
+  await expect(page.locator('#guide-outline')).toBeVisible();
+  await expect(page.locator('#native-authoring')).toBeHidden();expect(state.writes).toHaveLength(0);
+  await page.locator('#author-new-question').click();
+  await expect(page.locator('#author-state')).toContainText('New question — not saved');
+  for(const theme of ['light','dark']){
+    if(await page.locator('html').getAttribute('data-theme')!==theme)await page.locator('#theme').click();
+    await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/usability-20261026/new-question-${theme}-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  }
+  await page.locator('#app-language').click();await expect(page.locator('#author-state')).toContainText('سؤال جديد');
+  await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/usability-20261026/new-question-rtl-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  await page.locator('#author-question-text').fill('Keep a real edit');await page.locator('#author-back').click();
+  await expect(page.locator('#native-authoring')).toBeVisible();await expect(page.locator('#author-question-text')).toHaveValue('Keep a real edit');
+  await expect(page.locator('#author-error')).toContainText('criterion');expect(state.writes).toHaveLength(0);
+});
+
+test('late guide loading cannot hide a new question or replace its real edits',async({page})=>{
+  const state=await fixture(page,{initialDraft:true,holdKey:true});
+  await page.evaluate(()=>{window.syntheticGuideLoad=MisraAssessmentGuide.show('questions');});
+  await expect(page.locator('#ac-0-title')).toBeAttached();
+  await page.locator('#author-new-question').click();
+  await page.locator('#author-question-text').fill('Keep the newly opened question');
+  state.releaseKey();await page.evaluate(()=>window.syntheticGuideLoad);
+  await expect(page.locator('#native-authoring')).toBeVisible();
+  await expect(page.locator('#author-question-text')).toHaveValue('Keep the newly opened question');
+  await expect(page.locator('#author-state')).toContainText('Unsaved');expect(state.writes).toHaveLength(0);
+});
+
+test('existing question total can be corrected in its draft without deletion or approval',async({page},info)=>{
+  const state=await fixture(page,{initialDraft:true});
+  await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
+  await page.locator('#rubric-workspace').screenshot({path:`.impeccable/review/draft-total-before-${info.project.name}.png`});
+  await expect(page.locator('#author-max')).toHaveValue('2');
+  await page.locator('#author-max').fill('4');
+  await expect(page.locator('.author-question-marks')).toHaveText('4 marks');
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();
+  await expect(page.locator('#author-error')).toContainText('Criteria total 2, but this question is worth 4.');
+  expect(state.writes.filter(w=>w.kind==='save')).toHaveLength(0);
+  await page.locator('#ac-0-points').fill('4');
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();
+  await expect(page.locator('#author-state')).toContainText('Draft saved');
+  expect(state.writes.find(w=>w.kind==='save').body.rubric.max_score).toBe(4);
+  expect(state.writes.some(w=>['approve','delete','question'].includes(w.kind))).toBeFalsy();
+  for(const theme of ['light','dark']){
+    await page.evaluate(value=>{document.documentElement.dataset.theme=value;},theme);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+    await page.locator('#rubric-workspace').screenshot({path:`.impeccable/review/draft-total-${theme}-${info.project.name}.png`});
+  }
+});
+test('failed draft total save retains the corrected value and pending saves lock it',async({page})=>{
+  const state=await fixture(page,{initialDraft:true,failSave:true,holdSave:true});
+  await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
+  await page.locator('#author-max').fill('4');await page.locator('#ac-0-points').fill('4');
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();
+  await expect(page.locator('#author-max')).toBeDisabled();
+  state.releaseSave();
+  await expect(page.locator('#author-error')).toContainText('Synthetic validation rejection');
+  await expect(page.locator('#author-max')).toHaveValue('4');
+  await expect(page.locator('#author-max')).toBeEnabled();
+  await expect(page.locator('#author-state')).toContainText('Unsaved');
+});
 
 test('delete question cancels without losing edits, then removes only the chosen draft',async({page})=>{
   const state=await fixture(page,{withSources:true});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();

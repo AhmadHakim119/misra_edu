@@ -10,6 +10,7 @@ from unittest.mock import patch
 os.environ.setdefault('GEMINI_API_KEY', 'test-key-not-used')
 from fastapi import HTTPException
 from PIL import Image
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.datastructures import UploadFile
@@ -18,9 +19,29 @@ from models import Answer, Course, Exam, Institution, ProcessingJob, Question, R
 from routers import exam_setup
 from services import exam_setup_service as service
 from services.rubric_version_service import get_effective_rubric
+from services.openrouter_client import OpenRouterError
 
 
 class ExamSetupTests(unittest.TestCase):
+    def test_exact_repeated_stem_is_removed_but_not_partial_shared_text(self):
+        stem='A wheel starts at 6.35 rad/s. How long does it rotate?'
+        self.assertEqual(service._remove_exact_repetition(stem+' '+stem),stem)
+        self.assertEqual(service._remove_exact_repetition(stem+' Explain your method.'),stem+' Explain your method.')
+
+    def test_similar_wording_is_retained_as_a_variant_instead_of_doubled(self):
+        stem='Find the moment of inertia about the x axis and calculate the applied torque.'
+        existing={'question_number':'p6.1','question_text':stem};warnings=[]
+        incoming={'question_text':stem.replace('x axis','y axis')}
+        service._merge_question_wording(existing,incoming,'1:9',warnings)
+        self.assertEqual(existing['question_text'],stem)
+        self.assertEqual(existing['wording_variants'][0]['question_text'],incoming['question_text'])
+        self.assertTrue(warnings)
+
+    def test_real_continuation_is_kept(self):
+        existing={'question_number':'p6.1','question_text':'Find the moment of inertia.'}
+        service._merge_question_wording(existing,{'question_text':'(b) Calculate the torque for angular acceleration 1.20 rad/s².'},'0:10',[])
+        self.assertIn('(b) Calculate',existing['question_text'])
+
     def setUp(self):
         self.engine = create_engine('sqlite://')
         Base.metadata.create_all(self.engine)
@@ -117,6 +138,39 @@ class ExamSetupTests(unittest.TestCase):
         with self.assertRaises(HTTPException): service.require_ready(self.db, 'e')
         version.status = 'approved'; question.active_rubric_version_id = version.id; self.db.commit()
         self.assertTrue(service.setup_readiness(self.db, 'e')['ready'])
+
+    def test_explicit_mcq_import_accepts_blank_guide_as_binary_draft(self):
+        job = self.draft()
+        request = service.ConfirmImport(questions=[dict(question_number='1',
+            question_text='Choose the SI unit of force: a) N b) J.', max_score=1,
+            marking_guide='', answer_key='a) N', multiple_choice=True)])
+        first = exam_setup.confirm('e', job.id, request, self.db, self.user)
+        again = exam_setup.confirm('e', job.id, request, self.db, self.user)
+        self.assertEqual(first['question_ids'], again['question_ids'])
+        rubric = self.db.query(RubricVersion).one()
+        self.assertEqual(rubric.status, 'draft')
+        criterion = rubric.rubric_json['criteria'][0]
+        self.assertEqual(criterion['title'], 'Correct option')
+        self.assertEqual(criterion['scoring_type'], 'binary')
+        self.assertFalse(criterion['partial_credit_allowed'])
+        self.assertEqual(criterion['points'], 1)
+        self.assertEqual(rubric.rubric_json['reference_context'], 'a) N')
+        self.assertIsNone(self.db.query(Question).one().active_rubric_version_id)
+        with self.assertRaises(HTTPException):
+            service.require_ready(self.db, 'e')
+
+    def test_blank_guides_still_require_explicit_mcq_and_a_correct_answer(self):
+        common = dict(question_number='1', question_text='Choose an option.', max_score=1)
+        for fields in [dict(marking_guide='', answer_key='a'),
+                       dict(marking_guide='   ', answer_key='a'),
+                       dict(marking_guide='', answer_key='', multiple_choice=True),
+                       dict(marking_guide='', answer_key='  ', multiple_choice=True)]:
+            with self.subTest(fields=fields), self.assertRaises(ValidationError):
+                service.ConfirmImport(questions=[dict(common, **fields)])
+        for marks in [None, 0, float('nan')]:
+            with self.subTest(marks=marks), self.assertRaises(ValidationError):
+                service.ConfirmImport(questions=[dict(common, max_score=marks,
+                    marking_guide='', answer_key='a', multiple_choice=True)])
         self.assertEqual(self.db.query(Submission).count(), 0)
 
     def test_existing_numbers_not_overwritten(self):
@@ -140,6 +194,93 @@ class ExamSetupTests(unittest.TestCase):
         with patch.object(service, 'generate') as generate:
             service.extract_setup_documents(job, self.db, lambda *args: None)
             generate.assert_not_called()
+
+    def test_invalid_question_shape_gets_one_same_page_format_repair(self):
+        result = self.upload()
+        job = self.db.get(ProcessingJob, result['job']['id'])
+        invalid = json.dumps({'questions':[dict(question_number='1', question_text=None,
+            max_score=None, marking_guide='', answer_key='PRIVATE_PROVIDER_OUTPUT')], 'warnings':[]})
+        valid = json.dumps({'questions':[dict(question_number='1', question_text='Printed question',
+            max_score=None, marking_guide='', answer_key='Checked reference')], 'warnings':[]})
+        with patch.object(service, 'generate', side_effect=[invalid, valid]) as generate:
+            service.extract_setup_documents(job, self.db, lambda *args: self.db.commit())
+        self.assertEqual(generate.call_count, 2)
+        first, repair = [c.args[0] for c in generate.call_args_list]
+        self.assertIs(first[1], repair[1])
+        self.assertIn('Required response JSON schema', first[0])
+        self.assertIn('questions.0.question_text', repair[0])
+        self.assertNotIn('PRIVATE_PROVIDER_OUTPUT', repair[0])
+        self.assertIsNone(job.payload['draft_questions'][0]['max_score'])
+        self.assertEqual(job.payload['draft_questions'][0]['question_text'], 'Printed question')
+        self.assertEqual(self.db.query(Question).count(), 0)
+
+    def test_invalid_json_gets_one_format_repair(self):
+        result = self.upload()
+        job = self.db.get(ProcessingJob, result['job']['id'])
+        valid = json.dumps({'questions':[dict(question_number='1', question_text='Printed question',
+            max_score=2)], 'warnings':[]})
+        with patch.object(service, 'generate', side_effect=['not JSON PRIVATE_PROVIDER_OUTPUT', valid]) as generate:
+            service.extract_setup_documents(job, self.db, lambda *args: self.db.commit())
+        self.assertEqual(generate.call_count, 2)
+        self.assertNotIn('PRIVATE_PROVIDER_OUTPUT', generate.call_args.args[0][0])
+        self.assertEqual(set(job.payload['pages']), {'0:0'})
+
+    def test_repeated_invalid_question_data_stops_without_checkpoint_or_output_leak(self):
+        result = self.upload()
+        job = self.db.get(ProcessingJob, result['job']['id'])
+        invalid = json.dumps({'questions':[dict(question_number='1', question_text=None,
+            answer_key='PRIVATE_PROVIDER_OUTPUT')], 'warnings':[]})
+        with patch.object(service, 'generate', return_value=invalid) as generate:
+            with self.assertRaisesRegex(ValueError, 'after one format retry') as caught:
+                service.extract_setup_documents(job, self.db, lambda *args: self.db.commit())
+        self.assertEqual(generate.call_count, 2)
+        self.assertNotIn('PRIVATE_PROVIDER_OUTPUT', str(caught.exception))
+        self.assertNotIn('input_value', str(caught.exception))
+        self.assertFalse(job.payload.get('pages'))
+        self.assertNotIn('draft_questions', job.payload)
+        self.assertEqual(self.db.query(Question).count(), 0)
+
+    def test_partial_setup_provider_failure_resumes_after_committed_page(self):
+        pdf = io.BytesIO()
+        Image.new('RGB', (30, 30), 'white').save(pdf, 'PDF', save_all=True,
+            append_images=[Image.new('RGB', (30, 30), 'white')])
+        pdf.seek(0)
+        result = asyncio.run(exam_setup.upload_setup('e',
+            UploadFile(filename='synthetic.pdf', file=pdf), None, self.db, self.user))
+        job = self.db.get(ProcessingJob, result['job']['id'])
+        first = json.dumps({'questions':[dict(question_number='1', question_text='First question',
+            max_score=2, marking_guide='First guide', answer_key='First reference')], 'warnings':[]})
+        second = json.dumps({'questions':[dict(question_number='2', question_text='Second question',
+            max_score=2, marking_guide='Second guide', answer_key='Second reference')], 'warnings':[]})
+
+        def progress(current, total, message):
+            job.progress_current, job.progress_total = current, total
+            job.progress_message = message
+            self.db.commit()
+
+        def page_image(*args, **kwargs):
+            return [Image.new('RGB', (30, 30), 'white')]
+
+        with patch.object(service, 'convert_from_path', side_effect=page_image), \
+             patch.object(service, 'generate', side_effect=[first, OpenRouterError('HTTP 502')]):
+            with self.assertRaisesRegex(OpenRouterError, '502'):
+                service.extract_setup_documents(job, self.db, progress)
+        self.db.rollback()
+        self.db.expire_all()
+        job = self.db.get(ProcessingJob, result['job']['id'])
+        self.assertEqual(set(job.payload['pages']), {'0:0'})
+        self.assertEqual(job.progress_current, 1)
+        self.assertNotIn('draft_questions', job.payload)
+
+        with patch.object(service, 'convert_from_path', side_effect=page_image) as render, \
+             patch.object(service, 'generate', return_value=second) as generate:
+            service.extract_setup_documents(job, self.db, progress)
+        generate.assert_called_once()
+        self.assertEqual(render.call_args.kwargs['first_page'], 2)
+        self.assertEqual([q['question_number'] for q in job.payload['draft_questions']], ['1', '2'])
+        self.assertEqual(job.progress_current, 2)
+        self.assertEqual(self.db.query(Question).count(), 0)
+        self.assertEqual(self.db.query(Submission).count(), 0)
 
     def test_worker_finishes_setup_without_creating_student_records(self):
         from services.job_execution_service import execute_processing_job
@@ -193,7 +334,7 @@ class ExamSetupTests(unittest.TestCase):
 
     def test_confirm_failure_rolls_back_all_questions(self):
         job = self.draft()
-        request = service.ConfirmImport(questions=[self.request().questions[0].model_dump(), dict(question_number='2', question_text=' ', marking_guide=' ', max_score=1)])
+        request = service.ConfirmImport(questions=[self.request().questions[0].model_dump(), dict(question_number='2', question_text=' ', marking_guide='Valid marking rule.', max_score=1)])
         with self.assertRaises(HTTPException): exam_setup.confirm('e', job.id, request, self.db, self.user)
         self.assertEqual(self.db.query(Question).count(), 0)
         self.assertEqual(self.db.query(RubricVersion).count(), 0)

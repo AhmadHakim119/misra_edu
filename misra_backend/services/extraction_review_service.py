@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Any
+import hashlib
+import json
 
 from sqlalchemy.orm import Session
 
@@ -53,7 +55,13 @@ def _serialize_source(source: AnswerSource, db=None, institution_id=None) -> dic
         pending=next((job for job in candidates if not (job.payload or {}).get('area_confirmation')
             and job.payload.get('base_revision_id')==(result['area_revision'] or {}).get('id')),None)
         result['pending_area_job_id']=pending.id if pending else None
+        result['removal_token']=source_removal_token(source,result['area_revision'])
     return result
+
+
+def source_removal_token(source, revision):
+    from services.answer_area_service import source_signature
+    return hashlib.sha256(json.dumps([source_signature(source),(revision or {}).get('id')],separators=(',', ':')).encode()).hexdigest()
 
 
 def _serialize_answer(answer: Answer) -> dict[str, Any]:
@@ -92,6 +100,9 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
     )
     from services.grading_scope_service import is_external_question, scope_summary
     grading_scope = scope_summary(questions)
+    from services.grading_scope_service import active_questions, is_removed_question
+    removed_questions = [q for q in questions if is_removed_question(q)]
+    questions = active_questions(questions)
     external_questions = [q for q in questions if is_external_question(q)]
     questions = [q for q in questions if not is_external_question(q)]
     answers = (
@@ -105,6 +116,8 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
         db.query(GradingRun).filter(GradingRun.answer_id.in_(answer_ids)).first()
         or db.query(ReviewLabel).filter(ReviewLabel.answer_id.in_(answer_ids)).first()
     )
+    history_ids = {identifier for (identifier,) in db.query(GradingRun.answer_id).filter(GradingRun.answer_id.in_(answer_ids)).all()}
+    history_ids.update(identifier for (identifier,) in db.query(ReviewLabel.answer_id).filter(ReviewLabel.answer_id.in_(answer_ids)).all())
     can_reprocess = (
         submission.status in {"extracted", "error"}
         and not has_history
@@ -189,6 +202,7 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
             "answer": _serialize_answer(answer) if answer else None,
             "sources": [_serialize_source(source,db,submission.institution_id) for source in answer_sources],
             "mapping_flags": flags,
+            "can_remove_sources": bool(answer and answer.score is None and answer.teacher_override_score is None and answer.id not in history_ids),
         }
         rows.append(row)
         if flags:
@@ -235,7 +249,8 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
         blocking_reasons.append("The assessment has no configured questions.")
     if missing_question_numbers:
         blocking_reasons.append(
-            f"{len(missing_question_numbers)} expected question(s) have no mapped answer."
+            f"{len(missing_question_numbers)} expected question(s) have no mapped answer: "
+            + ", ".join(missing_question_numbers) + "."
         )
     if suspicious_answers:
         blocking_reasons.append(
@@ -285,6 +300,7 @@ def build_extraction_review(submission_id: str, db: Session) -> dict[str, Any]:
         },
         "suspicious_answers": suspicious_answers,
         "questions": rows,
+        "removed_questions": [dict(id=q.id,question_number=q.question_number,question_text=q.question_text,max_score=_number(q.max_score),answer_id=answers_by_question[q.id].id if q.id in answers_by_question else None) for q in removed_questions],
         "grading_scope": grading_scope,
         "external_questions": [{"id": q.id, "question_number": q.question_number,
                                 "question_text": q.question_text, "max_score": _number(q.max_score)}
@@ -364,6 +380,9 @@ def move_answer_source(
         raise ValueError("Submission or target question not found")
     if target_question.exam_id != submission.exam_id:
         raise ValueError("The target question belongs to a different assessment")
+    from services.grading_scope_service import is_removed_question
+    if is_removed_question(target_question):
+        raise ValueError('The target question was removed from the exam.')
 
     target = (
         db.query(Answer)
@@ -454,6 +473,9 @@ def resolve_unmatched_segment(
         question = db.query(Question).filter(Question.id == question_id).first()
         if not question or question.exam_id != submission.exam_id:
             raise ValueError("The target question belongs to a different assessment")
+        from services.grading_scope_service import is_removed_question
+        if is_removed_question(question):
+            raise ValueError('The target question was removed from the exam.')
 
         answer = (
             db.query(Answer)
@@ -516,6 +538,9 @@ def bulk_resolve_segments(
         raise ValueError("Submission not found")
 
     unique_source_ids = list(dict.fromkeys(source_ids))
+    from services.answer_area_service import active_paper_job
+    if active_paper_job(db,submission):
+        raise ValueError('This paper is still being processed. Wait before changing its extracted entries.')
     unique_unmatched_indices = sorted(set(unmatched_indices))
     if not unique_source_ids and not unique_unmatched_indices:
         raise ValueError("Select at least one OCR fragment")
@@ -572,6 +597,9 @@ def bulk_resolve_segments(
     target_question = db.query(Question).filter(Question.id == question_id).first()
     if not target_question or target_question.exam_id != submission.exam_id:
         raise ValueError("The target question belongs to a different assessment")
+    from services.grading_scope_service import is_removed_question
+    if is_removed_question(target_question):
+        raise ValueError('The target question was removed from the exam.')
 
     target = (
         db.query(Answer)

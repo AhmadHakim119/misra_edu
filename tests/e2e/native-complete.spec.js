@@ -95,6 +95,17 @@ test('dashboard, history and reviews use real API-shaped records with native des
   await page.goto('/app/history.html?exam_id=e&submission_id=s');await expect(page.locator('#history-left')).toContainText('synthetic-model');await expect(page.locator('#history-right')).toContainText('1 / 2');await expect(page.locator('a[href*="/pages/"]')).toHaveCount(0);
 });
 
+test('removed exam question keeps accessible read-only grading history',async({page},info)=>{
+  await fixture(page);
+  await page.route('**/api/exams/e/questions',route=>route.fulfill({json:[]}));
+  await page.route('**/api/results/s',route=>route.fulfill({json:{submission:{id:'s',exam_id:'e',extracted_student_name:'Synthetic student'},answers:[],removed_answers:[{id:'a',question_id:'q',score:1,max_score:2}],grading_scope:{removed_question_ids:['q'],removed_questions:[{id:'q',number:'p6.3'}]},latest_review_labels:[],external_answers:[]}}));
+  await page.goto('/app/history.html?exam_id=e&submission_id=s&answer_id=a');
+  await expect(page.locator('#history-question')).toHaveValue('a');await expect(page.locator('#history-question option')).toContainText('p6.3');
+  await expect(page.locator('#history-left')).toContainText('synthetic-model');await expect(page.locator('#regrade-answer')).toBeDisabled();
+  await expect(page.locator('#history-removed-note')).toContainText('Restore it in Extraction');
+  await page.screenshot({path:`.impeccable/review/extraction-removal-20261027/history-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+});
+
 test('extraction and grading layouts fit desktop/mobile in both themes',async({page},info)=>{
   await fixture(page,{graded:false});await page.goto('/app/extraction.html?exam_id=e&submission_id=s');await expect(page.locator('[data-source="seg"]')).toBeVisible();
   for(const theme of ['light','dark']){await page.evaluate(theme=>MisraTheme.set(theme),theme);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.screenshot({path:`.impeccable/review/native-extraction-${theme}-${info.project.name}.png`,fullPage:true,animations:'disabled'});}

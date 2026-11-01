@@ -175,20 +175,27 @@ def ingest_material_job(job, db, progress):
     db.flush()
 
 
-def approve_material(db, version, request, user):
-    db.query(CourseMaterial).filter(CourseMaterial.id == version.material_id).with_for_update().one()
-    db.query(MaterialVersion).filter(MaterialVersion.id == version.id).with_for_update().one()
-    db.refresh(version)
+def material_approval_fingerprint(db, version, page_indices):
+    """Read-only preflight shared by source review and explicit approval."""
     if version.status != "draft" or version.ingestion_status not in {"ready", "needs_transcription"}:
         raise ValueError("Only a fully ingested draft can be approved. Wait for processing or retry its job.")
-    selected = sorted(request.page_indices)
-    if any(index >= version.page_count for index in selected):
+    selected = sorted(set(page_indices))
+    if not selected or any(type(index) is not int or index < 0 or index >= version.page_count for index in selected):
         raise ValueError("Select existing zero-based reference pages.")
     pages = db.query(MaterialPage).filter(MaterialPage.version_id == version.id, MaterialPage.page_index.in_(selected)).all()
     if len(pages) != len(selected) or any(not p.text.strip() for p in pages):
         raise ValueError("Selected pages have no readable text. Correct their transcription before approval.")
     if version.original_file_path:
         document_path(version)
+    return content_hash(db, version, validate=True)
+
+
+def approve_material(db, version, request, user):
+    db.query(CourseMaterial).filter(CourseMaterial.id == version.material_id).with_for_update().one()
+    db.query(MaterialVersion).filter(MaterialVersion.id == version.id).with_for_update().one()
+    db.refresh(version)
+    material_approval_fingerprint(db, version, request.page_indices)
+    selected = sorted(request.page_indices)
     version.approved_page_indices = selected
     version.content_sha256 = content_hash(db, version, validate=True)
     for old in db.query(MaterialVersion).filter(MaterialVersion.material_id == version.material_id, MaterialVersion.status == "approved").all():
@@ -199,11 +206,11 @@ def approve_material(db, version, request, user):
     return version
 
 
-def validate_bindings(db, question, request, rubric):
+def validate_bindings(db, question, request, rubric, *, allow_pending_sources=False):
     exam = db.query(Exam).filter(Exam.id == question.exam_id, Exam.institution_id == question.institution_id).first()
     if not exam:
         raise ValueError("Question assessment is unavailable.")
-    validate_exam_bindings(db, exam, request, rubric)
+    validate_exam_bindings(db, exam, request, rubric, allow_pending_sources=allow_pending_sources)
 
 
 def validate_exam_bindings(db, exam, request, rubric=None, *, allow_pending_sources=False):

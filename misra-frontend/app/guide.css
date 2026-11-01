@@ -10,12 +10,15 @@
 .guide-outline-heading #guide-total { color:var(--muted);font-size:14px;margin:6px 0 0; }
 #guide-status { color:var(--muted); }
 #guide-sources-stage,#guide-questions-stage,#guide-review { padding-block:8px; }
+#add-teaching-questions .proposal-field-error { display:block;padding:0;background:transparent;margin-block:8px; }
+#add-teaching-questions [aria-invalid="true"] { border-color:var(--danger); }
 #guide-outline { margin-bottom:32px;border-bottom:1px solid var(--line); }
-.guide-question-row { display:grid;grid-template-columns:36px minmax(0,1fr) auto;gap:20px;align-items:start;padding-block:24px;border-top:1px solid var(--line); }
+.guide-question-row { display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"number action" "content content";gap:12px 24px;align-items:center;padding-block:24px;border-top:1px solid var(--line); }
+.guide-question-content { grid-area:content;min-width:0;overflow-wrap:anywhere; }
 .guide-question-row h4 { margin:0;font-size:17px;font-weight:600;line-height:1.5; }
 .guide-question-row p { font-size:14px;margin:8px 0 0;color:var(--muted); }
-.guide-question-number { font-weight:700;color:var(--accent);font-size:19px; }
-.guide-question-action { display:grid;gap:16px;justify-items:end; }
+.guide-question-number { grid-area:number;min-width:0;overflow-wrap:anywhere;font-weight:700;color:var(--accent);font-size:19px; }
+.guide-question-action { grid-area:action;display:flex;gap:20px;align-items:center;justify-content:flex-end; }
 .guide-question-action strong { font-size:17px;font-variant-numeric:tabular-nums; }
 .guide-criterion-preview { list-style:none;padding:0;margin:16px 0;max-width:600px; }
 .guide-criterion-preview li { display:flex;justify-content:space-between;align-items:baseline;gap:20px;font-size:14px;margin-block:8px; }
@@ -78,8 +81,8 @@
   .guide-steps { gap:16px;justify-content:space-between; }
   .guide-steps button { font-size:14px; }
   .guide-source-actions,.guide-outline-heading { flex-wrap:wrap; }
-  .guide-question-row { grid-template-columns:24px minmax(0,1fr);gap:10px; }
-  .guide-question-action { grid-column:2;display:flex;justify-content:space-between;align-items:center;justify-self:stretch; }
+  .guide-question-row { gap:12px; }
+  .guide-question-action { gap:12px; }
   #native-authoring { padding:16px; }
   #native-authoring .author-question-controls { grid-template-columns:1fr auto;gap:12px; }
   #native-authoring .author-question-controls .field { grid-column:1 / -1;grid-row:2;max-width:none; }

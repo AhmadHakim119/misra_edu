@@ -100,8 +100,9 @@ Restart the API to load this backward-compatible request option; no database
 migration is needed for the option itself.
 
 The new guide publishes rubric, answer-key and source-choice drafts together.
-Source-page verification remains a separate library boundary. Original tools
-retain their independent per-version approval APIs. Course-library PDFs are setup
+Selected source-page drafts can be explicitly approved with the whole guide;
+the review lists their exact pages and checks content/file integrity first.
+Original tools retain their independent per-version approval APIs. Course-library PDFs are setup
 references, never student submissions.
 After approving library pages, select them as assessment defaults or question
 exceptions. Existing question wording is displayed read-only; this port does

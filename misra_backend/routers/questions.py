@@ -5,10 +5,28 @@ from database import get_db
 from models import Exam, Question, RubricVersion, User
 from services.auth_dependencies import require_instructor
 from schemas.rubric_input import QuestionCreateRequest
+from schemas.question_lifecycle import QuestionLifecycleRequest
 from services.rubric_service import build_rubric
 from services.rubric_version_service import attach_initial_approved_rubric
 
 router = APIRouter(prefix="/api", tags=["questions"])
+
+
+@router.get('/questions/{question_id}/removal-preview')
+def question_removal_preview(question_id: str, action: str = 'remove', db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    from services.question_lifecycle_service import preview_question_change
+    return preview_question_change(db,user,question_id,action)
+
+
+@router.post('/questions/{question_id}/lifecycle')
+def change_question_lifecycle(question_id: str, payload: QuestionLifecycleRequest,
+    db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    from services.question_lifecycle_service import change_question_state
+    try:
+        return change_question_state(db,user,question_id,payload)
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.delete('/questions/{question_id}', status_code=204)
@@ -30,12 +48,13 @@ def list_exam_questions(
     if not exam:
         raise HTTPException(status_code=404, detail=f"Exam {exam_id} not found")
 
-    return (
+    from services.grading_scope_service import active_questions
+    return active_questions((
         db.query(Question)
         .filter(Question.exam_id == exam_id)
         .order_by(Question.order_index.asc(), Question.question_number.asc())
         .all()
-    )
+    ))
 
 @router.post("/exams/{exam_id}/questions")
 async def create_question(
