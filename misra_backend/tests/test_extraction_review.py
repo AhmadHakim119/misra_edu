@@ -121,6 +121,7 @@ class ExtractionReviewTests(unittest.TestCase):
 
         before = build_extraction_review(submission.id, self.db)
         self.assertEqual(before["readiness"]["missing_question_numbers"], ["2d"])
+        self.assertIn("1 expected question(s) have no mapped answer: 2d.", before["readiness"]["blocking_reasons"])
         self.assertEqual(before["readiness"]["suspicious_mapping_count"], 1)
         self.assertFalse(before["readiness"]["bulk_grading_allowed"])
 

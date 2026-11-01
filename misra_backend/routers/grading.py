@@ -7,7 +7,7 @@ from services.extraction_review_service import build_extraction_review
 from services.auth_dependencies import require_instructor
 from services.job_queue_service import create_processing_job, job_to_dict
 from services.audit_service import record_audit_event
-from services.grading_scope_service import is_external_question
+from services.grading_scope_service import is_external_question, is_removed_question
 from models import Answer, GradingRun, Question, Submission, User
 from schemas.public_results import GradingRunRecord, AnswerRecord
 
@@ -41,6 +41,8 @@ async def grading_endpoint(
     if not answer:
         raise HTTPException(status_code=404, detail="Answer not found")
     question = db.query(Question).filter(Question.id == answer.question_id).first()
+    if question and is_removed_question(question):
+        raise HTTPException(409, 'This question was removed from the exam. Restore it in Extraction before grading.')
     if question and is_external_question(question):
         raise HTTPException(status_code=409, detail="This question is assessed outside MISRA; it is not an AI zero.")
     _require_verified_mapping(answer.submission_id, db)

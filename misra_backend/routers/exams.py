@@ -16,7 +16,7 @@ from models import (
 )
 from services.auth_dependencies import require_instructor
 from services.audit_service import record_audit_event
-from services.grading_scope_service import is_external_question
+from services.grading_scope_service import active_questions, is_paper_question
 from services.ocr_service import create_submissions_from_stored_upload
 from services.job_queue_service import create_processing_job, job_to_dict
 from services.upload_security_service import (
@@ -24,6 +24,7 @@ from services.upload_security_service import (
     remove_stored_uploads,
     store_validated_batch,
     store_validated_upload,
+    upload_limits,
 )
 from models import Batch
 from typing import Optional
@@ -169,9 +170,9 @@ def list_exams(db: Session = Depends(get_db), user: User = Depends(require_instr
         submission_count = (
             db.query(Submission).filter(Submission.exam_id == exam.id).count()
         )
-        questions = db.query(Question).filter(Question.exam_id == exam.id).all()
+        questions = active_questions(db.query(Question).filter(Question.exam_id == exam.id).all())
         question_count = len(questions)
-        paper_question_ids = [question.id for question in questions if not is_external_question(question)]
+        paper_question_ids = [question.id for question in questions if is_paper_question(question)]
         review_count = (
             db.query(Answer)
             .join(Submission, Answer.submission_id == Submission.id)
@@ -234,7 +235,8 @@ def duplicate_exam(
     copied_rubrics = 0
     copied_policies = 0
 
-    for source_question in source_questions:
+    from services.grading_scope_service import active_questions
+    for source_question in active_questions(source_questions):
         question = Question(
             institution_id=source_question.institution_id,
             exam_id=duplicate.id,
@@ -392,13 +394,20 @@ async def upload_batch(
         raise HTTPException(status_code=404, detail=f"Exam {exam_id} not found")
     if pages_per_student is not None and pages_per_student <= 0:
         raise HTTPException(status_code=422, detail="pages_per_student must be a positive integer")
+    single_limits = upload_limits()
+    if pages_per_student is not None and pages_per_student > single_limits.max_pdf_pages:
+        raise HTTPException(413, f"Pages per student exceeds the {single_limits.max_pdf_pages}-page single-paper limit.")
 
     from services.exam_setup_service import require_ready
     require_ready(db, exam_id)
     try:
-        stored_uploads = await store_validated_batch(files, UPLOAD_DIR)
+        stored_uploads = await store_validated_batch(files, UPLOAD_DIR,
+            limits=upload_limits(split_batch=pages_per_student is not None))
     except UploadValidationError as error:
-        raise HTTPException(status_code=error.status_code, detail=error.detail) from error
+        detail = error.detail
+        if pages_per_student is None and detail.startswith('PDF contains ') and error.status_code == 413:
+            detail += '. Set pages per student to split a combined class PDF.'
+        raise HTTPException(status_code=error.status_code, detail=detail) from error
 
     all_submissions = []
     generated_paths: list[str] = []
@@ -492,6 +501,8 @@ def promote_unmatched_segments(
         return {"promoted": 0, "still_unmatched": 0}
 
     questions = db.query(Question).filter(Question.exam_id == submission.exam_id).all()
+    from services.grading_scope_service import active_questions
+    questions = active_questions(questions)
     exact_lookup = {q.question_number: q.id for q in questions}
 
     still_unmatched = []

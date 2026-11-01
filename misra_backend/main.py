@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+import re
 
 from fastapi import Depends, FastAPI
 from fastapi.responses import RedirectResponse, FileResponse
@@ -42,11 +43,21 @@ app.add_middleware(
 @app.middleware("http")
 async def prevent_sensitive_page_caching(request, call_next):
     response = await call_next(request)
-    response.headers['X-Content-Type-Options'] = 'nosniff'
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Referrer-Policy'] = 'no-referrer'
-    response.headers['Content-Security-Policy'] = "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
     path = request.url.path
+    # The authenticated source reader embeds its PDF on this same origin.
+    # HTML, errors and other routes keep the framing prohibition.
+    source_pdf = (
+        re.fullmatch(r'/api/materials/[^/]+/versions/[^/]+/document', path) is not None
+        and response.status_code in {200, 206}
+        and response.headers.get('content-type', '').split(';', 1)[0].lower() == 'application/pdf'
+    )
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'SAMEORIGIN' if source_pdf else 'DENY'
+    response.headers['Referrer-Policy'] = 'no-referrer'
+    response.headers['Content-Security-Policy'] = (
+        "frame-ancestors 'self'; object-src 'none'; base-uri 'self'" if source_pdf else
+        "frame-ancestors 'none'; object-src 'none'; base-uri 'self'"
+    )
     if path.startswith(("/api/", "/app/", "/legacy/", "/js/")):
         response.headers["Cache-Control"] = "no-store, max-age=0"
         response.headers["Pragma"] = "no-cache"

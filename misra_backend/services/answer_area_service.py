@@ -51,6 +51,10 @@ def source_context(db, source_id, institution_id):
           Answer.institution_id==institution_id,Submission.institution_id==institution_id).first())
     if not row:
         raise ValueError('Answer source not found')
+    from services.grading_scope_service import is_removed_question
+    question=db.get(Question,row[1].question_id)
+    if question and is_removed_question(question):
+        raise ValueError('This question was removed from the exam. Restore it before changing its extraction.')
     return row
 
 

@@ -1,5 +1,6 @@
 :root { color-scheme: light; --ground:#f7f8fa; --surface:#fff; --secondary:#f0f3f6; --ink:#18263a; --muted:#526079; --line:#dce3e9; --accent:#087177; --active:#e3f2f1; --danger:#a62c35; --warning:#7c5514; --focus:#00848b; }
 :root[data-theme="dark"] { color-scheme:dark; --ground:#080b0d; --surface:#101619; --secondary:#182025; --ink:#e7eef3; --muted:#a5b2bf; --line:#303c44; --accent:#77cfc5; --active:#173330; --danger:#ff9ea6; --warning:#e9bc70; --focus:#84e0d5; }
+.evidence-box.active::before { content:attr(data-label);position:absolute;bottom:calc(100% + 5px);left:0;max-width:100%;padding:2px 6px;background:#087177;color:#fff;font:600 13px/1.4 Figtree,"Segoe UI",sans-serif;white-space:normal;overflow-wrap:anywhere; }
 * { box-sizing:border-box; }
 html { scrollbar-color:var(--muted) var(--secondary); }
 .mobile-evidence-link { display:none; }
@@ -235,12 +236,13 @@ pre { white-space:pre-wrap; overflow-wrap:anywhere; font-family:inherit; }
 #evidence-boxes.highlight-drawing:focus-visible { outline:3px solid var(--focus);outline-offset:3px; }
 .evidence-box.adjusted,.evidence-box.editing { border-color:var(--accent);background:rgb(8 113 119 / .08); }
 .evidence-box.editing { border-style:dotted; }
+.evidence-box.active { outline:2px solid var(--accent);outline-offset:3px; }
 .highlight-tools { margin-block:12px; }
 .highlight-tools p { font-size:12px;margin-block:8px; }
 .highlight-editor { padding:12px;background:var(--secondary);border-radius:8px; }
 .highlight-editor label { font-size:12px; }
 .highlight-editor select { width:auto;margin-inline-start:8px; }
-.location-note { font-size:11px; color:var(--muted); margin:10px 0; }
+.location-note { font-size:13px;line-height:1.5;color:var(--muted);margin:10px 0; }
 #original-link { font-size:12px; }
 .grade-form { margin-top:20px; padding:16px; border:1px solid var(--line); background:var(--ground); border-radius:8px; }
 .grade-form h3 { margin-bottom:13px; font-size:16px; }

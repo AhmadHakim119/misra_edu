@@ -12,6 +12,11 @@ class SourceTextCorrectionRequest(BaseModel):
     expected_text: str = Field(max_length=50000)
 
 
+class SourceExclusionRequest(BaseModel):
+    review_token: str = Field(pattern=r'^[a-f0-9]{64}$')
+    confirm_reviewed: bool = Field(strict=True)
+
+
 class UnmatchedSegmentResolutionRequest(BaseModel):
     action: Literal["assign", "ignore"]
     question_id: Optional[str] = None

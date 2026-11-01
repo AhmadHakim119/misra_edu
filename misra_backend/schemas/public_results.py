@@ -87,6 +87,7 @@ class ResultRecord(BaseModel):
     latest_review_labels: list[ReviewRecord]
     grading_scope: dict
     external_answers: list[AnswerRecord]
+    removed_answers: list[AnswerRecord] = []
 
 
 class ReviewResolutionRecord(BaseModel):

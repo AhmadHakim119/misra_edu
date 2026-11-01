@@ -190,7 +190,8 @@ def _validate_targets(
         )
         .all()
     )
-    lookup = {question.question_number: question for question in questions}
+    from services.grading_scope_service import active_questions
+    lookup = {question.question_number: question for question in active_questions(questions)}
     missing_targets = [number for number in unique_numbers if number not in lookup]
     if missing_targets:
         raise ValueError(

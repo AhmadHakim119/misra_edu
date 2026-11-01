@@ -585,6 +585,8 @@ def process_submission(
             progress_callback(0, len(page_images), "Preparing page extraction")
 
         questions = db.query(Question).filter(Question.exam_id == submission.exam_id).all()
+        from services.grading_scope_service import active_questions
+        questions = active_questions(questions)
         question_lookup = {q.question_number: q.id for q in questions}
         known_question_numbers = list(question_lookup.keys())
         question_context = [

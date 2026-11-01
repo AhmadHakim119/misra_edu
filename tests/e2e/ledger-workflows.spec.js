@@ -35,7 +35,7 @@ async function fixture(page,{blocked=false,uploadStatus=202,holdUpload=false,hol
   await page.goto('/app/index.html?exam_id=e');await expect(page.locator('#exam-title')).toHaveText('Work & energy');
   return {writes,releaseUpload,releaseSources};
 }
-test('single upload stays in ledger, locks selection and does not upload again after acceptance',async({page})=>{
+test('single upload locks selection, opens the complete extraction and restores the accepted job',async({page})=>{
   const state=await fixture(page);await page.locator('#upload-link').click();
   await expect(page.locator('#ledger-readiness')).toContainText('Approved definitions');
   await page.locator('#ledger-files').setInputFiles(file('paper.pdf'));
@@ -43,7 +43,8 @@ test('single upload stays in ledger, locks selection and does not upload again a
   await page.locator('#ledger-upload-submit').click();
   await expect(page.locator('#upload-accepted')).toContainText('Extraction job completed');
   await expect(page.locator('#ledger-upload-submit')).toBeDisabled();expect(state.writes.filter(w=>w.kind==='upload')).toHaveLength(1);
-  await page.getByRole('button',{name:'Open extracted paper',exact:true}).click();await expect(page.locator('#ledger-upload')).toBeHidden();await expect(page.locator('#selected-paper-copy')).toContainText('Synthetic paper');
+  await page.getByRole('button',{name:'Open extracted paper',exact:true}).click();await expect(page).toHaveURL(/extraction.html\?.*submission_id=s/);
+  await page.goto('/app/index.html?exam_id=e&view=upload&job_id=j');
   await page.locator('#upload-link').click();await expect(page.locator('#upload-accepted')).toContainText('Extraction job completed');
   await expect(page).toHaveURL(/view=upload.*job_id=j/);await page.reload();await expect(page.locator('#ledger-upload')).toBeVisible();await expect(page.locator('#upload-accepted')).toContainText('Extraction job completed');await expect(page.locator('#ledger-files')).toBeDisabled();expect(state.writes.filter(w=>w.kind==='upload')).toHaveLength(1);
   await page.locator('#activity-link').click();await expect(page.locator('#ledger-upload')).toBeHidden();await expect(page.locator('#ledger-activity')).toBeVisible();

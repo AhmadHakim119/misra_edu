@@ -13,7 +13,7 @@
       if(button.dataset.exam){e.preventDefault();e.stopImmediatePropagation();if(window.MisraLedger?.canLeave(true)===false)return;location.href=location.pathname+'?'+new URLSearchParams({exam_id:button.dataset.exam});return;}
       const next=button.id==='next-action'?window.MisraLedger?.nextAction():null;
       const paper=button.dataset.openSavedPaper;
-      const page=paper?(window.MisraWorkspacePage==='upload'?'extraction':'grading'):button.hasAttribute('data-show-papers')?'grading':next?(routes[next.kind]||'grading'):targets[button.id];
+      const page=paper?(window.MisraLedger?.paperRoute(paper)||'grading'):button.hasAttribute('data-show-papers')?'grading':next?.kind==='paper'?(window.MisraLedger?.paperRoute(next.id)||'grading'):next?(routes[next.kind]||'grading'):targets[button.id];
       if(!page||page===window.MisraWorkspacePage)return;
       e.preventDefault();e.stopImmediatePropagation();if(window.MisraLedger?.canLeave(true)===false)return;const exam=new URLSearchParams(location.search).get('exam_id');const query=new URLSearchParams({exam_id:exam||''});if(paper||next?.id)query.set('submission_id',paper||next.id);location.href=page+'.html?'+query;},true);
     const tab=document.querySelector('.task-tabs');tab.hidden=true;

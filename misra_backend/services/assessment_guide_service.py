@@ -1,21 +1,24 @@
 """Review exact saved foundations and publish an assessment in one transaction.
 
 Versions remain question-scoped internally; no grading history is rewritten.
-Material-page approval is deliberately excluded: unread pages cannot be trusted
-merely because their assessment guide is published.
+Selected source drafts can join an explicitly confirmed guide approval. Source
+content is fingerprinted at review; unfinished/unreadable material remains blocked.
 """
 import hashlib
 import json
 from copy import deepcopy
+from types import SimpleNamespace
 from sqlalchemy import func, or_
 
 from sqlalchemy import inspect
-from models import (Question, RubricVersion, AnswerKeyVersion, MaterialVersion, CourseMaterial, QuestionGradingPolicy,
+from models import (Question, RubricVersion, AnswerKeyVersion, MaterialVersion, CourseMaterial, MaterialPage, MaterialChunk, QuestionGradingPolicy,
                     QuestionMaterialScopeVersion, AssessmentMaterialScopeVersion)
 from schemas.answer_keys import AnswerKeyDraftRequest
-from schemas.course_materials import MaterialScopeRequest, AssessmentMaterialScopeRequest
+from schemas.course_materials import MaterialScopeRequest, AssessmentMaterialScopeRequest, MaterialApprovalRequest
 from services.assessment_readiness_service import definition_errors
 from services.rubric_version_service import approve_rubric_version, validate_rubric_v2
+from services.question_definition_service import current_definition, proposed_definition
+from services.grading_scope_service import active_questions, is_removed_question
 from services import answer_key_service as keys
 from services import course_material_service as materials
 from services import assessment_source_service as sources
@@ -46,14 +49,39 @@ def _labels(db, scope, exam):
     return labels
 
 
+def _source_approval_plan(db, exam, scopes):
+    selected = {}
+    for scope in scopes:
+        if scope.status != 'draft' or scope.mode in {'disabled', 'inherit'}:
+            continue
+        for binding in scope.bindings:
+            selected.setdefault(binding['version_id'], set()).update(binding['page_indices'])
+    planned, errors = [], []
+    for identifier, indices in sorted(selected.items()):
+        found = db.query(MaterialVersion, CourseMaterial).join(CourseMaterial,
+            CourseMaterial.id == MaterialVersion.material_id).filter(MaterialVersion.id == identifier,
+            CourseMaterial.institution_id == exam.institution_id, CourseMaterial.course_id == exam.course_id).first()
+        if not found or found[0].status != 'draft':
+            continue  # Scope validation checks ownership and immutable approved versions.
+        version, material = found
+        try:
+            fingerprint = materials.material_approval_fingerprint(db, version, indices)
+            planned.append(dict(version_id=version.id, material_id=material.id, title=material.title,
+                version_number=version.version_number, page_indices=sorted(indices), content_sha256=fingerprint))
+        except ValueError as error:
+            errors.append(f'{material.title}: {error}')
+    return planned, errors
+
+
 def review_guide(db, exam):
     for model in (RubricVersion, AnswerKeyVersion, QuestionMaterialScopeVersion, AssessmentMaterialScopeVersion):
         if not inspect(db.connection()).has_table(model.__tablename__):
             raise ValueError('Install the pending grading-foundation/source upgrades before reviewing the guide.')
     questions = db.query(Question).filter(Question.exam_id == exam.id,
         Question.institution_id == exam.institution_id).order_by(Question.order_index, Question.id).all()
+    questions = active_questions(questions)
     default = _selected(db, AssessmentMaterialScopeVersion, AssessmentMaterialScopeVersion.exam_id, exam.id)
-    errors, warnings, rows = [], [], []
+    errors, warnings, rows, selected_scopes = [], [], [], []
     if not questions:
         errors.append('Add at least one question and its marking criteria.')
     if default:
@@ -61,7 +89,9 @@ def review_guide(db, exam):
             if default.status == 'approved' and default.scope_sha256 != sources.assessment_scope_hash(default):
                 raise ValueError('Approved source choices changed; create a new draft before approval.')
             materials.validate_exam_bindings(db, exam,
-                AssessmentMaterialScopeRequest(mode=default.mode, bindings=default.bindings))
+                AssessmentMaterialScopeRequest(mode=default.mode, bindings=default.bindings),
+                allow_pending_sources=default.status == 'draft')
+            selected_scopes.append(default)
         except ValueError as error:
             errors.append('Assessment sources: ' + str(error))
     else:
@@ -69,14 +99,22 @@ def review_guide(db, exam):
     for question in questions:
         version = _selected(db, RubricVersion, RubricVersion.question_id, question.id)
         rubric = version.rubric_json if version else question.rubric_json
-        issues = definition_errors(question, rubric)
-        if not version and db.query(RubricVersion).filter(RubricVersion.question_id == question.id).first():
-            issues.append('No current rubric or draft is available; restore a valid marking definition.')
+        current_maximum = float(question.max_score)
+        proposed_maximum = current_maximum
+        definition = current_definition(question)
+        draft_errors = []
         if version and version.status == 'draft':
             try:
-                validate_rubric_v2(rubric)
+                proposed_maximum = validate_rubric_v2(rubric).max_score
+                definition = proposed_definition(question, rubric)
             except ValueError as error:
-                issues.append(str(error))
+                draft_errors.append(str(error))
+        # Review the proposed definition without mutating the current question.
+        # Existing grading/preflight still compares against the approved total.
+        reviewed_question = SimpleNamespace(question_text=definition['question_text'], max_score=proposed_maximum)
+        issues = definition_errors(reviewed_question, rubric) + draft_errors
+        if not version and db.query(RubricVersion).filter(RubricVersion.question_id == question.id).first():
+            issues.append('No current rubric or draft is available; restore a valid marking definition.')
         key = _selected(db, AnswerKeyVersion, AnswerKeyVersion.question_id, question.id)
         reference = dict(id=key.id, status=key.status, version_number=key.version_number,
             mode=key.mode, reference_text=key.reference_text, acceptable_answers=key.acceptable_answers,
@@ -97,34 +135,52 @@ def review_guide(db, exam):
                 if exception.status == 'approved' and exception.scope_sha256 != materials.scope_hash(exception):
                     raise ValueError('Approved source exception changed; create a new draft before approval.')
                 materials.validate_bindings(db, question,
-                    MaterialScopeRequest(mode=exception.mode, bindings=exception.bindings), rubric)
+                    MaterialScopeRequest(mode=exception.mode, bindings=exception.bindings), rubric,
+                    allow_pending_sources=exception.status == 'draft')
+                selected_scopes.append(exception)
             except ValueError as error:
                 issues.append('Source exception: ' + str(error))
         scope = exception if exception and exception.mode != 'inherit' else default
         source_warnings = []
+        if definition != current_definition(question):
+            source_warnings.append('Draft corrects the question number or wording. Whole-guide approval applies it; previous grading snapshots remain unchanged.')
+        if abs(proposed_maximum - current_maximum) > .01:
+            changed_total = f'Draft changes total marks from {current_maximum:g} to {proposed_maximum:g}. It takes effect on whole-guide approval.'
+            source_warnings.append(changed_total)
+            warnings.append(f'Question {question.question_number}: {changed_total}')
         if not scope or scope.mode == 'disabled':
             source_warnings.append('No course-material retrieval for this question; key and rubric still apply.')
         routing = db.query(QuestionGradingPolicy).filter(QuestionGradingPolicy.question_id == question.id).first()
-        rows.append(dict(question_id=question.id, question_number=question.question_number, language=question.language,
+        rows.append(dict(question_id=question.id, question_number=definition['question_number'], language=definition['language'],
+            current_question_number=question.question_number, current_question_text=question.question_text,
             grading_input=routing.mode if routing else 'adaptive',
-            question_text=question.question_text, max_score=float(question.max_score),
+            question_text=definition['question_text'], max_score=proposed_maximum, current_max_score=current_maximum,
             rubric_version_id=version.id if version else None, rubric_status=version.status if version else 'legacy',
             rubric=rubric, answer_key=reference, source_exception=_scope(exception),
             sources=_scope(scope), source_references=_labels(db, scope, exam), errors=issues, warnings=source_warnings))
         errors.extend(f'Question {question.question_number}: {issue}' for issue in issues)
+    numbers = {}
+    for row in rows:
+        key = row['question_number'].strip().casefold()
+        if key in numbers:
+            errors.append(f"Question number {row['question_number']} is used more than once. Correct the affected question numbers before approval.")
+        numbers[key] = row['question_id']
     # Content, not just IDs: edits to the same draft invalidate a prior review.
-    manifest = dict(exam_id=exam.id, course_id=exam.course_id, title=exam.title, assessment_sources=_scope(default), questions=rows)
+    source_approvals, source_errors = _source_approval_plan(db, exam, selected_scopes)
+    errors.extend('Selected sources: ' + error for error in source_errors)
+    manifest = dict(exam_id=exam.id, course_id=exam.course_id, title=exam.title,
+        assessment_sources=_scope(default), source_approvals=source_approvals, questions=rows)
     token = hashlib.sha256(json.dumps(manifest, sort_keys=True, ensure_ascii=False,
         separators=(',', ':'), default=str, allow_nan=False).encode()).hexdigest()
     pending = sum(r['rubric_status'] == 'draft' for r in rows) + sum(
         r['answer_key']['status'] == 'draft' for r in rows) + sum(
-        bool(r['source_exception'] and r['source_exception']['status'] == 'draft') for r in rows) + int(bool(default and default.status == 'draft'))
+        bool(r['source_exception'] and r['source_exception']['status'] == 'draft') for r in rows) + int(bool(default and default.status == 'draft')) + len(source_approvals)
     return dict(**manifest, review_token=token, errors=errors, warnings=warnings,
         pending_count=pending, can_approve=bool(rows) and not errors, total_marks=sum(r['max_score'] for r in rows),
         paper_total_marks=sum(r['max_score'] for r in rows if (r['rubric'].get('policy') or {}).get('assessment_scope') != 'external'))
 
 
-def approve_guide(db, exam, user, expected_token):
+def approve_guide(db, exam, user, expected_token, *, approve_selected_sources=False):
     # Lock foundations before recomputing the review. The router owns commit.
     db.query(type(exam)).filter(type(exam).id == exam.id).with_for_update().one()
     db.query(Question).filter(Question.exam_id == exam.id).with_for_update().all()
@@ -132,17 +188,40 @@ def approve_guide(db, exam, user, expected_token):
     for model in (RubricVersion, AnswerKeyVersion, QuestionMaterialScopeVersion):
         db.query(model).filter(model.question_id.in_(question_ids)).with_for_update().all()
     db.query(AssessmentMaterialScopeVersion).filter(AssessmentMaterialScopeVersion.exam_id == exam.id).with_for_update().all()
+    # Keep source text fixed while recomputing the content-bound review and approving.
+    scopes = db.query(AssessmentMaterialScopeVersion).filter_by(exam_id=exam.id).all()
+    scopes += db.query(QuestionMaterialScopeVersion).filter(QuestionMaterialScopeVersion.question_id.in_(question_ids)).all()
+    identifiers = {b.get('version_id') for scope in scopes for b in scope.bindings}
+    versions = db.query(MaterialVersion).join(CourseMaterial, CourseMaterial.id == MaterialVersion.material_id).filter(
+        MaterialVersion.id.in_(identifiers), CourseMaterial.institution_id == exam.institution_id,
+        CourseMaterial.course_id == exam.course_id).all()
+    identifiers = {v.id for v in versions}
+    db.query(CourseMaterial).filter(CourseMaterial.id.in_({v.material_id for v in versions})).order_by(CourseMaterial.id).with_for_update().all()
+    db.query(MaterialVersion).filter(MaterialVersion.id.in_(identifiers)).order_by(MaterialVersion.id).with_for_update().populate_existing().all()
+    for model in (MaterialPage, MaterialChunk):
+        db.query(model).filter(model.version_id.in_(identifiers)).order_by(model.id).with_for_update().populate_existing().all()
     review = review_guide(db, exam)
     if review['review_token'] != expected_token:
         raise ValueError('The guide changed after review. Refresh and review the current saved definitions before approval.')
     if review['errors']:
         raise ValueError('Resolve the guide checks before approval: ' + ' '.join(review['errors']))
+    if review['source_approvals'] and not approve_selected_sources:
+        raise ValueError('Confirm approval of the selected source pages together with the guide.')
     changed = []
+    for source in review['source_approvals']:
+        materials.approve_material(db, db.get(MaterialVersion, source['version_id']),
+            MaterialApprovalRequest(page_indices=source['page_indices'], confirm_content_reviewed=True), user)
+        from services.audit_service import record_audit_event
+        record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
+            action='course_material_approved', entity_type='course_material', entity_id=source['material_id'],
+            details={'version_id':source['version_id'], 'page_indices':source['page_indices'],
+                'exam_id':exam.id, 'approval_method':'assessment_guide', 'review_token':expected_token})
+        changed.append(source['version_id'])
     for row in review['questions']:
         question = db.get(Question, row['question_id'])
         if row['rubric_status'] == 'draft':
             approve_rubric_version(version=db.get(RubricVersion, row['rubric_version_id']),
-                db=db, approved_by=user.id, commit=False)
+                db=db, approved_by=user.id, commit=False, definition_batch_validated=True)
             changed.append(row['rubric_version_id'])
         if row['answer_key']['status'] == 'draft':
             keys.approve_key(question, db.get(AnswerKeyVersion, row['answer_key']['id']), db, user)
@@ -174,6 +253,8 @@ def reopen_guide(db, exam, user, expected_token):
         raise ValueError('Assessment processing is active. Wait before reopening its guide.')
     changed = []
     for question in questions:
+        if is_removed_question(question):
+            continue
         versions = db.query(RubricVersion).filter(RubricVersion.question_id == question.id).with_for_update().all()
         approved = next((v for v in versions if v.id == question.active_rubric_version_id and v.status == 'approved'), None)
         if not approved and versions:
@@ -181,6 +262,8 @@ def reopen_guide(db, exam, user, expected_token):
         draft = next((v for v in sorted(versions, key=lambda v:v.version_number, reverse=True) if v.status == 'draft'), None)
         if not draft:
             value = deepcopy(approved.rubric_json if approved else question.rubric_json)
+            if 'question_definition' in value:
+                value['question_definition']['previous'] = current_definition(question)
             value.setdefault('schema_version', 2)
             for criterion in value.get('criteria', []):
                 criterion.setdefault('title', (criterion.get('description') or 'Criterion')[:160])

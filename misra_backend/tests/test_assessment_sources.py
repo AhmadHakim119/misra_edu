@@ -40,7 +40,7 @@ class AssessmentSourceTests(unittest.TestCase):
         self.assertEqual(context["status"], "retrieved")
         self.assertEqual(api.get_effective_scope("q", self.db, self.user)["origin"], "assessment")
 
-    def test_pending_chapter_selection_is_draft_only_until_source_review(self):
+    def test_pending_chapter_selection_stays_draft_until_explicit_source_approval(self):
         from schemas.course_materials import MaterialApprovalRequest
         from services.assessment_guide_service import review_guide
         from models import Exam
@@ -55,7 +55,13 @@ class AssessmentSourceTests(unittest.TestCase):
         with self.assertRaises(HTTPException):api.approve_assessment_scope('e',draft['id'],self.db,self.user)
         self.assertEqual(pending.status,'draft');self.assertEqual(pending.approved_page_indices,[])
         review=review_guide(self.db,self.db.get(Exam,'e'))
-        self.assertFalse(review['can_approve']);self.assertTrue(any('source' in e.lower() for e in review['errors']))
+        self.assertTrue(review['can_approve'])
+        self.assertEqual(review['source_approvals'][0]['version_id'],pending.id)
+        from routers.rubric_versions import approve_assessment_guide, AssessmentGuideApprovalRequest
+        with self.assertRaises(HTTPException):
+            approve_assessment_guide('e',AssessmentGuideApprovalRequest(
+                review_token=review['review_token'],confirm_reviewed=True),self.db,self.user)
+        self.db.refresh(pending);self.assertEqual(pending.status,'draft')
         api.approve_version(material['id'],pending.id,MaterialApprovalRequest(page_indices=[0],confirm_content_reviewed=True),self.db,self.user)
         api.approve_assessment_scope('e',draft['id'],self.db,self.user)
         self.assertEqual(retrieve_for_question(self.db,self.q,self.rubric)['scope_version_id'],draft['id'])

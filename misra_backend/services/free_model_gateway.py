@@ -3,9 +3,10 @@ import base64
 from dataclasses import dataclass
 from io import BytesIO
 import json
+import logging
 import math
 import os
-from time import perf_counter
+from time import perf_counter, sleep
 import urllib.error
 import urllib.request
 
@@ -14,6 +15,9 @@ from services.openrouter_client import OpenRouterError
 
 CATALOG_URL = "https://openrouter.ai/api/v1/models"
 COMPLETION_URL = "https://openrouter.ai/api/v1/chat/completions"
+_TRANSIENT_CODES = frozenset({500, 502, 503, 504})
+_RETRY_DELAYS = (2, 4)
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -22,23 +26,42 @@ class FreeCompletion:
     metadata: dict
 
 
+def _wait_for_transient_retry(code, attempt):
+    # Retry this request only. Auth, credits, quotas, invalid output and other
+    # failures still stop here; the durable job owns recovery after exhaustion.
+    if code not in _TRANSIENT_CODES or attempt >= len(_RETRY_DELAYS):
+        return False
+    delay = _RETRY_DELAYS[attempt]
+    logger.warning("Free provider temporary error %s; retrying the same request in %s seconds (attempt %s of %s).",
+                   code, delay, attempt + 2, len(_RETRY_DELAYS) + 1)
+    sleep(delay)
+    return True
+
+
 def _read_json(request, timeout):
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            payload = json.load(response)
-    except urllib.error.HTTPError as error:
-        raise OpenRouterError(f"Free provider returned HTTP {error.code}; no paid fallback was attempted.") from None
-    except (urllib.error.URLError, TimeoutError):
-        raise OpenRouterError("Free provider connection unavailable; no grade was saved.") from None
-    except (ValueError, UnicodeDecodeError):
-        raise OpenRouterError("Free provider returned invalid response JSON.") from None
-    if not isinstance(payload, dict):
-        raise OpenRouterError("Free provider returned an invalid response shape.")
-    if payload.get("error"):
-        code = payload["error"].get("code") if isinstance(payload["error"], dict) else None
-        safe_code = code if type(code) is int else "unknown"
-        raise OpenRouterError(f"Free provider returned error {safe_code}; no grade was saved.")
-    return payload
+    for attempt in range(len(_RETRY_DELAYS) + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                payload = json.load(response)
+        except urllib.error.HTTPError as error:
+            code = error.code
+            error.close()
+            if _wait_for_transient_retry(code, attempt):
+                continue
+            raise OpenRouterError(f"Free provider returned HTTP {code}; no paid fallback was attempted.") from None
+        except (urllib.error.URLError, TimeoutError):
+            raise OpenRouterError("Free provider connection unavailable; no grade was saved.") from None
+        except (ValueError, UnicodeDecodeError):
+            raise OpenRouterError("Free provider returned invalid response JSON.") from None
+        if not isinstance(payload, dict):
+            raise OpenRouterError("Free provider returned an invalid response shape.")
+        if payload.get("error"):
+            code = payload["error"].get("code") if isinstance(payload["error"], dict) else None
+            safe_code = code if type(code) is int else "unknown"
+            if _wait_for_transient_retry(safe_code, attempt):
+                continue
+            raise OpenRouterError(f"Free provider returned error {safe_code}; no grade was saved.")
+        return payload
 
 
 def complete_free(contents, *, model=None, api_key=None, timeout=60):

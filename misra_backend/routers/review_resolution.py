@@ -108,8 +108,10 @@ def resolve_review(
         if running:
             raise HTTPException(409,'A corrected-answer proposal is processing. Review the new proposal before saving an instructor decision.')
     from models import Question
-    from services.grading_scope_service import is_external_question
+    from services.grading_scope_service import is_external_question, is_removed_question
     question = db.query(Question).filter(Question.id == answer.question_id).first()
+    if request.apply_as_current and question and is_removed_question(question):
+        raise HTTPException(409, 'This question was removed from the exam. Restore it in Extraction before applying a current decision. Historical evaluation-only labels remain allowed.')
     if request.apply_as_current and question and is_external_question(question):
         raise HTTPException(status_code=409, detail="This question is assessed outside MISRA. Historical evaluation-only labels remain allowed.")
 

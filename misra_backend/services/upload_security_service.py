@@ -15,6 +15,7 @@ DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 DEFAULT_MAX_BATCH_BYTES = 100 * 1024 * 1024
 DEFAULT_MAX_BATCH_FILES = 25
 DEFAULT_MAX_PDF_PAGES = 50
+DEFAULT_MAX_BATCH_PDF_PAGES = 250
 DEFAULT_MAX_IMAGE_PIXELS = 40_000_000
 UPLOAD_CHUNK_BYTES = 1024 * 1024
 
@@ -58,12 +59,13 @@ def _positive_env_int(name: str, default: int) -> int:
     return value
 
 
-def upload_limits() -> UploadLimits:
+def upload_limits(*, split_batch: bool = False) -> UploadLimits:
     return UploadLimits(
         max_upload_bytes=_positive_env_int("MAX_UPLOAD_BYTES", DEFAULT_MAX_UPLOAD_BYTES),
         max_batch_bytes=_positive_env_int("MAX_BATCH_BYTES", DEFAULT_MAX_BATCH_BYTES),
         max_batch_files=_positive_env_int("MAX_BATCH_FILES", DEFAULT_MAX_BATCH_FILES),
-        max_pdf_pages=_positive_env_int("MAX_PDF_PAGES", DEFAULT_MAX_PDF_PAGES),
+        max_pdf_pages=_positive_env_int("MAX_BATCH_PDF_PAGES", DEFAULT_MAX_BATCH_PDF_PAGES)
+        if split_batch else _positive_env_int("MAX_PDF_PAGES", DEFAULT_MAX_PDF_PAGES),
         max_image_pixels=_positive_env_int("MAX_IMAGE_PIXELS", DEFAULT_MAX_IMAGE_PIXELS),
     )
 
@@ -234,8 +236,10 @@ async def store_validated_upload(
 async def store_validated_batch(
     uploads: list[UploadFile],
     upload_dir: str | Path,
+    *,
+    limits: UploadLimits | None = None,
 ) -> list[StoredUpload]:
-    limits = upload_limits()
+    limits = limits or upload_limits()
     if not uploads:
         raise UploadValidationError(422, "At least one file is required")
     if len(uploads) > limits.max_batch_files:

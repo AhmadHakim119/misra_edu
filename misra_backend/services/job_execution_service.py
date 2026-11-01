@@ -9,7 +9,7 @@ from models import Answer, GradingRun, ProcessingJob, Question, Submission
 from services.grading_service import process_grading, process_grading_with_policy
 from services.ocr_service import process_batch, process_submission
 from services.audit_service import safe_error_message
-from services.grading_scope_service import is_external_question
+from services.grading_scope_service import is_external_question, is_paper_question
 from services.grading_errors import GradingResponseValidationError
 
 
@@ -39,7 +39,7 @@ def _grade_submission(job: ProcessingJob, db: Session) -> None:
         raise ValueError("This submission has no mapped answers to grade")
 
     scoped_questions = {q.id: q for q in db.query(Question).filter(Question.exam_id == submission.exam_id).all()}
-    answers = [a for a in answers if not is_external_question(scoped_questions[a.question_id])]
+    answers = [a for a in answers if is_paper_question(scoped_questions[a.question_id])]
     if not answers:
         raise ValueError("No paper-assessed answers are available to grade.")
 
@@ -91,7 +91,7 @@ def _grade_submission(job: ProcessingJob, db: Session) -> None:
     submission.status = (
         "needs_review"
         if any(answer.needs_review for answer in graded_answers
-               if not is_external_question(scoped_questions[answer.question_id]))
+               if is_paper_question(scoped_questions[answer.question_id]))
         else "graded"
     )
     db.commit()

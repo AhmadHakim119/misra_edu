@@ -27,6 +27,7 @@ router = APIRouter(prefix="/api", tags=["rubric-versions"])
 class AssessmentGuideApprovalRequest(BaseModel):
     review_token: str = Field(pattern=r'^[a-f0-9]{64}$')
     confirm_reviewed: bool
+    approve_selected_sources: bool = Field(default=False, strict=True)
 
 
 def _guide_exam(db, exam_id, user):
@@ -53,7 +54,8 @@ def approve_assessment_guide(exam_id: str, payload: AssessmentGuideApprovalReque
         raise HTTPException(422, 'Confirm that you reviewed the whole guide before approval.')
     exam = _guide_exam(db, exam_id, user)
     try:
-        changed = approve_guide(db, exam, user, payload.review_token)
+        changed = approve_guide(db, exam, user, payload.review_token,
+            approve_selected_sources=payload.approve_selected_sources)
         record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
             action='assessment_guide_approved', entity_type='exam', entity_id=exam.id,
             details={'review_token':payload.review_token, 'approved_version_ids':changed})
@@ -275,6 +277,8 @@ def create_draft_rubric_version(
             from services.account_settings_service import apply_to_new_draft
             rubric = apply_to_new_draft(db, user, rubric)
             rubric = rubric.model_dump() if hasattr(rubric, 'model_dump') else rubric
+            if 'question_definition' in payload.rubric:
+                rubric = {**rubric, 'question_definition':payload.rubric['question_definition']}
         return create_rubric_version(
             question=question,
             rubric_json=rubric,

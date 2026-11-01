@@ -156,6 +156,8 @@ def definition_errors(question, rubric):
 def assessment_readiness(db, exam_id):
     questions = db.query(Question).filter(Question.exam_id == exam_id).order_by(
         Question.order_index, Question.question_number).all()
+    from services.grading_scope_service import active_questions
+    questions = active_questions(questions)
     # Bulk reads keep a large assessment from generating one query per question.
     all_versions = db.query(RubricVersion).join(
         Question, RubricVersion.question_id == Question.id).filter(Question.exam_id == exam_id).all()

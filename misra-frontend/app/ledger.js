@@ -41,7 +41,7 @@
     if(currentView!=='papers') query.set('view',currentView); const job=window.MisraLedgerWorkflows?.currentJobId();if(job) query.set('job_id',job);
     history.replaceState(null,'',`${location.pathname}?${query}`);
   }
-  function nativeLink(file, values={}) { return `${file==='submission'?'extraction':file==='grade-results'?'history':file}.html?${new URLSearchParams({exam_id:examId,...values,submission_id:values.id||paperId})}`; }
+  function nativeLink(file, values={}) { const context=file==='submission'&&questionId?{question_id:questionId,...(currentRow()?.sources?.[0]?.id?{source_id:currentRow().sources[0].id}:{})}:{};return `${file==='submission'?'extraction':file==='grade-results'?'history':file}.html?${new URLSearchParams({exam_id:examId,...context,...values,submission_id:values.id||paperId})}`; }
   function renderAssessments() {
     const query = $('assessment-search').value.trim().toLowerCase();
     const visible = exams.filter(e=>`${e.title} ${e.course_code || ''}`.toLowerCase().includes(query));
@@ -57,6 +57,7 @@
     if (p.readiness?.bulk_grading_allowed) return {label:'Ready to grade',kind:''};
     return {label:'Check extraction',kind:'warning'};
   }
+  function paperRoute(id){const paper=papers.find(p=>p.id===id),summary=paper?.grading_summary;return paper&&paper.status!=='graded'&&!summary?.complete&&!summary?.graded_count&&!summary?.review_count?'extraction':'grading';}
   function renderPapers() {
     updateNextAction();
     const query = $('paper-search').value.trim().toLowerCase();
@@ -67,7 +68,7 @@
     }
     const markup=`<table class="paper-table"><thead><tr><th scope="col">Student</th><th scope="col">Status</th><th scope="col">Recorded grade</th><th scope="col">Next action</th></tr></thead><tbody>${visible.map(p=> {
       const state=paperState(p), summary=p.grading_summary;
-      const label=state.kind==='processing' ? 'View progress' : summary?.review_count ? 'Review grade' : summary?.complete ? 'View results' : 'Open paper';
+      const label=state.kind==='processing' ? 'View progress' : summary?.review_count ? 'Review grade' : summary?.complete ? 'View results' : summary?.graded_count ? 'Continue grading' : 'Check extraction';
       return `<tr class="${p.id===paperId ? 'selected' : ''}"><td><strong>${esc(p.extracted_student_name || 'Name missing')}</strong><small class="muted"><br>${esc(p.extracted_student_number || 'Student number missing')}</small></td><td><span class="status ${state.kind}" data-i18n>${esc(state.label)}</span><small class="muted"><br>${number(p.page_count)} pages${summary && !summary.complete && summary.graded_count ? ` · ${summary.graded_count}/${summary.expected_count} graded` : ''}</small></td><td class="score">${summary?.recorded_score != null ? `${number(summary.recorded_score)} / ${number(summary.max_score)}` : '—'}</td><td><button type="button" data-paper="${esc(p.id)}" class="${p.id===paperId ? 'primary' : ''}">${label}</button></td></tr>`;
     }).join('')}</tbody></table>`;
     writePaperMarkup(markup);
@@ -116,7 +117,9 @@
     $('paper-viewport').innerHTML='<div class="empty"><p>Select a paper to view the full original page.</p></div>';
   }
   async function choosePaper(id,{initial=false,unguarded=false}={}) {
-    if (!unguarded && !canLeave()) return;
+    if (!unguarded && !canLeave(paperRoute(id)==='extraction')) return;
+    const selectedPaper=papers.find(paper=>paper.id===id);
+    if(!initial&&!unguarded&&selectedPaper&&paperRoute(id)==='extraction'){dirty=identityDirty=false;location.href=nativeLink('submission',{id,question_id:'',source_id:''});return;}
     const previousQuestion=questionId, previousPage=pageIndex, retained=paperId===id && Boolean(results);
     const current=++paperEpoch, examCurrent=epoch; ++locationEpoch;
     paperId=id; dirty=identityDirty=false; clearError(); renderPapers();
@@ -136,7 +139,7 @@
       return true;
     } catch (error) { if (current===paperEpoch && examCurrent===epoch) { showError(error.message); if(!retained) $('question-detail').innerHTML='<div class="empty"><button type="button" data-reload-paper>Reload saved paper</button></div>'; else { const button=document.createElement('button'); button.type='button';button.dataset.reloadPaper='';button.textContent='Reload saved paper';$('error').append(' ',button); } } return false; }
   }
-  function renderQuestion() {
+  function renderQuestion(revealSelected=false) {
     const row=currentRow(), answer=currentAnswer(), pack=answer?.grading_raw_response?.grading_package;
     const pageCount=Number(extraction?.submission.page_count) || 0;
     $('paper-name').textContent=extraction?.submission.extracted_student_name || 'Name missing';
@@ -166,19 +169,19 @@
       ${verification?.summary ? `<details class="question-more"><summary>Verification findings</summary><p dir="auto">${esc(verification.summary)}</p>${(verification.criteria||[]).map(c=>`<p><strong>${esc(definitions.get(c.criterion_id)?.title||c.criterion_id)}</strong>: ${esc(c.explanation)}</p>`).join('')}</details>`:''}
       <div class="decision-context"><div><h3>Source context</h3>${refs?.scope_version_id || refs?.scope_version_number ? `<p>${refs.scope_origin==='assessment' ? 'Assessment default' : 'Question sources'} · ${(refs.passages || []).map(r=>`${esc(r.title)} · p${Number(r.page_index)+1}`).join('; ')}</p>` : '<p class="muted">No course-source snapshot recorded for this run.</p>'}</div><div><h3>Marking guide used</h3><p dir="auto">${excerpt(pack?.answer_key?.mode==='no_fixed_answer' ? 'No fixed answer. Evaluate against the approved criteria.' : pack?.answer_key?.reference_text || pack?.answer_key?.text || (pack?.rubric?.criteria || []).map(c=>c.description).filter(Boolean).join(' ')) || 'No marking-guide excerpt recorded. Inspect the retained rules below.'}</p></div></div>
       ${criteria.length ? `<table class="criteria-table"><thead><tr><th>Criterion</th><th>Mark</th><th>AI feedback</th></tr></thead><tbody>${criteria.map(c=>`<tr><td><strong>${esc(definitions.get(c.criterion_id)?.title || definitions.get(c.criterion_id)?.description || 'Recorded criterion')}</strong><small>${esc(definitions.get(c.criterion_id)?.description || '')}</small></td><td class="score">${number(human.get(c.criterion_id)?.points_earned ?? c.points_earned)} / ${number(c.max_points)}${human.has(c.criterion_id) ? '<small>Instructor mark</small>' : ''}</td><td class="criterion-feedback">${esc(c.feedback)}${c.uncertainties?.length ? `<p class="muted">${esc(c.uncertainties.join('; '))}</p>` : ''}</td></tr>`).join('')}</tbody></table>` : `<div class="question-more"><p>${answer ? 'This answer has not been graded yet.' : 'No extracted answer is mapped to this question.'}</p></div>`}
-      <div class="question-more">${policyBrief ? `<div class="rationale-preview"><h3>Scoring policy used</h3><p dir="auto">${excerpt(policyBrief)}</p></div>` : ''}<div class="rationale-preview"><h3>Why the AI awarded these marks</h3><p dir="auto">${excerpt(answer?.reasoning || answer?.feedback) || 'No recorded rationale yet.'}</p></div>${row.mapping_flags?.length ? `<p class="notice">${esc(row.mapping_flags.map(f=>f.message).join(' '))} <a href="${nativeLink('submission',{id:paperId})}">Check the highlighted evidence in full extraction</a></p>` : ''}
+      <div class="question-more">${policyBrief ? `<div class="rationale-preview"><h3>Scoring policy used</h3><p dir="auto">${excerpt(policyBrief)}</p></div>` : ''}<div class="rationale-preview"><h3>Why the AI awarded these marks</h3><p dir="auto">${excerpt(answer?.reasoning || answer?.feedback) || 'No recorded rationale yet.'}</p></div>${row.mapping_flags?.length ? `<p class="notice">${esc(row.mapping_flags.map(f=>f.message).join(' '))} <a href="${nativeLink('submission',{id:paperId})}">Check this answer in Extraction</a></p>` : ''}
       ${extraction.grading_scope?.kind==='paper_only' ? '<p class="notice">Paper component only. External practical questions are excluded—not scored as zero.</p>' : ''}
       <details><summary>Extracted answer</summary><pre dir="auto">${esc(revisions.length?(row.sources||[]).map(source=>source.area_revision?.text??source.extracted_text).join('\n'):answer?.raw_ocr_text || row.answer?.raw_ocr_text || 'No extracted answer recorded.')}</pre></details>
       <details><summary>Approved rules &amp; references used</summary>${pack ? `<p>Rubric and policy version ${esc(pack.rubric_version_id || 'legacy')} · ${refs?.scope_origin==='assessment' ? 'Assessment default' : 'Question sources'} ${refs?.scope_version_number ? `revision ${refs.scope_version_number}` : ''}</p>${(refs?.passages || []).map(r=>`<details><summary>${esc(r.title)} · revision ${number(r.material_version_number)} · document page ${Number(r.page_index)+1}</summary><pre dir="auto">${esc(r.text)}</pre></details>`).join('')}<details><summary>Answer key &amp; scoring policy</summary><pre>${esc(JSON.stringify({answer_key:pack.answer_key,policy:pack.policy},null,2))}</pre></details>` : '<p>This older run has no complete package snapshot. Open history in Exams for retained records.</p>'}</details>
       <details><summary>AI rationale</summary><p dir="auto">${esc(answer?.reasoning || answer?.feedback || 'No rationale recorded.')}</p></details>
       <a href="${nativeLink('grade-results',{id:paperId})}">Full grading history and review tools</a></div>`;
     window.MisraTeaching?.showEvidence(pack,criteria);
-    $('question-select').addEventListener('change',event=>{ const selected=event.target.value; if (!canLeave()) { event.target.value=questionId; return; } dirty=false; questionId=selected; renderQuestion(); syncURL(); });
+    $('question-select').addEventListener('change',event=>{ const selected=event.target.value; if (!canLeave()) { event.target.value=questionId; return; } dirty=false; questionId=selected; renderQuestion(true); syncURL(); });
     if (pageCount>0) {
       $('page-controls').hidden=false;
       $('viewer-tools').hidden=false;
       $('page-select').innerHTML=Array.from({length:pageCount},(_,n)=>`<option value="${n}">Page ${n+1} of ${pageCount}</option>`).join('');
-      showPage(pageIndex);
+      showPage(pageIndex,revealSelected);
     }
     renderEditor(answer,criteria,definitions,human);
   }
@@ -204,7 +207,7 @@
     $(view==='setup' ? 'sources-link' : view==='insights' ? 'insights-link' : view==='export' ? 'export-link' : 'papers-tab').setAttribute('aria-current','page');
     syncURL();
   }
-  async function showPage(index) {
+  async function showPage(index,revealSelected=false) {
     const count=Number(extraction?.submission.page_count)||0;
     if (!Number.isInteger(index) || index<0 || index>=count || !paperId) return;
     if(window.MisraPaperHighlights?.canLeave()===false){$('page-select').value=String(pageIndex);return;}
@@ -215,11 +218,12 @@
     const img=$('original-paper');
     setZoom(zoom);
     img.addEventListener('error',()=>{if(current===locationEpoch) $('paper-viewport').innerHTML='<div class="empty"><p>Original page could not load.</p><button type="button" data-reload-page>Reload this page</button></div>';});
-    $('location-note').textContent='Full original page. Locating evidence does not verify the grade.';
-    const sources=(currentRow()?.sources || []).filter(s=>s.page_index===index);
-    let locations={}; try { locations=await MisraEvidence.pageLocations(selectedPaper,index); } catch (_) { /* Honest OCR fallback; the full original remains visible. */ }
+    $('location-note').textContent=window.MisraLocale?.text('Loading saved answer locations…')||'Loading saved answer locations…';
+    $('evidence-boxes').setAttribute('aria-busy','true');
+    const sources=(currentRow()?.sources || []).filter(s=>s.page_index===index).map(source=>({...source,question_number:currentRow().question.question_number}));
+    let locations={},locationsFailed=false; try { locations=await MisraEvidence.pageLocations(selectedPaper,index); } catch (_) { locationsFailed=true; }
     if (current!==locationEpoch || selectedPaper!==paperId || !$('evidence-boxes')) return;
-    MisraPaperHighlights.mount({paperId:selectedPaper,pageIndex:index,sources,locations,editable:false,extractionUrl:nativeLink('submission',{id:paperId}),canEdit:()=>!busy&&!identityBusy});
+    MisraPaperHighlights.mount({paperId:selectedPaper,pageIndex:index,sources,locations,locationsFailed,revealSelected,editable:false,extractionUrl:nativeLink('submission',{id:paperId}),canEdit:()=>!busy&&!identityBusy,onRetryLocations:()=>showPage(index,true),onRetryImage:()=>showPage(index,true)});
   }
   function setZoom(value) {
     zoom=Math.min(300,Math.max(100,value));
@@ -356,7 +360,7 @@
   window.addEventListener('misra:ledger-task',event=>setView(event.detail.view));
   window.addEventListener('misra:ledger-url-changed',syncURL);
   window.addEventListener('misra:ledger-jobs-changed',()=>{Promise.all([refreshPapers(),loadJobs()]).catch(()=>{jobsUnavailable=true;renderJobs();});});
-  $('previous-page').addEventListener('click',()=>showPage(pageIndex-1)); $('next-page').addEventListener('click',()=>showPage(pageIndex+1)); $('page-select').addEventListener('change',event=>showPage(Number(event.target.value)));
+  $('previous-page').addEventListener('click',()=>showPage(pageIndex-1,true)); $('next-page').addEventListener('click',()=>showPage(pageIndex+1,true)); $('page-select').addEventListener('change',event=>showPage(Number(event.target.value),true));
   $('zoom-in').addEventListener('click',()=>setZoom(zoom+25)); $('zoom-out').addEventListener('click',()=>setZoom(zoom-25)); $('fit-paper').addEventListener('click',()=>setZoom(100));
   $('expand-paper').addEventListener('click',()=>{ $('expanded-viewer-host').append($('paper-viewer')); $('expand-paper').hidden=true; $('expanded-paper').showModal(); });
   $('close-paper').addEventListener('click',()=>$('expanded-paper').close());
@@ -371,6 +375,6 @@
   window.addEventListener('storage',event=>{if(event.key==='misra-theme') applyPreference();});
   $('theme').addEventListener('click',()=>{const value=document.documentElement.dataset.theme==='dark' ? 'light' : 'dark';theme(value);try{localStorage.setItem('misra-theme',value);}catch(_){}});
   $('sign-out').addEventListener('click',async()=>{if(!canLeave(true)) return;busy=true;$('sign-out').disabled=true;try{await MisraAPI.logout();busy=dirty=false;location.replace('login.html');}catch(error){showError(error.message);busy=false;$('sign-out').disabled=false;}});
-  window.MisraLedger={canLeave,nextAction:()=>nextAction};
+  window.MisraLedger={canLeave,nextAction:()=>nextAction,paperRoute};
   (async()=>{try{const user=await MisraAPI.currentUser();if(user.must_change_password){location.replace('account.html?required=1');return;}const values=await MisraAPI.exams();if(!Array.isArray(values)) throw new Error('Assessment list is incomplete.');exams=values;renderAssessments();const selected=exams.find(e=>e.id===params.get('exam_id')) || exams[0];if(selected) await chooseExam(selected.id,{initial:true});else {$('exam-context').textContent='Create your first assessment to start.';$('paper-list').innerHTML='<a class="button primary" href="assessments.html">Create assessment</a>';}}catch(error){showError(error.status===401 ? 'Sign in to open your private instructor workspace.' : error.message);}})();
 })();

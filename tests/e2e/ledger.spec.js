@@ -37,6 +37,62 @@ async function fixture(page,{failSave=false,delayPaper=false,blockGrading=false,
   return writes;
 }
 
+test('grading location failure offers a read-only retry without losing instructor marks',async({page},info)=>{
+  const writes=await fixture(page);let fail=true;
+  await page.route('**/api/submissions/s/source-locations*',route=>fail?route.fulfill({status:503,json:{detail:'Synthetic saved-location outage'}}):route.fulfill({json:{page_index:1,sources:{src1:{status:'located',method:'native_pdf_text',bounding_box:{x:.06,y:.18,width:.8,height:.23}}}}}));
+  await page.locator('#instructor-score').fill('1.75');
+  await page.locator('#page-select').selectOption('0');await page.locator('#page-select').selectOption('1');
+  await page.screenshot({path:`.impeccable/review/usability-20261026/grading-location-initial-${info.project.name}.png`,fullPage:true});
+  await expect(page.locator('#highlight-status')).toContainText('could not load');
+  await expect(page.locator('.evidence-box')).toHaveCount(0);
+  fail=false;await page.locator('#retry-locations').focus();await page.keyboard.press('Enter');
+  await expect(page.locator('.evidence-box.active')).toHaveCount(1);
+  await expect(page.locator('#reveal-highlight')).toBeFocused();
+  await expect(page.locator('#instructor-score')).toHaveValue('1.75');
+  await page.locator('#toggle-highlights').click();await expect(page.locator('#evidence-boxes')).toBeHidden();
+  await page.locator('#reveal-highlight').click();await expect(page.locator('#evidence-boxes')).toBeVisible();
+  for(const theme of ['light','dark'])for(const language of ['en','ar']){
+    if(await page.locator('html').getAttribute('data-theme')!==theme)await page.locator('#theme').click();
+    await page.evaluate(language=>{localStorage.setItem('misra-language',language);MisraLocale.apply();window.dispatchEvent(new Event('misra:language'));},language);
+    await page.screenshot({path:`.impeccable/review/usability-20261026/grading-location-${theme}-${language}-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  }
+  expect(writes).toHaveLength(0);
+});
+
+test('late grading locations cannot replace the active original page',async({page})=>{
+  await fixture(page);let release;const gate=new Promise(resolve=>release=resolve);
+  await page.route('**/api/submissions/s/source-locations*',async route=>{
+    const index=Number(new URL(route.request().url()).searchParams.get('page_index'));if(index===0)await gate;
+    await route.fulfill({json:{page_index:index,sources:{['src'+index]:{status:'located',method:'native_pdf_text',bounding_box:{x:.06,y:index===0?.7:.18,width:.8,height:.1}}}}});
+  });
+  await page.locator('#page-select').selectOption('0');await expect(page.locator('.evidence-box')).toHaveCount(0);
+  await page.locator('#page-select').selectOption('1');await expect(page.locator('.evidence-box')).toHaveAttribute('style',/top:18%/);
+  release();await expect(page.locator('.evidence-box')).toHaveAttribute('data-source-id','src1');
+  await expect(page.locator('#page-select')).toHaveValue('1');
+});
+
+test('ungraded papers open the complete extraction editor while grading links retain question context',async({page})=>{
+  await fixture(page);
+  await expect(page.locator('#original-link')).toHaveAttribute('href',/question_id=q2/);
+  await expect(page.locator('#original-link')).toHaveAttribute('href',/source_id=src1/);
+  if(!await page.locator('#paper-picker').evaluate(el=>el.open))await page.locator('#paper-picker summary').click();
+  await expect(page.locator('[data-paper="other"]')).toHaveText('Check extraction');
+  await page.locator('[data-paper="other"]').click();
+  await expect(page).toHaveURL(/extraction.html\?.*submission_id=other/);
+  await expect(page.locator('#mapping-host .extraction-item')).toHaveCount(2);
+  await expect(page.locator('#reading-question option')).toHaveCount(2);
+});
+
+test('opening extraction preserves a cancelled instructor draft and discards it only on confirmation',async({page})=>{
+  const writes=await fixture(page);await page.locator('#instructor-score').fill('1.75');
+  if(!await page.locator('#paper-picker').evaluate(el=>el.open))await page.locator('#paper-picker summary').click();
+  page.once('dialog',dialog=>dialog.dismiss());await page.locator('[data-paper="other"]').click();
+  await expect(page.locator('#instructor-score')).toHaveValue('1.75');await expect(page).toHaveURL(/index.html/);
+  let dialogs=0;page.on('dialog',dialog=>{dialogs++;dialog.accept();});await page.locator('[data-paper="other"]').click();
+  await expect(page).toHaveURL(/extraction.html\?.*submission_id=other/);expect(dialogs).toBe(1);expect(writes).toHaveLength(0);
+});
+
 test('ledger puts real criterion titles, saved references and full paper beside grade controls',async({page},info)=>{
   await fixture(page);
   await expect(page.locator('.criteria-table')).toContainText('Formula');
@@ -170,7 +226,7 @@ test('a late paper response cannot replace a newly selected assessment',async({p
 });
 
 test('unsafe extraction blocks grading and native setup tools remain accessible',async({page})=>{
-  await fixture(page,{blockGrading:true});await page.locator('[data-paper="other"]').click();
+  await fixture(page,{blockGrading:true});await page.goto('/app/index.html?exam_id=e&submission_id=other');
   await expect(page.getByRole('button',{name:'Grade paper with AI'})).toBeDisabled();
   await expect(page.locator('#grade-editor')).toContainText('coverage needs checking');
   await page.locator('#sources-link').click();
@@ -252,7 +308,7 @@ test('per-paper and per-question rectangles scale with different page shapes and
   await page.locator('#question-select').selectOption('q2');
   await aligned({x:.2,y:.6,width:.5,height:.15});
   await page.locator('#zoom-in').click();await aligned({x:.2,y:.6,width:.5,height:.15});
-  await page.locator('[data-paper="other"]').click();await page.locator('#question-select').selectOption('q2');
+  await page.goto('/app/grading.html?exam_id=e&submission_id=other&question_id=q2');await expect(page.locator('#question-select')).toHaveValue('q2');
   await aligned({x:.1,y:.35,width:.8,height:.2});
   for(const theme of ['light','dark']){
     const wanted=await page.locator('html').getAttribute('data-theme');if(wanted!==theme)await page.locator('#theme').click();
