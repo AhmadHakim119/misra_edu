@@ -1,0 +1,11 @@
+# Optional isolated research environment; not application runtime requirements.
+bert-score==0.3.13
+rouge-score==0.1.2
+nltk==3.9.2
+rake-nltk==1.0.6
+sentencepiece==0.2.1
+transformers==4.57.3
+torch==2.11.0
+numpy==1.26.4
+scikit-learn==1.7.2
+pydantic==2.13.3

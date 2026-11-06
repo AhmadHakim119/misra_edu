@@ -27,6 +27,8 @@ desktop.ini
 /.tmp_doc_review/
 /output/
 /.cache/
+/.chart-data-*/
+/midterm_report/
 
 # Provisioned neural weights are local assets, not source code.
 *.safetensors
@@ -81,6 +83,7 @@ docs/MISRA_EDU_Redis_RQ_Admin_Operations_Explained.docx
 docs/research/
 private/
 evaluation-artifacts/
+/misra_reworked_backend/SOFTWARE_TESTING_EXPERIMENT.md
 # Database backups contain records; only the schema belongs in Git.
 database/*.sql
 !database/schema.sql

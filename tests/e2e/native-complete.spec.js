@@ -90,9 +90,65 @@ test('approved guide can be reopened without discarding its saved criteria',asyn
 
 test('dashboard, history and reviews use real API-shaped records with native destinations',async({page},info)=>{
   await fixture(page);await page.goto('/app/dashboard.html');await expect(page.locator('#dashboard-exams')).toContainText('Synthetic physics exam');await expect(page.locator('#dashboard-summary')).toContainText('Awaiting review');
-  await page.screenshot({path:`.impeccable/review/native-dashboard-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#app-language').click();await expect(page.locator('html')).toHaveAttribute('dir','rtl');await page.locator('#app-theme').click();await page.screenshot({path:`.impeccable/review/native-dashboard-rtl-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  const exams=page.locator('#dashboard-exams');
+  expect(await exams.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+  await page.screenshot({path:`.impeccable/review/native-dashboard-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  await page.locator('#app-language').click();
+  await expect(page.locator('html')).toHaveAttribute('dir','rtl');
+  await page.locator('#app-theme').click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme','dark');
+  await expect(exams.getByRole('link',{name:'فتح الاختبار'})).toBeVisible();
+  expect(await exams.evaluate(el=>el.scrollWidth<=el.clientWidth)).toBe(true);
+  await page.screenshot({path:`.impeccable/review/native-dashboard-rtl-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
   await page.goto('/app/reviews.html?exam_id=e');await expect(page.locator('#review-list')).toContainText('Synthetic student');await expect(page.locator('#review-list a')).toHaveAttribute('href',/grading.html/);
   await page.goto('/app/history.html?exam_id=e&submission_id=s');await expect(page.locator('#history-left')).toContainText('synthetic-model');await expect(page.locator('#history-right')).toContainText('1 / 2');await expect(page.locator('a[href*="/pages/"]')).toHaveCount(0);
+});
+
+test('dashboard exam search and refresh distinguish empty results from unavailable data',async({page})=>{
+  const state=await fixture(page);
+  let examResponse='unavailable';
+  await page.route('**/api/exams',route=>{
+    if(examResponse==='unavailable')return route.fulfill({status:503,json:{detail:'Synthetic outage'}});
+    if(examResponse==='empty')return route.fulfill({json:[]});
+    return route.fallback();
+  });
+  await page.goto('/app/dashboard.html');
+  const list=page.locator('#dashboard-exams');
+  const search=page.getByRole('searchbox',{name:'Find an exam'});
+  const refresh=page.getByRole('button',{name:'Refresh',exact:true});
+  const error=page.locator('#dashboard-error');
+  await expect(error).toContainText('Use Refresh to try again');
+  await expect(list).toBeEmpty();
+
+  examResponse='available';
+  await refresh.click();
+  const openExam=list.getByRole('link',{name:'Open exam'});
+  await expect(openExam).toHaveAttribute('href','grading.html?exam_id=e');
+  await expect(list.getByRole('link')).toHaveCount(1);
+  await search.fill('  test  ');
+  await expect(openExam).toBeVisible();
+  await search.fill('no matching exam');
+  await expect(list.getByRole('heading')).toHaveText('No exams match your search');
+  await expect(list.getByRole('link',{name:'Create exam'})).toHaveCount(0);
+  await list.getByRole('button',{name:'Clear search'}).click();
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue('');
+  await expect(openExam).toBeVisible();
+
+  examResponse='unavailable';
+  await refresh.click();
+  await expect(error).toContainText('Showing the last loaded exams');
+  await expect(openExam).toBeVisible();
+  examResponse='empty';
+  await refresh.click();
+  await expect(error).toBeEmpty();
+  await expect(list.getByRole('link',{name:'Create exam'})).toBeVisible();
+
+  examResponse='available';
+  await refresh.click();
+  await openExam.click();
+  await expect(page.locator('#next-action')).toHaveText('Review next paper');
+  expect(state.writes).toEqual([]);
 });
 
 test('removed exam question keeps accessible read-only grading history',async({page},info)=>{
