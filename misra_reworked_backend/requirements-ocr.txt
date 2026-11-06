@@ -1,0 +1,9 @@
+# Optional isolated OCR experiment. Does not change the application's provider.
+paddlepaddle==3.2.2
+paddleocr==3.4.1
+paddlex==3.4.3
+numpy==1.26.4
+pandas==2.2.3
+Pillow==12.1.1
+pypdf==6.16.1
+pydantic==2.13.3
