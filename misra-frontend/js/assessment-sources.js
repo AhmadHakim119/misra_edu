@@ -1,6 +1,8 @@
 /* Assessment defaults are versioned approvals, not automatically inferred rules. */
 (function () {
   'use strict';
+  const routeScope = window.MisraWorkspace?.page;
+  const onWindow = (...args) => routeScope ? routeScope.listen(window, ...args) : window.addEventListener(...args);
   const native = /\/(?:next|app)\//.test(location.pathname);
   const esc = value => MisraUI.escapeHTML(String(value ?? ''));
   const host = document.getElementById('assessment-sources-host');
@@ -152,12 +154,13 @@
     ++epoch; examId=courseId=''; materials=[]; data=null;rows=[];dirty=loading=false;error=notice='';summaryPending=false;
     host.innerHTML='<p>Choose an assessment to configure its shared references.</p>'; host.setAttribute('aria-busy','false'); return true;
   }
+  routeScope?.guard(() => busy, hasUnsaved);
   window.MisraAssessmentSources = {hasUnsaved, canLeave, isBusy:()=>busy,reload:()=>load(examId,courseId),async saveDraft(options={}){if(dirty && !busy)await save(false,native && options.allowPendingSources===true);return !hasUnsaved();},reset,
     selection(){capture();return {ready:!loading&&Boolean(data),mode,bindings:rows.map(row=>{const choice=choices().find(({v})=>v.id===row.version_id);if(!choice)throw Error('Finish the existing source selection before choosing chapters.');return {version_id:row.version_id,page_indices:pages(row.pages,choice.v,native),criterion_id:null,chunk_ids:[]};})};},
     chooseChapters(bindings,nextMode){if(loading||busy||!data)return false;rows=bindings.map(b=>({version_id:b.version_id,pages:b.page_indices.map(n=>n+1).join(', ')}));mode=nextMode;dirty=true;notice='';error='';render();return true;}
   };
-  window.addEventListener('misra:assessment-loaded', event => load(event.detail.examId,event.detail.courseId));
-  window.addEventListener('misra:material-approved', () => { if (!hasUnsaved()) load(examId,courseId); });
-  window.addEventListener('misra:question-sources-approved', event => { if (event.detail.examId === examId) refreshSummary(); });
-  window.addEventListener('beforeunload', event => { if (hasUnsaved()) { event.preventDefault(); event.returnValue=''; } });
+  onWindow('misra:assessment-loaded', event => load(event.detail.examId,event.detail.courseId));
+  onWindow('misra:material-approved', () => { if (!hasUnsaved()) load(examId,courseId); });
+  onWindow('misra:question-sources-approved', event => { if (event.detail.examId === examId) refreshSummary(); });
+  onWindow('beforeunload', event => { if (hasUnsaved()) { event.preventDefault(); event.returnValue=''; } });
 })();

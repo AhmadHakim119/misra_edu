@@ -167,15 +167,25 @@ body[data-page=extraction] #identity-form { display:grid;gap:16px;padding-top:16
 .settings-page #native-themes { display:flex;flex-wrap:wrap;gap:12px 24px;border:0;padding:0;margin:0; }
 .settings-page #native-themes legend { margin-bottom:12px;color:var(--muted);font-size:14px; }
 .settings-page #native-themes .check-row { margin:0; }
-.settings-page #native-ai-status { margin:0 0 8px; }
-.settings-page #native-ai-agents .record-row { display:grid;grid-template-columns:minmax(0,1.4fr) minmax(220px,1fr);align-items:start;gap:24px;padding-block:20px; }
-.settings-page #native-ai-agents h3 { font-size:16px; }
-.settings-page #native-ai-agents p { margin:8px 0 0; }
-.settings-page #native-ai-agents .record-row>p { margin:0;font-size:14px;overflow-wrap:anywhere; }
-.settings-page #native-ai-agents .record-row:last-child { border-bottom:0;padding-bottom:0; }
+.settings-page #inference-settings-form { max-width:660px; }
+.settings-page #inference-profile { display:grid;gap:8px;border:0;padding:0;margin:0;min-inline-size:0; }
+.settings-page #inference-profile legend { padding:0;margin-block-end:8px;font-weight:600; }
+.settings-page #inference-profile label { display:flex;align-items:center;gap:10px;margin:0;padding:9px 12px;min-height:44px;border:1px solid var(--line);border-radius:8px;background:var(--surface);cursor:pointer; }
+.settings-page #inference-profile label:has(:checked) { border-color:var(--accent);background:var(--active); }
+.settings-page #inference-profile label:has(:disabled) { cursor:default;color:var(--muted); }
+.settings-page #inference-profile input { width:16px;height:16px;margin:0;flex:none; }
+.settings-page #inference-active { margin-block:10px 14px; }
+.settings-page .settings-models { margin-block:18px 12px; }
+.settings-page .settings-models h3 { font-size:16px; }
+.settings-page #native-ai-agents { margin-block:8px 0; }
+.settings-page #native-ai-agents > div { display:grid;grid-template-columns:minmax(112px,1fr) minmax(0,2fr);gap:6px 16px;border-block-start:1px solid var(--line);padding-block:8px;font-size:14px; }
+.settings-page #native-ai-agents dt { font-weight:600; }
+.settings-page #native-ai-agents dd { margin:0;overflow-wrap:anywhere; }
+.settings-page #native-ai-agents dd span { display:block;color:var(--muted);font-size:13px; }
+.settings-page #inference-local-notes p { margin-block:8px; }
 .settings-page #native-settings-status:empty { display:none; }
 .settings-page #native-password-form { max-width:560px; }
-@media(max-width:700px) { .settings-page { padding:20px; }.settings-layout { grid-template-columns:minmax(0,1fr);gap:24px; }.settings-navigation { position:static;display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--line);padding-bottom:16px; }.settings-navigation a { padding:8px; }.settings-page #native-ai-agents .record-row { grid-template-columns:minmax(0,1fr);gap:8px; }.survey-reminder { gap:12px; } }
+@media(max-width:700px) { .settings-page { padding:20px; }.settings-layout { grid-template-columns:minmax(0,1fr);gap:24px; }.settings-navigation { position:static;display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--line);padding-bottom:16px; }.settings-navigation a { padding:8px; }.survey-reminder { gap:12px; } }
 @media(min-width:701px) { .author-savebar { top:var(--app-bar-height,64px); }.document-inspector { top:calc(var(--app-bar-height,64px) + 16px); } }
 @media(min-width:1001px) { .assessment-index { top:var(--app-bar-height,64px);height:calc(100vh - var(--app-bar-height,64px)); }.evidence-panel { top:var(--app-bar-height,64px);max-height:calc(100vh - var(--app-bar-height,64px)); } }
 body[data-workspace-page=setup] .app-bar { height:auto;min-height:64px;padding-block:8px; }
@@ -192,9 +202,27 @@ body[data-workspace-page=grading].paper-selected .assessment-next { display:none
 body:is([data-workspace-page=setup],[data-workspace-page=upload],[data-workspace-page=feedback],[data-workspace-page=results]) :is(.assessment-next,#upload-link) { display:none; }
 body[data-workspace-page=grading] .assessment-title { min-height:50px;margin-bottom:16px; }
 body[data-workspace-page=grading] .assessment-title h1 { font-size:24px; }
-body[data-workspace-page=grading] .exam-navigation { padding-top:0;margin-bottom:16px; }
+body[data-workspace-page=grading] .exam-navigation { grid-column:1/-1;margin:0 clamp(14px,2vw,32px); }
 body[data-workspace-page=grading] .question-detail { margin-top:16px; }
 body[data-workspace-page=grading] .paper-section { padding-bottom:0; }
+body[data-workspace-page=grading] .evidence-panel { position:static;max-height:none;overflow:visible; }
+body[data-workspace-page=grading] #paper-viewer .paper-viewport { max-height:clamp(260px,60dvh,780px); }
+#grading-controls { margin-block:16px;padding:16px 20px;border:1px solid var(--line);border-radius:8px;background:var(--surface); }
+#grading-run:not(:empty) { margin-block-end:12px;padding-block-end:12px;border-block-end:1px solid var(--line); }
+#grading-run header,.grading-input-actions { display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px; }
+#grading-run header { justify-content:space-between; }
+#grading-run h2 { font-size:18px; }
+#grading-run progress { display:block;width:100%;height:8px;margin-block-start:10px;accent-color:var(--accent); }
+#grading-run p,#grading-input-form p { margin-block:6px 0;color:var(--muted);font-size:14px; }
+#grading-input-form label { display:block;margin-block-end:6px;font-weight:600; }
+#grading-input-form [role=status] { overflow-wrap:anywhere; }
+#retry-grading-input { margin-block-start:8px; }
+.review-explanation { padding:16px 20px;border-block-end:1px solid var(--line); }
+.review-explanation + .decision-context { padding-block-start:16px; }
+@media(max-width:700px) {
+  #grading-controls { padding:14px; }
+  body[data-workspace-page=grading] .evidence-panel { border-inline:0; }
+}
 html[dir=rtl] .assessment-index { border-right:0;border-left:1px solid var(--line); }
 html[dir=rtl] .evidence-panel { border-left:0;border-right:1px solid var(--line); }
 html[dir=rtl] input[type=number],html[dir=rtl] input[type=email] { direction:ltr;text-align:start; }

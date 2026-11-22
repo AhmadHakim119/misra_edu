@@ -1,6 +1,10 @@
 /* Approved course references. Provider calls happen only when grading, never here. */
 (function () {
   'use strict';
+  const routeScope = window.MisraWorkspace?.page;
+  const cancelTimer = routeScope?.cancelTimer || clearTimeout;
+  const scheduleTimer = routeScope?.later || setTimeout;
+  const onWindow = (...args) => routeScope ? routeScope.listen(window, ...args) : window.addEventListener(...args);
   const escape = value => MisraUI.escapeHTML(String(value ?? ''));
   let host, courseId, questionId, criteria = [], materials = [], scopes = [], bindings = [];
   let mode = 'required', loading = false, busy = false, dirty = false, error = '', notice = '', generation = 0;
@@ -23,14 +27,14 @@
     return !hasUnsaved() || window.confirm('Discard unsaved course-source edits?');
   }
   function reset() {
-    generation++; clearTimeout(timer); host = null; courseId = null; questionId = null;
+    generation++; cancelTimer(timer); host = null; courseId = null; questionId = null;
     materials = []; scopes = []; bindings = []; review = null; page = null; preview = null; effective = null;
     materialForm = { title: '', text: '', file: null };
     revisionFiles = new Map(); disabledControls.clear();
     loading = busy = dirty = pageDirty = false; error = notice = '';
   }
   async function load(course, question, rubricCriteria) {
-    generation++; clearTimeout(timer); courseId = course; questionId = question; criteria = rubricCriteria || [];
+    generation++; cancelTimer(timer); courseId = course; questionId = question; criteria = rubricCriteria || [];
     materials = []; scopes = []; bindings = []; materialForm = { title: '', text: '', file: null };
     revisionFiles = new Map();
     review = page = preview = null; dirty = pageDirty = false; error = notice = ''; loading = true; render();
@@ -147,10 +151,10 @@
     if (request === generation && Array.isArray(library)) materials = library;
   }
   function schedule() {
-    clearTimeout(timer);
+    cancelTimer(timer);
     if (!materials.some(m => m.versions?.some(v => active.has(v.job?.status || v.ingestion_status)))) return;
     const request = generation;
-    timer = setTimeout(async () => {
+    timer = scheduleTimer(async () => {
       if (request !== generation) return;
       if (hasUnsaved()) { schedule(); return; }
       try { await refreshLibrary(request); if (request === generation) { render(); schedule(); } }
@@ -272,11 +276,12 @@
       });
     });
   }
-  window.addEventListener('misra:assessment-sources-approved', async () => {
+  onWindow('misra:assessment-sources-approved', async () => {
     if (!questionId || hasUnsaved()) return;
     const request = generation;
     const value = await MisraAPI.effectiveMaterialScope(questionId).catch(() => null);
     if (request === generation) { effective = value; if (!scopes.some(s => ['draft','approved'].includes(s.status)) && value?.origin === 'assessment') mode = 'inherit'; render(); }
   });
+  routeScope?.guard(() => busy, hasUnsaved);
   window.MisraMaterials = { load, reset, canLeave, hasUnsaved, isBusy: () => busy, async saveDraft(){if(questionId && dirty && !busy)await saveScope(false);return !hasUnsaved();}, mount(element) { preserveBindings(); host = element; render(); } };
 })();

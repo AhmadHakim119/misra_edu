@@ -1,5 +1,8 @@
 (function () {
   'use strict';
+  const routeScope = window.MisraWorkspace?.page;
+  const onDocument = (...args) => routeScope ? routeScope.listen(document, ...args) : document.addEventListener(...args);
+  const onWindow = (...args) => routeScope ? routeScope.listen(window, ...args) : window.addEventListener(...args);
 
   const host = document.getElementById('marking-preferences');
   if (!host) return;
@@ -203,11 +206,12 @@
       error = saveError(requestError);
     } finally { busy = false; render(); }
   }
-  window.addEventListener('beforeunload', event => { if (dirty || busy) { event.preventDefault(); event.returnValue = ''; } });
+  onWindow('beforeunload', event => { if (dirty || busy) { event.preventDefault(); event.returnValue = ''; } });
+  routeScope?.guard(() => busy, () => dirty);
   window.MisraInstructorPreferences={hasUnsaved:()=>dirty,isBusy:()=>busy,current:()=>current};
-  if(native)window.addEventListener('misra:language',()=>{sync();render();});
-  if(native)document.addEventListener('click',event=>{
-    if(!event.target.closest('a,#native-sign-out'))return;
+  if(native)onWindow('misra:language',()=>{sync();render();});
+  if(native)onDocument('click',event=>{
+    if(!event.target.closest('a,#native-sign-out')||routeScope&&(event.target.closest('#native-sign-out')||MisraWorkspace.isSoftLink(event)))return;
     if(busy||dirty&&!confirm(t('Leave without saving your marking preferences?'))){event.preventDefault();event.stopImmediatePropagation();}
   },true);
   Promise.allSettled([

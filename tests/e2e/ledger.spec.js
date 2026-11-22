@@ -1,12 +1,14 @@
 const { test, expect } = require('@playwright/test');
+const {staticWorkspace}=require('./fixtures/static-workspace');
 
 async function fixture(page,{failSave=false,delayPaper=false,blockGrading=false,scanHighlight=false,savedNote='',autoLocation=null,reviewed=false}={}) {
+  await staticWorkspace(page);
   const writes=[];writes.locationStarts=0;let locationRequested=false,locationCompleted=false;
   const locationJob={id:'auto-location',submission_id:'s',job_type:'ocr_submission',operation:'locate_answers',page_index:1,status:'queued'};
   const questions=[{id:'q1',question_number:'1',question_text:'State the formula for work.',max_score:2},{id:'q2',question_number:'2',question_text:'A constant force of 82.0 N moves a box 3.00 m in the direction of the force. What is the work done?',max_score:2}];
   const papers=[{id:'s',exam_id:'e',extracted_student_name:'Pilot B',extracted_student_number:'TEST002',page_count:2,status:'graded',readiness:{bulk_grading_allowed:true},grading_summary:{recorded_score:3.5,max_score:4,complete:true,review_count:1,graded_count:2,expected_count:2}},{id:'other',exam_id:'e',extracted_student_name:'Pilot C',page_count:2,status:'extracted',readiness:{bulk_grading_allowed:!blockGrading},grading_summary:{recorded_score:null,max_score:4,complete:false,review_count:0}}];
   const criteria=[{criterion_id:'formula-id',points_earned:1,max_points:1,feedback:'Correct formula.'},{criterion_id:'calculation-id',points_earned:.5,max_points:1,feedback:'Correct units; arithmetic error.'}];
-  const pack={rubric_version_id:'r',rubric:{criteria:[{id:'formula-id',title:'Formula',description:'Apply W = Fd'},{id:'calculation-id',title:'Calculation & units',description:'Compute 246 J'}]},course_references:{scope_origin:'assessment',scope_version_number:1,passages:[{title:'Chapter 7',text:'W = Fd.',material_version_number:1,page_index:1}]},answer_key:{mode:'reference',reference_text:'W = (82.0 N)(3.00 m) = 246 J.'},policy:{arithmetic_error_policy:'Partial credit for units'}};
+  const pack={rubric_version_id:'r',rubric:{criteria:[{id:'formula-id',title:'Formula',description:'Apply W = Fd'},{id:'calculation-id',title:'Calculation & units',description:'Compute 246 J'}]},course_references:{scope_origin:'assessment',scope_version_number:1,passages:[{title:'Chapter 7',text:'W = Fd.',material_version_number:1,page_index:1}]},answer_key:{mode:'reference',reference_text:'W = (82.0 N)(3.00 m) = 246 J.',alternatives:['0.246 kJ']},policy:{arithmetic_error_policy:'Partial credit for units',custom_instructions:'Accept x_1 as written.'}};
   let answer={id:'a2',review_token:'a'.repeat(64),question_id:'q2',score:1.5,max_score:2,needs_review:true,llm_confidence:79,raw_ocr_text:'W = Fd. W = 82 × 3 = 200 J.',criteria_scores:criteria,reasoning:'Correct method, arithmetic error.',grading_raw_response:{grading_run_id:'run2',grading_package:pack}};
   answer.teacher_notes=savedNote;
   if(reviewed)Object.assign(answer,{needs_review:false,review_status:'overridden',teacher_override_score:2,reviewed_at:'2026-10-23T12:00:00'});
@@ -104,9 +106,16 @@ test('ledger puts real criterion titles, saved references and full paper beside 
   await expect(page.locator('#paper-status')).toContainText('Extraction: ready');
   await expect(page.locator('#paper-status')).toContainText('Grading: complete');
   await expect(page.locator('.decision-context')).toContainText('246 J');
+  const savedPassage=page.locator('.saved-source-passages details').first();
+  await expect(savedPassage.locator('summary')).toContainText('Revision 1');
+  await savedPassage.locator('summary').click();
+  await expect(savedPassage.locator('pre')).toBeVisible();
+  await expect(savedPassage.locator('pre')).toHaveText('W = Fd.');
   await expect(page.locator('.rationale-preview').last()).toContainText('Correct method, arithmetic error.');
   await expect(page.locator('.question-more')).toContainText('Arithmetic errors: Partial credit for units');
   await page.getByText('Approved rules & references used',{exact:true}).click();
+  await expect(page.getByText('0.246 kJ',{exact:true})).toBeVisible();
+  await expect(page.locator('.saved-policy')).toContainText('Accept x_1 as written.');
   await expect(page.locator('#question-detail')).toContainText('Assessment default revision 1');
   await expect(page.locator('#paper-list')).toContainText('3.5 / 4');
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
@@ -228,7 +237,7 @@ test('a late paper response cannot replace a newly selected assessment',async({p
 test('unsafe extraction blocks grading and native setup tools remain accessible',async({page})=>{
   await fixture(page,{blockGrading:true});await page.goto('/app/index.html?exam_id=e&submission_id=other');
   await expect(page.getByRole('button',{name:'Grade paper with AI'})).toBeDisabled();
-  await expect(page.locator('#grade-editor')).toContainText('coverage needs checking');
+  await expect(page.locator('#grading-run')).toContainText('coverage needs checking');
   await page.locator('#sources-link').click();
   await expect(page.locator('#ledger-setup')).toBeVisible();
   await expect(page.locator('#original-studio')).toHaveAttribute('href','setup.html?exam_id=e&tab=sources#import-existing-quiz');

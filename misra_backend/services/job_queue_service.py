@@ -143,6 +143,12 @@ def create_processing_job(
     if existing:
         return existing, False
 
+    from services.inference_profiles import active_profile
+    job_payload = dict(payload or {})
+    job_payload.pop('_inference_profile', None)
+    profile = active_profile()
+    if profile:
+        job_payload['_inference_profile'] = profile
     job = ProcessingJob(
         institution_id=institution_id,
         requested_by=requested_by,
@@ -153,7 +159,7 @@ def create_processing_job(
         progress_total=max(0, progress_total),
         progress_message="Waiting for a worker",
         max_attempts=_max_attempts(),
-        payload=payload or {},
+        payload=job_payload,
     )
     db.add(job)
     db.commit()
@@ -170,8 +176,10 @@ def dispatch_processing_job(job: ProcessingJob, db: Session) -> ProcessingJob:
     # and hyphens so dispatch behaves consistently across RQ versions.
     rq_id = f"misra-{job.id}-{uuid.uuid4()}"
     try:
+        target = ('services.inference_profiles.execute_profile_job' if (job.payload or {}).get('_inference_profile')
+                  else 'services.job_execution_service.execute_processing_job')
         queued = queue_for(job.job_type).enqueue(
-            "services.job_execution_service.execute_processing_job",
+            target,
             job.id,
             job_id=rq_id,
             retry=retry,
@@ -199,6 +207,9 @@ def dispatch_processing_job(job: ProcessingJob, db: Session) -> ProcessingJob:
 def retry_processing_job(job: ProcessingJob, db: Session) -> ProcessingJob:
     if job.status != "failed":
         raise ValueError("Only failed jobs can be retried")
+    from services.inference_profiles import TEXT_ONLY_IMAGE_ERROR
+    if job.job_type == 'grade_submission' and (job.error_message or '').startswith(TEXT_ONLY_IMAGE_ERROR):
+        raise ValueError('This job uses text-only Qwen. Save Qwen Vision in AI services, then open the paper and select Grade with current AI setup.')
     job.status = "retrying"
     job.attempt_count = 0
     job.error_message = None

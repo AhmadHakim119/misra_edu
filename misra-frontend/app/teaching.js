@@ -1,6 +1,7 @@
 /* Teaching material → optional quiz drafts → one guide → learning feedback. */
 (function () {
   'use strict';
+  const routeScope=MisraWorkspace.page;
   const $=id=>document.getElementById(id), esc=value=>MisraUI.escapeHTML(String(value ?? ''));
   const active=new Set(['queued','processing','retrying']);
   let exam='', course='', epoch=0, timer=null, busy=false, dirty=false, uncertain=false, uploadUncertain=false, selected=null, library=[], uploadFiles=[];
@@ -70,8 +71,8 @@
   async function history(){const current=epoch;try{const rows=await MisraAPI.setupImports(exam);if(current!==epoch)return;if(!Array.isArray(rows))throw Error('Saved requests response incomplete.');uncertain=false;$('teaching-history').innerHTML=rows.map(row=>`<p><button type="button" data-quiz-job="${esc(row.job.id)}">${row.origin==='course_source_questions'?'Lecture question proposals':'Existing exam import'} · ${esc(row.job.status)}${row.imported_question_ids?.length?' · drafts added':''}</button></p>`).join('') || '<p>No saved quiz requests yet. You can use your existing questions without generating anything.</p>';
       if(!selected && rows.length && !dirty)watch(rows[0]);}
     catch(e){if(current===epoch)status(`${e.message} Check saved quiz requests to reconnect.`);}}
-  async function watch(data){clearTimeout(timer);selected=data;const current=epoch,id=data?.job?.id;if(!id)return;
-    if(active.has(data.job.status)){status(`${data.job.status.replaceAll('_',' ')} · ${data.job.progress_message || 'Preparing quiz drafts. You may navigate away.'}`);timer=setTimeout(async()=>{try{const value=await MisraAPI.setupImport(exam,id);if(current===epoch && selected?.job.id===id)watch(value);}catch(e){if(current===epoch)status(`${e.message} Processing may continue. Check saved quiz requests; do not upload again.`);}},3000);return;}
+  async function watch(data){routeScope.cancelTimer(timer);selected=data;const current=epoch,id=data?.job?.id;if(!id)return;
+    if(active.has(data.job.status)){status(`${data.job.status.replaceAll('_',' ')} · ${data.job.progress_message || 'Preparing quiz drafts. You may navigate away.'}`);timer=routeScope.later(async()=>{try{const value=await MisraAPI.setupImport(exam,id);if(current===epoch && selected?.job.id===id)watch(value);}catch(e){if(current===epoch)status(`${e.message} Processing may continue. Check saved quiz requests; do not upload again.`);}},3000);return;}
     if(data.job.status==='failed'){status(data.job.error_message || 'Quiz preparation failed.');$('teaching-proposals').innerHTML=`<button type="button" data-retry-quiz="${esc(id)}">Retry saved quiz request</button>`;return;}
     if(data.job.status!=='completed' || !Array.isArray(data.questions)){status('The saved request is not ready. Check saved quiz requests.');return;}
     if(data.imported_question_ids?.length){status('Questions are already added as drafts. Review the whole marking guide and approve once.');$('teaching-proposals').innerHTML='<button type="button" data-guide-step="questions">Open the marking guide</button>';return;}
@@ -89,8 +90,8 @@
     catch(e){if(current===epoch)target.innerHTML=`<p role="alert">${esc(e.message)} Refresh class feedback to retry.</p>`;}}
   function showEvidence(pack,criteria){const table=$('question-detail').querySelector('.criteria-table');if(!table)return;[...table.querySelectorAll('tbody tr')].forEach((row,i)=>{const c=criteria[i],sources=(pack?.course_references?.passages || []).filter(p=>(c.reference_refs || []).includes(p.id));const details=document.createElement('details');details.className='source-trace';details.innerHTML=`<summary>Lecture evidence &amp; student references</summary>${sources.map(p=>`<p><strong>${esc(p.title)} · document page ${p.page_index+1}</strong> <a target="_blank" rel="noopener" href="${esc(MisraAPI.materialDocumentUrl(p.material_id,p.material_version_id))}#page=${p.page_index+1}">Open original source</a></p><p dir="auto">${esc(p.text)}</p>`).join('') || '<p>No course passage was cited for this recorded criterion. This older result is not evidence of lecture-grounded grading.</p>'}<p>Student evidence: ${esc((c.evidence_refs || []).map(id=>{const e=(pack?.student_evidence || []).find(e=>e.id===id);return e?.page_index!=null?`Paper page ${e.page_index+1}${e.segment_index!=null?`, segment ${e.segment_index+1}`:''}`:e?.kind==='combined_ocr'?'Combined extracted answer':id;}).join('; ') || 'No citation recorded')}.</p><p>Applied marking rules: ${esc((c.policy_applied || []).join(', ') || 'No individual policy citation recorded')}.</p><small>Citation identity is validated; academic support still needs instructor review. Saved source versions are preserved.</small>`;row.lastElementChild.append(details);});}
   insightsButton.addEventListener('click',()=>{if(!window.MisraLedgerWorkflows.canLeave())return;window.dispatchEvent(new CustomEvent('misra:ledger-task',{detail:{view:'insights'}}));insights();});$('refresh-insights').addEventListener('click',insights);
-  window.addEventListener('misra:assessment-loaded',e=>{++epoch;clearTimeout(timer);exam=e.detail.examId;course=e.detail.courseId;busy=uncertain=uploadUncertain=false;clearDirty();selected=null;uploadFiles=[];shell();insightsButton.disabled=false;loadLibrary();history();});
-  window.addEventListener('misra:material-approved',()=>{if(!dirty && !busy)loadLibrary();});
-  window.addEventListener('beforeunload',e=>{if(busy || dirty){e.preventDefault();e.returnValue='';}});
+  routeScope.listen(window,'misra:assessment-loaded',e=>{++epoch;routeScope.cancelTimer(timer);exam=e.detail.examId;course=e.detail.courseId;busy=uncertain=uploadUncertain=false;clearDirty();selected=null;uploadFiles=[];shell();insightsButton.disabled=false;loadLibrary();history();});
+  routeScope.listen(window,'misra:material-approved',()=>{if(!dirty && !busy)loadLibrary();});
+  routeScope.listen(window,'beforeunload',e=>{if(busy || dirty){e.preventDefault();e.returnValue='';}});
   window.MisraTeaching={isBusy:()=>busy,hasUnsaved:()=>busy || dirty,canLeave:()=>!busy && (!dirty || confirm('Discard unsaved lecture/quiz edits? Saved background jobs remain available.')),showEvidence,insights};
 })();

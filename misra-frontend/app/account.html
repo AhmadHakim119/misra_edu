@@ -5,8 +5,8 @@
   <title>Settings · MISRA EDU</title><link rel="icon" href="../assets/logo.png">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="ledger.css"><link rel="stylesheet" href="app.css">
-  <script src="../js/app.js" defer></script><script src="../js/api.js" defer></script>
-  <script src="common.js" defer></script><script src="locale.js" defer></script><script src="app-shell.js" defer></script><script src="account.js" defer></script>
+  <link rel="stylesheet" href="workspace-shell.css"><script src="workspace-shell.js" defer></script><script src="../js/app.js" defer></script><script src="../js/api.js" defer></script>
+  <script src="common.js" defer></script><script src="locale.js" defer></script><script src="app-shell.js" defer></script><script src="account.js" defer></script><script src="inference-settings.js" defer></script>
 </head>
 <body>
 <main class="native-page workflow-panel settings-page">
@@ -41,7 +41,31 @@
         </details>
       </section>
       <section id="ai-settings" class="settings-section" aria-labelledby="ai-title">
-        <h2 id="ai-title">AI services</h2><p data-i18n>AI proposes grades. You review and decide the final marks.</p><details><summary>View connected AI roles</summary><p id="native-ai-status" role="status">Reading configured AI services…</p><div id="native-ai-agents"></div></details>
+        <h2 id="ai-title">AI services</h2>
+        <p id="inference-summary" data-i18n>Choose the models for new requests from this browser. Jobs already accepted keep their saved setup.</p>
+        <form id="inference-settings-form">
+          <fieldset id="inference-profile" aria-describedby="inference-summary" disabled>
+            <legend>AI setup</legend>
+            <label><input type="radio" name="inference-profile" value="local_qwen_gemini_v1"><span data-i18n>Local Qwen + Gemini page reading</span></label>
+            <label><input type="radio" name="inference-profile" value="local_qwen_vision_gemini_v1"><span data-i18n>Local Qwen Vision + Gemini page reading</span></label>
+            <label><input type="radio" name="inference-profile" value="configured"><span data-i18n>Server configuration</span></label>
+          </fieldset>
+          <p id="inference-active" class="settings-help" hidden><strong data-i18n>Active setup</strong> · <span id="inference-active-name"></span></p>
+          <p id="inference-error" class="form-error" role="alert"></p>
+          <div class="inline-actions"><button class="primary" id="save-inference-profile" type="submit" disabled>Save AI setup</button><button id="reload-inference-profile" type="button" hidden>Reload AI services</button></div>
+          <p id="inference-save-status" role="status" data-i18n></p>
+          <section class="settings-models" id="inference-models" aria-labelledby="inference-models-title" hidden>
+            <h3 id="inference-models-title">Models in this setup</h3>
+            <dl id="native-ai-agents"></dl>
+          </section>
+          <p id="native-ai-status" class="settings-help" role="status" data-i18n>Reading configured AI services…</p>
+          <div id="inference-local-notes" hidden>
+            <p id="inference-local-capability" class="settings-help"></p>
+            <p class="settings-help" data-i18n>Every local grading proposal is sent for instructor review. Verification stays on. A local failure does not switch to a hosted grader.</p>
+            <button id="check-local-model" type="button" disabled>Check local model</button>
+            <p id="local-model-status" role="status"></p>
+          </div>
+        </form>
       </section>
       <section id="account-settings" class="settings-section" aria-labelledby="account-title">
         <h2 id="account-title">Account</h2><details id="delete-account-panel"><summary class="settings-danger">Delete account</summary>

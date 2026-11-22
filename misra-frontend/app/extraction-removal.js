@@ -1,6 +1,7 @@
 /* Two explicit removal scopes on Extraction. Never deletes originals or grades. */
 (function(){
   'use strict';
+  const routeScope=MisraWorkspace.page;
   const {$,esc,operation}=MisraApp,t=value=>MisraLocale.text(value),dialog=$('extraction-remove-dialog');
   let pending=null,epoch=0,writing=false,opener=null,returnAfterWrite=null;
   function setTitle(value){$('removal-title').textContent=t(value);}
@@ -63,12 +64,12 @@
       finally{writing=false;confirmState();}
     }).then(()=>{if(returnAfterWrite){(returnAfterWrite.isConnected?returnAfterWrite:$('reading-question'))?.focus({preventScroll:true});returnAfterWrite=null;}else if(dialog.open)$('cancel-removal').focus({preventScroll:true});});
   });
-  document.addEventListener('click',event=>{
+  routeScope.listen(document,'click',event=>{
     const source=event.target.closest('[data-exclude-source]'),remove=event.target.closest('[data-remove-question]'),restore=event.target.closest('[data-restore-question]');
     if(source)open(source,'source',source.dataset.excludeSource);
     if(remove)open(remove,'question',remove.dataset.removeQuestion);
     if(restore)open(restore,'question',restore.dataset.restoreQuestion,'restore');
   });
-  window.addEventListener('misra:extraction-rendered',renderRemoved);
+  routeScope.listen(window,'misra:extraction-rendered',renderRemoved);
   renderRemoved();
 })();

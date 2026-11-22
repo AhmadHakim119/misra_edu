@@ -1,1 +1,83 @@
-<!doctype html><html lang="en"><head><title>Dashboard · MISRA</title><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="../assets/logo.png"><link rel="stylesheet" href="ledger.css"><link rel="stylesheet" href="app.css"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap"><script src="../js/app.js" defer></script><script src="../js/api.js" defer></script><script src="common.js" defer></script><script src="locale.js" defer></script><script src="app-shell.js" defer></script><script src="job-status.js" defer></script><script src="dashboard.js" defer></script></head><body><main class="page-main"><header class="page-heading"><div><h1>AI-assisted exam grading</h1><p data-i18n>Prepare your marking guide, upload handwritten papers, then review AI-proposed grades with their evidence.</p></div><a class="button primary" href="assessments.html?create=1" data-i18n="Create exam">Create exam</a></header><dl id="dashboard-summary" class="summary-strip" aria-label="Workspace summary"></dl><section><div class="section-heading"><h2>Your exams</h2><button id="dashboard-refresh" type="button" data-i18n="Refresh">Refresh</button></div><p id="dashboard-error" class="page-error" role="alert" data-i18n></p><label for="dashboard-search">Find an exam</label><input type="search" id="dashboard-search" placeholder="Search exam or course" data-placeholder-en="Search exam or course"><div id="dashboard-exams" class="record-list" role="status" data-i18n>Loading your exams…</div></section><section class="page-section"><div class="section-heading"><h2>Recent activity</h2><a href="activity.html">View all activity</a></div><div id="dashboard-activity"></div></section></main></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dashboard · MISRA</title>
+  <link rel="icon" href="../assets/logo.png">
+  <link rel="stylesheet" href="ledger.css">
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="dashboard.css">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="workspace-shell.css"><script src="workspace-shell.js" defer></script><script src="../js/app.js" defer></script>
+  <script src="../js/api.js" defer></script>
+  <script src="common.js" defer></script>
+  <script src="locale.js" defer></script>
+  <script src="app-shell.js" defer></script>
+  <script src="job-status.js" defer></script>
+  <script src="dashboard.js" defer></script>
+</head>
+<body>
+  <main class="page-main dashboard" id="dashboard-main">
+    <header class="dashboard-heading">
+      <div>
+        <h1>Exam dashboard</h1>
+        <p data-i18n>Find an exam, track paper progress, and review AI-proposed marks.</p>
+      </div>
+      <a class="button primary" href="assessments.html?create=1"><span class="dashboard-plus" aria-hidden="true"></span><span data-i18n>Create exam</span></a>
+    </header>
+
+    <p id="dashboard-error" class="page-error dashboard-error" role="alert" data-i18n></p>
+
+    <div class="dashboard-grid">
+      <section class="dashboard-panel dashboard-exams-panel" aria-labelledby="dashboard-exams-title">
+        <div class="dashboard-panel-heading">
+          <h2 id="dashboard-exams-title">Your exams</h2>
+          <button id="dashboard-refresh" type="button" disabled>Refresh</button>
+        </div>
+        <div class="dashboard-search">
+          <label for="dashboard-search">Find an exam</label>
+          <input type="search" id="dashboard-search" placeholder="Search exam or course" data-placeholder-en="Search exam or course">
+        </div>
+        <p id="dashboard-exam-count" class="dashboard-count" role="status"></p>
+        <div id="dashboard-exams" class="dashboard-exam-list" aria-busy="true">
+          <p data-i18n>Loading your exams…</p>
+        </div>
+      </section>
+
+      <div class="dashboard-side">
+        <section class="dashboard-panel dashboard-review" id="dashboard-review-concerns" aria-labelledby="dashboard-review-title">
+          <div class="dashboard-panel-heading"><h2 id="dashboard-review-title">Review concerns</h2></div>
+          <p id="dashboard-review-state" role="status" data-i18n>Loading review concerns…</p>
+          <div id="dashboard-review-list"></div>
+          <a class="dashboard-panel-link" href="reviews.html" id="dashboard-open-review">Open review queue</a>
+        </section>
+
+        <section class="dashboard-panel dashboard-progress-panel" aria-labelledby="dashboard-progress-title">
+          <div class="dashboard-panel-heading"><h2 id="dashboard-progress-title">Paper progress</h2></div>
+          <p id="dashboard-progress-state" role="status" data-i18n>Loading paper progress…</p>
+          <div id="dashboard-progress" hidden>
+            <div class="dashboard-ring" id="dashboard-ring">
+              <strong id="dashboard-graded-total" dir="ltr"></strong>
+              <span data-i18n>Papers graded</span>
+            </div>
+            <dl id="dashboard-summary" class="dashboard-summary" aria-labelledby="dashboard-progress-title">
+              <div><dt>Awaiting review</dt><dd id="dashboard-review-count"></dd></div>
+              <div><dt>Processing jobs</dt><dd id="dashboard-job-count"></dd></div>
+            </dl>
+          </div>
+        </section>
+
+        <section class="dashboard-panel dashboard-activity-panel" aria-labelledby="dashboard-activity-title">
+          <div class="dashboard-panel-heading">
+            <h2 id="dashboard-activity-title">Recent activity</h2>
+            <a class="dashboard-panel-link" href="activity.html">View all activity</a>
+          </div>
+          <div id="dashboard-activity"><p data-i18n>Loading recent activity…</p></div>
+        </section>
+        <div id="dashboard-preferences" class="dashboard-preferences" hidden></div>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

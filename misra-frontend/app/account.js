@@ -1,12 +1,15 @@
 (function () {
   'use strict';
+  const routeScope=MisraWorkspace.page;
   const $ = id => document.getElementById(id);
   let busy = false, passwordDirty = false, deletionDirty = false, preferenceDirty = false, settings = null, currentUser = null;
   const hasUnsaved = () => passwordDirty || deletionDirty || preferenceDirty;
   const text = value => window.MisraLocale.text(value);
   function lock(value) {
     busy = value;
-    document.querySelectorAll('.settings-content button,.settings-content input').forEach(el => el.disabled = value);
+    document.querySelectorAll('.settings-content button,.settings-content input').forEach(el => {
+      if (!el.closest('#ai-settings')) el.disabled = value;
+    });
     if (!settings) $('use-marking-preferences').disabled = true;
   }
   function showSettings(value, saved = false) {
@@ -45,32 +48,40 @@
     currentUser = user;
     $('native-account-facts').textContent = [user.full_name, user.email, user.role === 'admin' ? text('Institution administrator') : text('Instructor')].filter(Boolean).join(' · ');
     $('password-required').hidden = !user.must_change_password;
-    if (user.must_change_password) $('native-password').open = true;
+    if (user.must_change_password) {
+      $('native-password').open = true;
+      $('native-password').querySelector('summary').setAttribute('aria-disabled', 'true');
+    }
     return loadSettings();
   }).catch(() => {});
-  MisraAPI.health().then(health => {
-    if (!health.agents) throw Error('This API does not report agent configuration. Restart it with the updated backend.');
-    $('native-ai-status').textContent = text(health.verification_enabled ? 'Three AI roles configured. Model outputs remain proposals until instructor approval.' : 'Verification is disabled in the server configuration. Only extraction and assessment run.');
-    const roles = {extraction:['Extraction agent','Reads original pages and maps student answers.'],assessment:['Assessment agent','Uses approved criteria, answer keys, scoring policies, student evidence and applicable course passages.'],verification:['Verification agent','Checks the proposed criterion marks against the same evidence and flags concerns.']};
-    $('native-ai-agents').innerHTML = Object.entries(roles).map(([key,[name,description]]) => '<section class="record-row"><div><h3>'+MisraUI.escapeHTML(name)+'</h3><p data-i18n>'+MisraUI.escapeHTML(description)+'</p></div><p data-no-translate>'+MisraUI.escapeHTML(health.agents[key]?.provider || 'Unavailable')+' · '+MisraUI.escapeHTML(health.agents[key]?.model || 'No model configured')+(key === 'verification' && !health.verification_enabled ? ' · Disabled' : '')+'</p></section>').join('');
-  }).catch(e => $('native-ai-status').textContent = e.message);
   $('native-themes').addEventListener('change', e => {
     if (e.target.matches('[data-theme-option]')) { MisraTheme.set(e.target.value); $('native-settings-status').textContent = text('Theme saved on this device.'); }
   });
   $('native-password-form').addEventListener('input', () => passwordDirty = true);
+  $('native-password').querySelector('summary').addEventListener('click', event => {
+    if (currentUser?.must_change_password) event.preventDefault();
+  });
   $('delete-account-form').addEventListener('input', () => deletionDirty = true);
   for (const [formId,errorId] of [['native-password-form','native-password-error'],['delete-account-form','delete-account-error']]) {
     $(formId).addEventListener('reset', e => {
       if (busy) { e.preventDefault(); return; }
       if (formId === 'native-password-form') passwordDirty = false; else deletionDirty = false;
       $(errorId).textContent = '';
+      const panel = e.currentTarget.closest('details');
+      if (formId === 'native-password-form' && currentUser?.must_change_password) {
+        $('current-password').focus();
+      } else {
+        panel.open = false;
+        panel.querySelector('summary').focus();
+      }
     });
   }
-  window.addEventListener('beforeunload', e => { if (busy || hasUnsaved()) { e.preventDefault(); e.returnValue = ''; } });
-  document.addEventListener('click', e => {
+  routeScope.listen(window,'beforeunload', e => { if (busy || hasUnsaved()) { e.preventDefault(); e.returnValue = ''; } });
+  routeScope.guard(() => busy, hasUnsaved);
+  routeScope.listen(document,'click', e => {
     const anchor = e.target.closest('a');
-    if (anchor?.getAttribute('href')?.startsWith('#')) return;
-    if ((anchor || e.target.closest('#native-sign-out')) && (busy || hasUnsaved() && !confirm(text('Discard unsaved settings and password entries?')))) { e.preventDefault(); e.stopImmediatePropagation(); }
+    if (!anchor || anchor.getAttribute('href')?.startsWith('#') || MisraWorkspace.isSoftLink(e)) return;
+    if (busy || hasUnsaved() && !confirm(text('Discard unsaved settings and password entries?'))) { e.preventDefault(); e.stopImmediatePropagation(); }
   }, true);
   $('native-password-form').addEventListener('submit', async e => {
     e.preventDefault(); if (busy) return;
@@ -92,7 +103,7 @@
     catch (e) { $('delete-account-error').textContent = e.message; }
     finally { lock(false); }
   });
-  window.addEventListener('misra:language', () => {
+  routeScope.listen(window,'misra:language', () => {
     if (settings && !preferenceDirty) showSettings(settings);
     if (currentUser) $('native-account-facts').textContent = [currentUser.full_name,currentUser.email,text(currentUser.role==='admin'?'Institution administrator':'Instructor')].filter(Boolean).join(' · ');
     if ($('native-settings-status').textContent) $('native-settings-status').textContent = text('Theme saved on this device.');

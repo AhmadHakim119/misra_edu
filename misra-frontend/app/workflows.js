@@ -1,6 +1,7 @@
 /* Native ledger tasks; approvals and persisted jobs remain backend authority. */
 (function () {
   'use strict';
+  const routeScope=MisraWorkspace.page;
   const $=id=>document.getElementById(id);
   const esc=value=>String(value ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   window.MisraUI=window.MisraUI || {escapeHTML:esc};
@@ -60,7 +61,7 @@
   }
   function show(view) {window.dispatchEvent(new CustomEvent('misra:ledger-task',{detail:{view}})); if(view==='upload') {$('ledger-upload-title').focus({preventScroll:true});checks();} else if(view==='setup') {checks();} }
   function loadExam(value) {
-    ++epoch;clearTimeout(pollTimer); exam=value;ready=false;checking=false; files=[];ambiguous=false;accepted=null;recoveryId='';$('ledger-files').value='';$('ledger-split').value='';error('');$('upload-accepted').innerHTML='';
+    ++epoch;routeScope.cancelTimer(pollTimer); exam=value;ready=false;checking=false; files=[];ambiguous=false;accepted=null;recoveryId='';$('ledger-files').value='';$('ledger-split').value='';error('');$('upload-accepted').innerHTML='';
     $('original-studio').href=setupLink();window.MisraLedgerEditors?.reset(exam);
     window.MisraAssessmentSources?.reset();
     if(exam.course_id) window.dispatchEvent(new CustomEvent('misra:assessment-loaded',{detail:{examId:exam.id,courseId:exam.course_id}}));
@@ -76,14 +77,14 @@
   }
   async function poll() {
     if(!accepted || !exam) return;
-    clearTimeout(pollTimer); const current=epoch,record=accepted;
+    routeScope.cancelTimer(pollTimer); const current=epoch,record=accepted;
     try {
       const job=await MisraAPI.job(record.id); if(current!==epoch || record!==accepted) return;
       if(job?.id!==record.id || !['queued','processing','retrying','completed','failed'].includes(job.status)) throw new Error('Incomplete job status.');
       const pct=Number(job.progress_percent);
       $('upload-accepted').innerHTML=`<h3>${job.status==='completed' ? 'Extraction job completed' : job.status==='failed' ? 'Extraction stopped' : 'Upload accepted · OCR '+esc(job.status)}</h3>${active.has(job.status) ? `<progress max="100" value="${Number.isFinite(pct) ? Math.min(100,Math.max(0,pct)) : 0}" aria-label="OCR progress"></progress>` : ''}<p>${esc(job.error_message || job.progress_message || 'Open the papers list to inspect extracted answers. A completed job does not certify extraction or marks.')}</p>${job.status==='completed' && (job.submission_id || record.submission_id) ? `<button class="primary" type="button" data-open-saved-paper="${esc(job.submission_id || record.submission_id)}">Open extracted paper</button>` : '<button type="button" data-show-papers>View papers &amp; extraction</button>'}${job.status==='failed' ? '<p>Use Retry safely in background activity. Do not upload the paper again.</p>' : ''}`;
       window.dispatchEvent(new CustomEvent('misra:ledger-jobs-changed'));
-      if(active.has(job.status)) pollTimer=setTimeout(poll,4000);
+      if(active.has(job.status)) pollTimer=routeScope.later(poll,4000);
     } catch(_) {if(current===epoch) {$('upload-accepted').innerHTML='<h3>Progress connection interrupted</h3><p>The upload was accepted. OCR may still be running; do not upload it again.</p><button type="button" data-poll-upload>Reconnect progress</button>';}}
   }
   $('ledger-files').addEventListener('change',e=>select(e.target.files));
@@ -94,7 +95,7 @@
   $('clear-upload').addEventListener('click',()=>{if(sending || accepted || ambiguous) return;files=[];$('ledger-files').value='';sync();});
   document.querySelectorAll('[data-ledger-upload-mode]').forEach(b=>b.addEventListener('click',()=>{if(!files.length && !sending && !accepted && !ambiguous) {mode=b.dataset.ledgerUploadMode;sync();}}));
   $('refresh-ledger-checks').addEventListener('click',checks);$('refresh-upload-checks').addEventListener('click',checks);
-  $('upload-another').addEventListener('click',()=>{if(sending) return;if(ambiguous && !window.confirm('Confirm you checked the papers list and background activity, and this upload was not accepted. Start a new selection?')) return;clearTimeout(pollTimer);accepted=null;recoveryId='';ambiguous=false;files=[];$('ledger-files').value='';$('upload-accepted').innerHTML='';error('');sync();window.dispatchEvent(new CustomEvent('misra:ledger-url-changed'));});
+  $('upload-another').addEventListener('click',()=>{if(sending) return;if(ambiguous && !window.confirm('Confirm you checked the papers list and background activity, and this upload was not accepted. Start a new selection?')) return;routeScope.cancelTimer(pollTimer);accepted=null;recoveryId='';ambiguous=false;files=[];$('ledger-files').value='';$('upload-accepted').innerHTML='';error('');sync();window.dispatchEvent(new CustomEvent('misra:ledger-url-changed'));});
   $('ledger-upload-form').addEventListener('submit',async e=>{
     e.preventDefault();if(sending || ambiguous || accepted || !ready || !files.length || !exam || window.MisraAssessmentSources?.isBusy()) return;
     const split=$('ledger-split').value.trim();
@@ -111,9 +112,9 @@
     } catch(failure) {if(current===epoch) {ambiguous=!failure.status || failure.status>=500;error(ambiguous ? `${failure.message} Could not confirm acceptance. It may be queued; check Papers and background activity before uploading again.` : `${failure.message} Your selection is retained; no automatic retry was sent.`);}}
     finally {if(current===epoch) {sending=false;sync();}}
   });
-  document.addEventListener('click',e=>{if(e.target.closest('[data-poll-upload]')) poll();if(e.target.closest('[data-show-papers]')) show('papers');});
-  window.addEventListener('beforeunload',e=>{if(hasUnsaved()) {e.preventDefault();e.returnValue='';}});
-  window.addEventListener('misra:ledger-foundations-changed',checks);
-  window.addEventListener('misra:answer-key-approved',checks);
+  routeScope.listen(document,'click',e=>{if(e.target.closest('[data-poll-upload]')) poll();if(e.target.closest('[data-show-papers]')) show('papers');});
+  routeScope.listen(window,'beforeunload',e=>{if(hasUnsaved()) {e.preventDefault();e.returnValue='';}});
+  routeScope.listen(window,'misra:ledger-foundations-changed',checks);
+  routeScope.listen(window,'misra:answer-key-approved',checks);
   window.MisraLedgerWorkflows={loadExam,show,restoreJobs,currentJobId:()=>accepted?.id || recoveryId,hasUnsaved,canLeave,isBusy:()=>Boolean(window.MisraTeaching?.isBusy()) || sending || Boolean(window.MisraAssessmentSources?.isBusy()) || Boolean(window.MisraLedgerEditors?.isBusy())};
 })();
