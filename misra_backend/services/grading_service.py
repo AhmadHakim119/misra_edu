@@ -46,6 +46,7 @@ import math
 
 
 VISUAL_EVIDENCE_CONFIDENCE_CAP = 40.0
+PROFILE_SUPPORT_VERSION = 1
 
 class CriterionScore(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
@@ -382,7 +383,7 @@ def _assessment_completion(contents):
     """Keep initial/revised assessment on the same explicitly configured provider."""
     from services.free_model_gateway import FreeCompletion
     from services.inference_service import configuration
-    provider = os.getenv('GRADING_PROVIDER', os.getenv('MISRA_AI_PROVIDER', 'gemini'))
+    provider = configuration('grading')['provider']
     if provider == 'openrouter_free':
         from services.free_model_gateway import complete_free
         return complete_free(contents, model=configuration('grading')['model'])
@@ -523,7 +524,8 @@ def grade_answer(
                         and math.isfinite(value) and value >= 0 for value in values)
             result._provider_metadata[field] = sum(values) if valid else None
         break
-    if os.getenv('VERIFICATION_ENABLED', 'true').lower() == 'true':
+    from services.inference_service import verification_enabled
+    if verification_enabled():
         from services.verification_agent import verify
         candidate = result.model_dump()
         evidence_ids = {value:key for key,value in evidence_aliases.items()}
@@ -614,6 +616,10 @@ def process_grading(
     ) = grade_answer(answer_id, db, mode, routing_context=routing_context)
 
     final_confidence = _compute_final_confidence(answer, result)
+    from services.inference_profiles import active_profile
+    if active_profile():
+        result._decision_review.append({'code': 'local_model_evaluation_pending', 'criterion_id': None,
+            'message': 'Local Qwen is an experimental grading baseline. Inspect the original work and rubric before finalizing this proposal.'})
     from services.review_state_service import pending_reopening
     reopened = pending_reopening(answer)
     reopening_fields = {key:value for key,value in (answer.grading_raw_response or {}).items()

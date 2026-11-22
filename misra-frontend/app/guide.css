@@ -23,6 +23,12 @@
 .guide-criterion-preview { list-style:none;padding:0;margin:16px 0;max-width:600px; }
 .guide-criterion-preview li { display:flex;justify-content:space-between;align-items:baseline;gap:20px;font-size:14px;margin-block:8px; }
 .guide-criterion-preview li span:last-child { white-space:nowrap;color:var(--muted);font-variant-numeric:tabular-nums; }
+@media(min-width:1001px) {
+  .guide-question-content { display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:24px; }
+  .guide-question-content h4 { max-width:70ch; }
+  .guide-criterion-preview { max-width:none;margin:0;border-inline-start:1px solid var(--line);padding-inline-start:20px; }
+  .guide-criterion-preview li:first-child { margin-block-start:1px; }
+}
 #native-authoring { background:var(--surface);padding:24px 32px;border:1px solid var(--line);border-radius:8px; }
 #native-authoring .author-question-controls { display:grid;grid-template-columns:auto minmax(120px,1fr) auto;align-items:end;gap:16px; }
 #native-authoring .author-question-controls .field { margin:0;max-width:240px;justify-self:end;width:100%; }

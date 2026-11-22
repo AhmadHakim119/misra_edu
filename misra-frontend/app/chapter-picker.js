@@ -1,6 +1,7 @@
 /* Chapter choices are drafts. Checked source pages and guide approval remain separate. */
 (function(){
   'use strict';
+  const routeScope=MisraWorkspace.page;
   const $=id=>document.getElementById(id),esc=MisraUI.escapeHTML;
   let exam='',course='',generation=0,catalog=null,failure='',feedback='',loaded=false;
   const host=document.createElement('section');host.id='assessment-chapters';host.className='assessment-chapters';
@@ -70,8 +71,8 @@
     catch(e){if(current===generation){failure=`${e.message} Your source selections are retained.`;loaded=true;}}
     if(current===generation)render();
   }
-  window.addEventListener('misra:assessment-loaded',e=>{exam=e.detail.examId;course=e.detail.courseId;catalog=null;loaded=false;feedback='';load();});
-  window.addEventListener('misra:assessment-sources-loaded',render);
-  window.addEventListener('misra:material-approved',()=>load());
-  window.addEventListener('misra:assessment-extra-uploaded',async()=>{if(!MisraAssessmentSources.hasUnsaved())await MisraAssessmentSources.reload();await load();});
+  routeScope.listen(window,'misra:assessment-loaded',e=>{exam=e.detail.examId;course=e.detail.courseId;catalog=null;loaded=false;feedback='';load();});
+  routeScope.listen(window,'misra:assessment-sources-loaded',render);
+  routeScope.listen(window,'misra:material-approved',()=>load());
+  routeScope.listen(window,'misra:assessment-extra-uploaded',async()=>{if(!MisraAssessmentSources.hasUnsaved())await MisraAssessmentSources.reload();await load();});
 })();

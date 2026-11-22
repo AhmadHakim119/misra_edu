@@ -1,6 +1,8 @@
 const {test,expect}=require('@playwright/test');
+const {staticWorkspace}=require('./fixtures/static-workspace');
 const unavailable='Selected free model is not in the current catalog. Choose another explicit free model.';
 async function fixture(page){
+  await staticWorkspace(page);
   const state={status:'retrying',error:unavailable,writes:[]};
   await page.route('**/api/**',route=>{
     const request=route.request(),path=new URL(request.url()).pathname.replace('/api','');let body=[];
@@ -11,6 +13,18 @@ async function fixture(page){
   });
   await page.goto('/app/activity.html?exam_id=exam');return state;
 }
+
+test('text-only grading failures point to a new job on the paper',async({page})=>{
+  const state=await fixture(page);
+  state.status='failed';
+  state.error='Local Qwen grades text only. Required images cannot be omitted. Review the original work or choose a configured vision-capable setup.';
+  await page.locator('#activity-refresh').click();
+  const activity=page.locator('#activity-host');
+  await expect(activity).toContainText('Save Qwen Vision in AI services');
+  await expect(activity.getByRole('button',{name:'Retry safely'})).toHaveCount(0);
+  await expect(activity.getByRole('link',{name:'Open paper'})).toHaveAttribute('href',/grading\.html\?exam_id=exam&submission_id=paper$/);
+  expect(state.writes).toHaveLength(0);
+});
 
 test('activity status visual evidence',async({page},info)=>{
   const state=await fixture(page);state.status='failed';await page.locator('#activity-refresh').click();

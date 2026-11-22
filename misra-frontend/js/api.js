@@ -7,6 +7,16 @@
   const authRoot = native ? '/app/' : window.location.pathname.startsWith('/legacy/') ? '/legacy/pages/' : '/app/pages/';
   const sameOriginApi = native || legacy ? `${window.location.origin}/api` : 'http://127.0.0.1:8000/api';
   const API_BASE = (window.MISRA_API_BASE || sameOriginApi).replace(/\/$/, '');
+  const inferenceKey = 'misra.inference-profile.v1';
+  const localInference = 'local_qwen_gemini_v1';
+  const inferenceProfiles = new Set([localInference, 'local_qwen_vision_gemini_v1', 'configured']);
+  function inferenceProfile() {
+    try {
+      const saved = localStorage.getItem(inferenceKey);
+      return inferenceProfiles.has(saved) ? saved : localInference;
+    }
+    catch (_) { return localInference; }
+  }
 
   function cookie(name) {
     const prefix = `${encodeURIComponent(name)}=`;
@@ -15,11 +25,13 @@
   }
 
   async function request(path, options = {}) {
+    const originatingPage = native ? window.MisraWorkspace?.page.signal : null;
     const response = await fetch(`${API_BASE}${path}`, {
       credentials: 'include',
       cache: 'no-store',
       ...options,
       headers: {
+        ...(native ? {'X-Misra-Inference-Profile': inferenceProfile()} : {}),
         ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
         ...(!['GET', 'HEAD', 'OPTIONS'].includes((options.method || 'GET').toUpperCase()) ? { 'X-CSRF-Token': cookie('misra_csrf') } : {}),
         ...(options.headers || {}),
@@ -45,11 +57,11 @@
       const error = new Error(message);
       error.status = response.status;
       error.detail = detail;
-      if (response.status === 401 && (native || legacy) && !window.location.pathname.endsWith('/login.html')) {
+      if (response.status === 401 && !originatingPage?.aborted && (native || legacy) && !window.location.pathname.endsWith('/login.html')) {
         const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
         window.location.replace(`${authRoot}login.html?next=${encodeURIComponent(returnTo)}`);
       }
-      if (response.status === 403 && detail?.code === 'password_change_required' && !window.location.pathname.endsWith('/account.html')) {
+      if (response.status === 403 && !originatingPage?.aborted && detail?.code === 'password_change_required' && !window.location.pathname.endsWith('/account.html')) {
         window.location.replace(`${authRoot}account.html?required=1`);
       }
       throw error;
@@ -68,6 +80,14 @@
 
   window.MisraAPI = {
     baseUrl: API_BASE,
+    inferenceProfile,
+    setInferenceProfile(value) {
+      if (!inferenceProfiles.has(value)) throw Error('Choose an available AI setup.');
+      localStorage.setItem(inferenceKey, value);
+      if (localStorage.getItem(inferenceKey) !== value) throw Error('The browser did not retain the AI setup.');
+    },
+    inferenceProfiles: () => request('/inference-profiles'),
+    checkLocalModel: profile => request(`/inference-profiles/local-status${queryString({profile_id: profile})}`),
     pilotStudies: () => request('/pilot-studies'),
     pilotStudy: id => request(`/pilot-studies/${encodeURIComponent(id)}`),
     pilotPaper: (id,paper) => request(`/pilot-studies/${encodeURIComponent(id)}/papers/${encodeURIComponent(paper)}`),

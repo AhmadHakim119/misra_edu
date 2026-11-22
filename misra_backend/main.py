@@ -23,6 +23,9 @@ from routers import pilot_archives
 load_dotenv()
 
 app = FastAPI(title="MISRA-EDU API")
+from services.inference_profiles import install_profile_middleware
+from routers import inference_profiles
+install_profile_middleware(app)
 
 allowed_origins = [
     origin.strip()
@@ -64,6 +67,7 @@ async def prevent_sensitive_page_caching(request, call_next):
     return response
 
 app.include_router(auth.router)
+app.include_router(inference_profiles.router)
 app.include_router(admin_users.router)
 app.include_router(admin_operations.router)
 protected = [Depends(require_instructor)]
@@ -100,7 +104,7 @@ def health():
         queue_online = bool(redis_connection().ping())
     except Exception:
         queue_online = False
-    from services.inference_service import configuration
+    from services.inference_service import configuration, verification_enabled
     return {
         "status": "online" if queue_online else "degraded",
         "model": DEFAULT_MODEL,
@@ -110,7 +114,7 @@ def health():
         "queue": "online" if queue_online else "unavailable",
         "build": build_info(),
         'agents': {name:configuration(task) for name,task in [('extraction','ocr'),('assessment','grading'),('verification','verification')]},
-        'verification_enabled': os.getenv('VERIFICATION_ENABLED','true').lower() == 'true',
+        'verification_enabled': verification_enabled(),
     }
 
 

@@ -1,0 +1,277 @@
+.workspace-app {
+  background: var(--secondary);
+}
+
+.workspace-app details > summary {
+  display: block;
+  position: relative;
+  list-style: none;
+  min-height: 36px;
+  padding-block: 7px;
+  padding-inline-end: 34px;
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+.workspace-app details > summary::-webkit-details-marker {
+  display: none;
+}
+
+.workspace-app details > summary::after {
+  content: "";
+  position: absolute;
+  inset-inline-end: 5px;
+  inset-block-start: 50%;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  color: var(--muted);
+  background:
+    linear-gradient(currentColor 0 0) center / 8px 1px no-repeat,
+    linear-gradient(currentColor 0 0) center / 1px 8px no-repeat,
+    var(--surface);
+  pointer-events: none;
+}
+
+.workspace-app details[open] > summary::after {
+  background:
+    linear-gradient(currentColor 0 0) center / 8px 1px no-repeat,
+    var(--surface);
+}
+
+.workspace-app details > summary:hover::after,
+.workspace-app details > summary:focus-visible::after {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.workspace-app details > summary[aria-disabled="true"]::after {
+  display: none;
+}
+
+.workspace-app #paper-picker > summary {
+  padding-inline-end: 34px;
+}
+
+.workspace-app .saved-source-passages {
+  margin-block: 8px 0;
+}
+
+.workspace-app .saved-source-passages > details {
+  border-block-start: 1px solid var(--line);
+}
+
+.workspace-app .saved-source-passages pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 14px;
+}
+
+.workspace-app .saved-policy {
+  margin-block: 8px;
+}
+
+.workspace-app .saved-policy > div {
+  padding-block: 5px;
+  border-block-end: 1px solid var(--line);
+}
+
+.workspace-app .saved-policy dt {
+  font-weight: 600;
+}
+
+.workspace-app .saved-policy dd {
+  margin-inline: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workspace-app .verification-finding {
+  margin: 12px 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--ground);
+}
+
+.workspace-app .verification-finding h3 {
+  color: var(--warning);
+}
+
+.workspace-app .workspace-header {
+  background: var(--ground);
+}
+
+.workspace-header nav {
+  position: relative;
+  isolation: isolate;
+  gap: 4px;
+}
+
+.workspace-header nav a {
+  position: relative;
+  z-index: 1;
+  min-height: 38px;
+  padding: 7px 12px;
+  border: 1px solid transparent;
+  border-radius: 99px;
+}
+
+.workspace-header nav a[hidden] {
+  display: none;
+}
+
+.workspace-header nav a:hover:not([aria-current]) {
+  background: var(--secondary);
+}
+
+.workspace-header nav a[aria-current] {
+  border-color: transparent;
+  color: var(--surface);
+}
+
+.workspace-selection {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  background: var(--ink);
+  border-radius: 99px;
+  transform: translate(var(--selection-x, 0px), var(--selection-y, 0px));
+}
+
+.workspace-nav-ready .workspace-selection {
+  transition: transform 240ms cubic-bezier(.2, .75, .25, 1),
+    width 240ms cubic-bezier(.2, .75, .25, 1), height 240ms cubic-bezier(.2, .75, .25, 1);
+}
+
+.workspace-header .account button {
+  border-radius: 99px;
+}
+
+.workspace-route-notice:not([hidden]) {
+  margin: 12px auto 0;
+  padding: 10px 16px;
+  width: min(100% - 28px, 70ch);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+}
+
+.workspace-app .page-heading h1,
+.workspace-app .assessment-title h1 {
+  font-size: clamp(27px, 3.3vw, 42px);
+  font-weight: 600;
+  letter-spacing: -.03em;
+}
+
+.workspace-app :is(.page-main, .assessment-main) > .native-panel,
+.workspace-app :is(.page-main, .assessment-main) > .workflow-panel:not(#ledger-setup) {
+  border-radius: 16px;
+}
+
+.workspace-app :is(.page-heading, .assessment-title, .assessment-next) :is(button, .button) {
+  min-height: 44px;
+  border-radius: 99px;
+}
+
+.workspace-error-panel > [role="alert"] {
+  margin-block-end: 12px;
+}
+
+.workspace-app .native-page,
+.workspace-app .page-main:not(.dashboard) {
+  width: min(100%, 1480px);
+  margin: 0 auto;
+  padding: 32px clamp(14px, 4vw, 52px) 48px;
+}
+
+.workspace-app .native-page > h1 {
+  font-size: clamp(27px, 3.3vw, 42px);
+  font-weight: 600;
+  letter-spacing: -.03em;
+}
+
+.workspace-app :is(#manager-list, #review-list, #activity-host, #paper-picker) {
+  padding: 0 clamp(12px, 2vw, 22px);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+
+.workspace-app :is(#manager-list, #review-list, #activity-host) > :last-child {
+  border-block-end: 0;
+}
+
+.workspace-app :is(#manager-list, #review-list, #activity-host) > p {
+  margin-block: 0;
+  padding-block: 16px;
+}
+
+.workspace-app :is(#manager-search, #paper-search) {
+  border-radius: 99px;
+  background: var(--ground);
+}
+
+.workspace-app .exam-navigation {
+  gap: 6px;
+  flex-wrap: wrap;
+  padding-block: 8px;
+}
+
+.workspace-app .exam-navigation a {
+  padding: 8px 13px;
+  border-radius: 99px;
+}
+
+.workspace-app .exam-navigation a:hover {
+  background: var(--secondary);
+}
+
+.workspace-app .exam-navigation a[aria-current] {
+  border: 0;
+  color: var(--accent);
+  background: var(--active);
+}
+
+.ledger-page-tools {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-block-end: 14px;
+}
+
+.ledger-page-tools button {
+  border-radius: 99px;
+  min-height: 38px;
+}
+
+body[data-workspace-page]:not([data-workspace-page="dashboard"]) .ledger-page-tools {
+  display: none;
+}
+
+@media (max-width: 600px) {
+  .workspace-app :is(.native-page, .page-main:not(.dashboard)) {
+    padding-block: 22px 36px;
+  }
+
+  .workspace-header nav {
+    gap: 2px;
+  }
+
+  .workspace-header nav a {
+    min-height: 32px;
+    padding-inline: 6px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-nav-ready .workspace-selection {
+    transition: none;
+  }
+}

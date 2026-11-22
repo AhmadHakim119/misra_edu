@@ -2,6 +2,8 @@
 (function () {
   'use strict';
   const active = new Set(['queued', 'processing', 'retrying']);
+  const needsVision = job => job.job_type === 'grade_submission' &&
+    (job.error_message || '').startsWith('Local Qwen grades text only. Required images cannot be omitted.');
   const task = job => ({locate_answers:'Answer location',read_answer_area:'Answer area extraction',regrade_corrected_answer:'Corrected answer grading'})[job.operation] || ({grade_submission:'AI grading',ocr_submission:'Handwriting extraction',ocr_batch:'Handwriting extraction',exam_setup:'Exam setup',material_ingestion:'Course material',source_question_drafts:'Question drafting'})[job.job_type] || 'Background work';
   function title(job) {
     if (active.has(job.status)) return 'Processing…';
@@ -16,6 +18,7 @@
     if (job.status === 'failed') {
       if(job.operation==='locate_answers')return 'Answer location could not finish. Your extracted text and grades are unchanged. Retry when the extraction service is available.';
       const error = job.error_message || '';
+      if (needsVision(job)) return 'This job used text-only Qwen. Save Qwen Vision in AI services and start a new grading job from the paper.';
       if (/AI grading response failed validation:|invalid evidence citations/i.test(error)) return 'The AI response failed validation. No grade was saved for this answer. Review the error details, then retry grading.';
       if (/Selected free model is not in the current catalog|Free model catalog is unavailable|selected (?:free )?model (?:is unavailable|does not accept images)/i.test(error)) return 'The grading model is unavailable. Your paper is saved. Retry after the model settings are fixed.';
       if (/429|quota|rate.limit|resource.exhausted/i.test(error)) return 'The AI service is busy. Your paper is saved. Try again later.';
@@ -27,5 +30,5 @@
   function details(job, escape) {
     return job.status === 'failed' && job.error_message ? '<details class="job-error-details"><summary>Error details</summary><p dir="auto">' + escape(job.error_message) + '</p></details>' : '';
   }
-  window.MisraJobStatus = {task, title, message, details};
+  window.MisraJobStatus = {task, title, message, details, needsVision};
 })();

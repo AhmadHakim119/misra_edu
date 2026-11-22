@@ -144,6 +144,13 @@ reports configured providers, not proof that a model is reachable or accurate.
 
 ## Optional local inference
 
+The instructor UI now includes **Settings → AI services → Local Qwen + Gemini
+page reading**. This versioned, request-scoped profile pins new jobs, keeps Gemini
+for page images and runs local text grading plus verification. See
+[Local Qwen with Gemini page reading](LOCAL_HYBRID_INFERENCE.md) for setup,
+review/vision boundaries and recorded checks. The direct environment-based
+adapter described below remains supported by **Server configuration**.
+
 The adapter accepts an installed vision model through a loopback OpenAI-compatible
 endpoint, such as `http://127.0.0.1:11434/v1`. Set the desired task providers to
 `local`, replace their task-specific `*_MODEL` overrides with the installed model

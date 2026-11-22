@@ -1,5 +1,6 @@
 (function(){
-  'use strict';const {$}=MisraApp;
+  'use strict';
+  const routeScope=MisraWorkspace.page;const {$}=MisraApp;
   $('survey-saved').dataset.i18n='';
   const intro=document.querySelector('.page-heading p');intro.textContent='Twelve grading scenarios help MISRA remember your marking preferences.';intro.dataset.i18n='';MisraLocale.apply();
   const returnExam=MisraApp.params.get('return_exam_id');
@@ -9,7 +10,7 @@
     catch(e){$('survey-saved').textContent=MisraLocale.text('Could not load marking settings. Open Settings to check whether automatic preferences are on.');}
   }
   MisraApp.ready.then(completion);
-  window.addEventListener('misra:preferences-saved',async e=>{
+  routeScope.listen(window,'misra:preferences-saved',async e=>{
     if(e.detail.approved)await completion();
     else $('survey-saved').textContent=MisraLocale.text('Your survey draft is saved. Approve the profile when you are ready to use its proposed defaults.');
   });

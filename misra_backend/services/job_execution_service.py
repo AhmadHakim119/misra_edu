@@ -12,6 +12,8 @@ from services.audit_service import safe_error_message
 from services.grading_scope_service import is_external_question, is_paper_question
 from services.grading_errors import GradingResponseValidationError
 
+PROFILE_SUPPORT_VERSION = 1
+
 
 def _progress_callback(job: ProcessingJob, db: Session):
     def update(current: int, total: int, message: str) -> None:
@@ -101,6 +103,8 @@ def execute_processing_job(processing_job_id: str) -> None:
     """RQ entry point. The queue passes only the durable job UUID."""
     db = SessionLocal()
     job: ProcessingJob | None = None
+    from services.inference_profiles import activate, reset
+    profile_token = None
     try:
         job = db.query(ProcessingJob).filter(ProcessingJob.id == processing_job_id).first()
         if not job:
@@ -116,6 +120,7 @@ def execute_processing_job(processing_job_id: str) -> None:
         job.progress_message = "Worker started"
         db.commit()
 
+        profile_token = activate((job.payload or {}).get('_inference_profile'))
         progress = _progress_callback(job, db)
         if job.job_type == "material_ingestion":
             from services.course_material_service import ingest_material_job
@@ -198,4 +203,6 @@ def execute_processing_job(processing_job_id: str) -> None:
             db.commit()
         raise
     finally:
+        if profile_token is not None:
+            reset(profile_token)
         db.close()

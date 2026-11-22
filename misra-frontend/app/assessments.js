@@ -1,7 +1,9 @@
 (function(){
   'use strict';
+  const routeScope=MisraWorkspace.page;
   const $=id=>document.getElementById(id),esc=MisraUI.escapeHTML;
   let exams=[],courses=[],dirty=false,busy=false,uncertain=false,loaded=false,pilotCatalog=null;
+  routeScope.guard(()=>busy,()=>dirty);
   function render(){const query=$('manager-search').value.toLowerCase();const rows=exams.filter(e=>`${e.title} ${e.course_code || ''}`.toLowerCase().includes(query));$('manager-list').innerHTML=rows.length ? rows.map(e=>{
     const pilot=MisraPilots.forExam(pilotCatalog,e.id),live=e.submission_count??0;
     const count=pilot ? `${pilot.paper_count==null?'Saved pilot papers · count unavailable':`${pilot.paper_count} saved pilot papers · ${pilot.review_count} need review`}${live?` · ${live} uploaded papers`:''}` : `${live} papers`;
@@ -21,15 +23,17 @@
   }
   $('manager-search').addEventListener('input',render);$('open-creation').addEventListener('click',()=>{$('creation').hidden=false;if(!courses.length)$('create-course').hidden=false;$('manager-title').focus();});$('add-course').addEventListener('click',()=>{$('create-course').hidden=false;$('manager-code').focus();});
   $('close-creation').addEventListener('click',()=>{if(!dirty || confirm('Discard the unsaved assessment details?')) {$('creation').hidden=true;$('create-course').hidden=true;document.querySelectorAll('#creation form').forEach(f=>f.reset());dirty=false;}});
-  $('creation').addEventListener('input',()=>dirty=true);window.addEventListener('beforeunload',e=>{if(dirty||busy){e.preventDefault();e.returnValue='';}});
-  // Capture before the shared sign-out handler can invalidate the session.
-  document.addEventListener('click',e=>{if(!e.target.closest('a,#native-sign-out'))return;if(busy || dirty&&!confirm('Leave without saving these assessment details?')){e.preventDefault();e.stopImmediatePropagation();return;}dirty=false;},true);
+  $('creation').addEventListener('input',()=>dirty=true);routeScope.listen(window,'beforeunload',e=>{if(dirty||busy){e.preventDefault();e.returnValue='';}});
+  routeScope.listen(document,'click',e=>{if(!e.target.closest('a')||MisraWorkspace.isSoftLink(e))return;if(busy || dirty&&!confirm('Leave without saving these assessment details?')){e.preventDefault();e.stopImmediatePropagation();return;}dirty=false;},true);
   async function create(form,kind){if(busy||uncertain)return;const body=Object.fromEntries(new FormData(form));busy=true;controls();$('manager-status').textContent='Saving…';try {if(kind==='course'){body.term=body.term.trim()||null;const course=await MisraAPI.createCourse(body);if(!course?.id)throw new Error('Course response is incomplete.');await load();$('manager-course').value=course.id;form.reset();$('create-course').hidden=true;dirty=Boolean($('manager-title').value.trim());$('manager-status').textContent='Course saved. Finish the assessment details.';}else {const exam=await MisraAPI.createExam(body);if(!exam?.id)throw new Error('Assessment response is incomplete.');dirty=busy=false;location.href=`setup.html?exam_id=${encodeURIComponent(exam.id)}`;}}
     catch(e){uncertain=!e.status||e.status>=500;$('manager-status').textContent=failureMessage(e)+(uncertain ? ' Acceptance is uncertain. Reload and check existing records before creating again.' : ' Your entries remain here.');}finally{busy=false;controls();}}
   $('create-assessment').addEventListener('submit',e=>{e.preventDefault();create(e.currentTarget,'exam');});$('create-course').addEventListener('submit',e=>{e.preventDefault();create(e.currentTarget,'course');});
   $('manager-list').addEventListener('click',async e=>{const b=e.target.closest('[data-duplicate]');if(!b||busy)return;const title=prompt('Title for the duplicated exam');if(!title?.trim())return;busy=true;controls();try{await MisraAPI.duplicateExam(b.dataset.duplicate,{title:title.trim(),include_rubrics:true,include_grading_policies:true});await load();}catch(error){$('manager-status').textContent=error.message;}finally{busy=false;controls();}});
   async function pilots(){const section=document.createElement('section');section.className='native-panel';section.id='saved-pilot-studies';$('manager-list').before(section);section.hidden=true;try{pilotCatalog=await MisraPilots.load();if(!pilotCatalog.items.length)return;section.hidden=false;section.innerHTML='<h2>Saved pilot papers</h2><p>Inspect saved marks, original pages, review concerns and marking guides.</p>'+pilotCatalog.items.map(s=>`<p><a class="button" href="${MisraPilots.href(s.study_id)}">${esc(s.title||'Saved pilot')} · ${s.paper_count??'Unknown'} papers</a>${s.error?` · ${esc(s.error)}`:''}</p>`).join('');if(exams.length)render();}catch(error){section.hidden=false;section.innerHTML='<h2>Saved pilot papers unavailable</h2><p>Saved paper counts could not load. Refresh to retry; uploaded-paper counts are shown below.</p>';}}
-  pilots();
   controls();
-  load().then(()=>{loaded=true;controls();if(new URLSearchParams(location.search).get('create')==='1')$('open-creation').click();}).catch(e=>{$('manager-status').textContent=e.message;controls();});
+  MisraCurrentUser.then(user=>{
+    if(user.must_change_password)return;
+    pilots();
+    return load().then(()=>{loaded=true;controls();if(new URLSearchParams(location.search).get('create')==='1')$('open-creation').click();});
+  }).catch(e=>{$('manager-status').textContent=e.message;controls();});
 })();

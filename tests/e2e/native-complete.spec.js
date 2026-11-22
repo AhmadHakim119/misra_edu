@@ -1,5 +1,7 @@
 const {test,expect}=require('@playwright/test');
+const {staticWorkspace}=require('./fixtures/static-workspace');
 async function fixture(page,{graded=true,failCorrection=false,admin=false,pageCount=1}={}){
+  await staticWorkspace(page);
   const state={writes:[],graded,approved:true,reviewed:false,text:'W = F + d',name:'Synthetic student',number:'TEST01',teacherActive:true};
   const rubric={schema_version:2,max_score:2,criteria:[{id:'work',title:'Correct work calculation',description:'Use W = Fd and report joules.',points:2,scoring_type:'scaled',partial_credit_allowed:true,performance_levels:[],common_errors:[],alternative_methods:[],required_evidence:['Formula']}],policy:{grading_approach:'balanced'}};
   let version={id:'rv',version_number:1,status:'approved',rubric_json:rubric};
@@ -13,7 +15,7 @@ async function fixture(page,{graded=true,failCorrection=false,admin=false,pageCo
     if(path==='/auth/me')body={id:'u',role:admin?'admin':'teacher',full_name:'Synthetic instructor'};
     else if(path==='/exams')body=method==='POST'?{id:'e'}:[{id:'e',course_id:'c',title:'Synthetic physics exam',course_code:'TEST',submission_count:1}];
     else if(path==='/courses')body=[{id:'c',course_code:'TEST',title:'Synthetic physics'}];
-    else if(path==='/submissions')body=[{...submission(),readiness:{bulk_grading_allowed:true},grading_summary:{complete:state.graded,recorded_score:state.graded?1:null,max_score:2,graded_count:state.graded?1:0,expected_count:1,review_count:state.graded&&!state.reviewed?1:0}}];
+    else if(path==='/submissions')body=[{...submission(),latest_grading_job:state.gradingJob,readiness:{bulk_grading_allowed:true},grading_summary:{complete:state.graded,recorded_score:state.graded?1:null,max_score:2,graded_count:state.graded?1:0,expected_count:1,review_count:state.graded&&!state.reviewed?1:0}}];
     else if(path==='/jobs'){if(Number(new URL(req.url()).searchParams.get('limit'))>20)return route.fulfill({status:422,json:{detail:'Limit cannot exceed 20'}});body={items:[job],active_count:0};}
     else if(path.endsWith('/jobs'))body=[job];
     else if(path==='/jobs/job')body=job;
@@ -63,7 +65,7 @@ test('native rubric → upload → extraction correction → grading → feedbac
   await page.locator('#native-exam-navigation a[href^="upload"]').click();await expect(page.locator('#ledger-upload')).toBeVisible();
   await page.locator('#ledger-files').setInputFiles({name:'synthetic.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic')});await page.locator('#ledger-upload-submit').click();await expect(page.locator('#upload-accepted')).toContainText('completed');await page.locator('[data-open-saved-paper="s"]').first().click();await expect(page).toHaveURL(/\/app\/extraction.html/);
   await page.locator('[data-source="seg"] textarea').fill('W = Fd = 246 J.');await page.getByRole('button',{name:'Save correction',exact:true}).click();await expect(page.locator('#extraction-state')).toContainText('ready');expect(state.text).toBe('W = Fd = 246 J.');
-  await page.locator('#start-grading').click();await expect(page).toHaveURL(/\/app\/grading.html/);await expect(page.locator('.agent-strip')).toContainText('Verification agent');await expect(page.locator('#original-paper')).toBeVisible();if(await page.locator('#review-evidence-checked').count())await page.locator('#review-evidence-checked').check();await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();await expect.poll(()=>state.reviewed).toBe(true);
+  await page.locator('#start-grading').click();await expect(page).toHaveURL(/\/app\/grading.html/);await expect(page.locator('.agent-strip')).toContainText('Verification agent');await expect(page.getByRole('heading',{name:'Verification findings'})).toBeVisible();await expect(page.locator('#original-paper')).toBeVisible();if(await page.locator('#review-evidence-checked').count())await page.locator('#review-evidence-checked').check();await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();await expect.poll(()=>state.reviewed).toBe(true);
   await page.locator('#native-exam-navigation a[href^="feedback"]').click();await expect(page.locator('#learning-insights')).toContainText('1 graded');
   await page.locator('#native-exam-navigation a[href^="results"]').click();await expect(page.locator('#native-export-checks')).toContainText('1 included');const download=page.waitForEvent('download');await page.locator('#native-export-csv').click();expect((await download).suggestedFilename()).toBe('synthetic-grades.csv');
   expect(state.writes.some(w=>w.path.endsWith('/marking-guide/approve'))).toBeTruthy();
@@ -151,6 +153,39 @@ test('dashboard exam search and refresh distinguish empty results from unavailab
   expect(state.writes).toEqual([]);
 });
 
+test('dashboard counts saved papers and keeps exam access during a review outage', async ({page}) => {
+  const state = await fixture(page);
+  let reviewsAvailable = false;
+  await page.route('**/api/review-queue', route => reviewsAvailable
+    ? route.fallback()
+    : route.fulfill({status:503, json:{detail:'Synthetic review outage'}}));
+  await page.route('**/api/submissions', route => route.fulfill({json:[
+    {id:'s', exam_id:'e', extracted_student_name:'Synthetic <b>student</b>', grading_summary:{complete:true, review_count:2}},
+    {id:'pending', exam_id:'e', grading_summary:{complete:false, review_count:0}},
+  ]}));
+
+  await page.goto('/app/index.html');
+  await expect(page).toHaveURL(/\/app\/dashboard.html$/);
+  await expect(page.locator('#dashboard-graded-total')).toHaveText('1 / 2');
+  await expect(page.locator('#dashboard-review-count')).toHaveText('1');
+  await expect(page.locator('#dashboard-exams progress')).toHaveAttribute('max', '2');
+  const review = page.locator('#dashboard-review-concerns');
+  await expect(review.getByRole('status')).toContainText('Could not load review concerns');
+  await expect(review.getByRole('link', {name:'Open review queue'})).toBeVisible();
+  await expect(page.getByRole('link', {name:'Open exam'})).toHaveAttribute('href', 'grading.html?exam_id=e');
+
+  reviewsAvailable = true;
+  await page.getByRole('button', {name:'Refresh', exact:true}).click();
+  await expect(review.getByRole('heading', {level:3})).toContainText('Synthetic <b>student</b>');
+  await expect(review.locator('h3 b')).toHaveCount(0);
+  const evidence = review.getByRole('link', {name:'Review evidence'});
+  await expect(evidence).toHaveAttribute(
+    'href', 'grading.html?exam_id=e&submission_id=s&question_id=q');
+  await evidence.click();
+  await expect(page.locator('#question-detail')).toContainText('Calculate work for 82 N');
+  expect(state.writes).toEqual([]);
+});
+
 test('removed exam question keeps accessible read-only grading history',async({page},info)=>{
   await fixture(page);
   await page.route('**/api/exams/e/questions',route=>route.fulfill({json:[]}));
@@ -165,7 +200,89 @@ test('removed exam question keeps accessible read-only grading history',async({p
 test('extraction and grading layouts fit desktop/mobile in both themes',async({page},info)=>{
   await fixture(page,{graded:false});await page.goto('/app/extraction.html?exam_id=e&submission_id=s');await expect(page.locator('[data-source="seg"]')).toBeVisible();
   for(const theme of ['light','dark']){await page.evaluate(theme=>MisraTheme.set(theme),theme);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.screenshot({path:`.impeccable/review/native-extraction-${theme}-${info.project.name}.png`,fullPage:true,animations:'disabled'});}
-  await page.goto('/app/grading.html?exam_id=e&submission_id=s');await expect(page.locator('#grade-editor')).toContainText('Grade paper with AI');expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+  await page.goto('/app/grading.html?exam_id=e&submission_id=s');await expect(page.getByRole('button',{name:'Grade paper with AI'})).toBeEnabled();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+});
+
+test('assessment workspace uses the available width and keeps grading input and progress above the question',async({page},info)=>{
+  const mobile=info.project.name.startsWith('mobile');
+  if(!mobile)await page.setViewportSize({width:1896,height:902});
+  const state=await fixture(page,{graded:false});
+  let policy={mode:'adaptive',audit_rate:.25};
+  let failSave=true, activityUnavailable=false;
+  await page.route('**/api/questions/q/grading-policy',async route=>{
+    if(route.request().method()==='GET')return route.fulfill({json:policy});
+    const body=route.request().postDataJSON();
+    expect(body).toEqual({mode:'image_text_required',audit_rate:.25});
+    if(failSave)return route.fulfill({status:503,json:{detail:'Synthetic policy save failure'}});
+    policy=body;return route.fulfill({json:policy});
+  });
+  await page.route('**/api/submissions/s/grade',route=>{
+    expect(route.request().postDataJSON()).toEqual({mode:'auto'});
+    state.gradingProfile=route.request().headers()['x-misra-inference-profile'];
+    state.gradingJob={id:'synthetic-grading',exam_id:'e',submission_id:'s',job_type:'grade_submission',status:'processing',progress_percent:40,progress_message:'Assessing the synthetic paper.'};
+    return route.fulfill({status:202,json:{submission_id:'s',job:state.gradingJob}});
+  });
+  await page.route('**/api/jobs?*',route=>activityUnavailable?route.fulfill({status:503,json:{detail:'Synthetic activity outage'}}):route.fulfill({json:{items:state.gradingJob?[state.gradingJob]:[],active_count:state.gradingJob?1:0}}));
+  const capture=async (surface,verify)=>{
+    for(const theme of ['light','dark']){
+      await page.evaluate(theme=>MisraTheme.set(theme),theme);
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+      await verify();
+      await page.screenshot({path:`.impeccable/review/exam-width/${surface}-${theme}-${info.project.name}.png`,animations:'disabled'});
+    }
+  };
+  await page.goto('/app/setup.html?exam_id=e');
+  await expect(page.locator('#guide-outline')).toContainText('Calculate work');
+  await capture('rubric',async()=>{
+    const bounds=await page.locator('#ledger-setup').boundingBox();
+    expect(Math.abs(page.viewportSize().width-bounds.width-2*bounds.x)).toBeLessThan(4);
+    if(!mobile)expect(bounds.width).toBeGreaterThan(1750);
+  });
+  await page.goto('/app/extraction.html?exam_id=e&submission_id=s');
+  await page.getByRole('link',{name:'Choose grading input'}).click();
+  const input=page.getByLabel('Grading input for this question');
+  await expect(input).toHaveValue('adaptive');
+  await input.selectOption('text_only');
+  await page.getByRole('button',{name:'Discard change',exact:true}).click();
+  await expect(input).toHaveValue('adaptive');
+  await input.selectOption('image_text_required');
+  const start=page.getByRole('button',{name:'Grade paper with AI'});
+  await expect(start).toBeDisabled();
+  const save=page.getByRole('button',{name:'Save grading input'});
+  await save.click();
+  await expect(page.locator('#grading-input-status')).toHaveText('Synthetic policy save failure');
+  await expect(input).toHaveValue('image_text_required');
+  await expect(start).toBeDisabled();
+  failSave=false;
+  await save.click();
+  await expect(start).toBeEnabled();
+  await page.goto('/app/extraction.html?exam_id=e&submission_id=s');
+  await page.getByRole('button',{name:'Start AI grading'}).click();
+  await expect(page.getByRole('heading',{name:'AI grading in progress'})).toBeVisible();
+  await expect(page.locator('#grading-run progress')).toHaveAttribute('value','40');
+  await expect(input).toHaveValue('image_text_required');
+  await expect(input).toBeDisabled();
+  await expect(start).toHaveCount(0);
+  await expect(page.getByRole('heading',{name:'Review checks'})).toHaveCount(0);
+  await expect(page.locator('#original-paper')).toBeVisible();
+  await page.evaluate(()=>scrollTo(0,0));
+  await capture('grading-in-progress',async()=>{
+    expect((await page.locator('#grading-controls').boundingBox()).y).toBeLessThan((await page.locator('#question-detail').boundingBox()).y);
+    if(!mobile)expect((await page.locator('#paper-viewport').boundingBox()).height).toBeGreaterThan(430);
+  });
+  await page.goto('/app/grading.html?exam_id=e');
+  await page.locator('#paper-picker').getByRole('button',{name:'View progress'}).click();
+  await expect(page.getByRole('heading',{name:'AI grading in progress'})).toBeVisible();
+  activityUnavailable=true;
+  state.gradingJob={...state.gradingJob,status:'failed',error_message:'Synthetic failure'};
+  const freshStart=page.getByRole('button',{name:'Grade with current AI setup'});
+  await expect(freshStart).toBeEnabled({timeout:7000});
+  await expect(input).toBeEnabled();
+  await expect(start).toHaveCount(0);
+  await page.evaluate(()=>MisraAPI.setInferenceProfile('local_qwen_vision_gemini_v1'));
+  await freshStart.click();
+  await expect(page.getByRole('heading',{name:'AI grading in progress'})).toBeVisible();
+  expect(state.gradingProfile).toBe('local_qwen_vision_gemini_v1');
 });
 
 test('administration is restricted and admin controls call existing endpoints',async({page})=>{
