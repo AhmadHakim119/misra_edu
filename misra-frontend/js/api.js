@@ -9,7 +9,7 @@
   const API_BASE = (window.MISRA_API_BASE || sameOriginApi).replace(/\/$/, '');
   const inferenceKey = 'misra.inference-profile.v1';
   const localInference = 'local_qwen_gemini_v1';
-  const inferenceProfiles = new Set([localInference, 'local_qwen_vision_gemini_v1', 'configured']);
+  const inferenceProfiles = new Set([localInference, 'local_qwen_vision_gemini_v1', 'local_qwen_all_v1', 'configured']);
   function inferenceProfile() {
     try {
       const saved = localStorage.getItem(inferenceKey);
@@ -171,6 +171,7 @@
     workspaceJobs: (limit = 8) => request(`/jobs?limit=${encodeURIComponent(limit)}`),
     job: (jobId) => request(`/jobs/${encodeURIComponent(jobId)}`),
     retryJob: (jobId) => request(`/jobs/${encodeURIComponent(jobId)}/retry`, { method: 'POST', body: '{}' }),
+    stopJob: (jobId) => request(`/jobs/${encodeURIComponent(jobId)}/stop`, { method: 'POST', body: '{}' }),
     retryBatch: (batchId) => request(`/batches/${encodeURIComponent(batchId)}/retry`, { method: 'POST', body: '{}' }),
     submissionJobs: (submissionId, jobType = '') => request(`/submissions/${encodeURIComponent(submissionId)}/jobs${jobType ? `?job_type=${encodeURIComponent(jobType)}` : ''}`),
     submissions: (examId) => request(`/submissions${examId ? `?exam_id=${encodeURIComponent(examId)}` : ''}`),

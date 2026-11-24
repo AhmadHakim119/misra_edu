@@ -1,5 +1,25 @@
 # Local Qwen with Gemini page reading
 
+**Fully local Qwen** in **Settings → AI services** uses Ollama for page
+reading (including exam import), guide and quiz drafting, grading and
+verification. Install both `qwen3-vl:4b-instruct` and `qwen3:4b-instruct`.
+Qwen Vision reads pages and handles grading and verification requests with
+images. Qwen3 Instruct drafts material and handles text-only grading and
+verification. The selected grading-input policy still determines which
+evidence is sent. Existing hybrid setups and saved job profiles retain their
+original routing.
+
+If Ollama reports the Windows CUDA runner crash, MISRA makes one CPU attempt
+with the same model and complete evidence. The remainder of that job uses CPU
+for vision calls. A terminal local model error is surfaced in Activity instead
+of repeatedly trying the same provider request. Use **Stop grading** in
+Activity to stop queued work or interrupt an in-flight Ollama grading request.
+Hosted requests can still finish before the worker reaches its next checkpoint.
+Completed answers remain saved and a stopped job can be resumed from Activity.
+If a primary proposal was already saved before an image comparison was
+interrupted, resume keeps the proposal and reports the incomplete comparison
+for instructor review.
+
 Open **Settings → AI services** in `/app/account.html`. New requests from the
 instructor app default to **Local Qwen + Gemini page reading**. **Save AI setup**
 retains the selected profile on this browser. **Local Qwen Vision + Gemini

@@ -52,6 +52,58 @@
   document.body.classList.add('workspace-app');
   document.body.append(header, notice, outlet);
 
+  function ask(message, {title='Confirm action', action='Continue', field=''}={}) {
+    const dismissed=field?null:false;
+    if (document.querySelector('.workspace-dialog[open]')) return Promise.resolve(dismissed);
+    const signal=page.signal;
+    if(signal.aborted)return Promise.resolve(dismissed);
+    const dialog = document.createElement('dialog');
+    dialog.className = 'workspace-dialog';
+    dialog.setAttribute('aria-labelledby','workspace-dialog-title');
+    dialog.setAttribute('aria-describedby','workspace-dialog-description');
+    dialog.innerHTML = `<form method="dialog" novalidate><h2 id="workspace-dialog-title"></h2><p id="workspace-dialog-description"></p>
+      <label hidden><span></span><input type="text" maxlength="500" aria-describedby="workspace-dialog-error"></label><p id="workspace-dialog-error" role="alert" hidden></p>
+      <div class="workspace-dialog-actions"><button type="submit" value="cancel" formnovalidate autofocus>Cancel</button>
+      <button type="submit" value="confirm" class="primary"></button></div></form>`;
+    const input=dialog.querySelector('input'), form=dialog.querySelector('form');
+    dialog.querySelector('h2').textContent=translate(title);
+    dialog.querySelector('p').textContent=translate(message);
+    dialog.querySelector('[value=confirm]').textContent=translate(action);
+    const label=input.closest('label');
+    label.hidden=!field;
+    input.disabled=!field;
+    input.required=Boolean(field);
+    label.querySelector('span').textContent=translate(field);
+    const origin=document.activeElement;
+    document.body.append(dialog);
+    return new Promise(resolve=>{
+      const abort=()=>dialog.close('cancel');
+      signal.addEventListener('abort',abort,{once:true});
+      dialog.addEventListener('close',()=>{
+        signal.removeEventListener('abort',abort);
+        const value=!signal.aborted && dialog.returnValue==='confirm' ? (field ? input.value.trim() : true) : dismissed;
+        dialog.remove();
+        if(!signal.aborted && origin?.isConnected)origin.focus({preventScroll:true});
+        resolve(value);
+      },{once:true});
+      form.addEventListener('submit',event=>{
+        if(field && event.submitter?.value==='confirm' && !input.value.trim()){
+          event.preventDefault();input.setAttribute('aria-invalid','true');input.focus();
+          const error=dialog.querySelector('#workspace-dialog-error');
+          error.textContent=translate('Enter a value to continue.');error.hidden=false;
+        }
+      });
+      input.addEventListener('keydown',event=>{
+        if(event.key==='Enter' && !event.isComposing){event.preventDefault();form.requestSubmit(form.querySelector('[value=confirm]'));}
+      });
+      input.addEventListener('input',()=>{
+        input.removeAttribute('aria-invalid');dialog.querySelector('#workspace-dialog-error').hidden=true;
+      });
+      dialog.showModal();
+      if(field)input.focus();
+    });
+  }
+
   function createPage() {
     const controller = new AbortController();
     const timers = new Set(), guards = [];
@@ -78,13 +130,14 @@
       guard(isBusy, hasUnsaved) {
         guards.push({isBusy, hasUnsaved});
       },
-      canLeave() {
+      needsLeaveCheck() { return guards.some(guard => guard.isBusy() || guard.hasUnsaved()); },
+      async canLeave() {
         if (guards.some(guard => guard.isBusy())) {
           announce('Wait for the current operation to finish.');
           return false;
         }
         return !guards.some(guard => guard.hasUnsaved())
-          || confirm(translate('Leave without saving your changes?'));
+          || await ask('Leave without saving your changes?', {title:'Discard unsaved changes?',action:'Leave page'});
       },
       result(value) {
         if (typeof value?.then !== 'function') return value;
@@ -184,7 +237,7 @@
   themeObserver.observe(document.documentElement, {attributeFilter: ['data-theme']});
 
   signOut.addEventListener('click', async () => {
-    if (booting || changing || leavingSession || !window.MisraAPI || !page.canLeave()) return;
+    if (booting || changing || leavingSession || !window.MisraAPI || !await page.canLeave()) return;
     leavingSession = true;
     signOut.disabled = true;
     try {
@@ -339,10 +392,18 @@
   // Anchor clicks are checked before the browser starts navigation. Programmatic
   // transitions after saved operations already check their own prerequisites.
   document.addEventListener('click', event => {
-    if (!isSoftLink(event)) return;
-    if (booting || changing || leavingSession || !page.canLeave()) {
+    if(event.defaultPrevented || event.button!==0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)return;
+    const link=event.target.closest('a[href]');
+    if(!link || link.hasAttribute('download') || link.target && link.target!=='_self')return;
+    const url=new URL(link.href);
+    if(url.pathname===location.pathname && url.search===location.search && url.hash)return;
+    if(!['http:','https:'].includes(url.protocol))return;
+    if (booting || changing || leavingSession || page.needsLeaveCheck()) {
       event.preventDefault();
       event.stopImmediatePropagation();
+      if (booting || changing || leavingSession) return;
+      const origin=page, destination=url.href;
+      origin.canLeave().then(allowed=>{ if(allowed && page===origin)location.assign(destination); });
     }
   }, true);
 
@@ -511,7 +572,7 @@
       return;
     }
     if (booting && routeName(rendered) === 'index' && !rendered.searchParams.has('exam_id')) return;
-    if (booting || changing || leavingSession || (traverse && !page.canLeave())) {
+    if (booting || changing || leavingSession) {
       if (event.cancelable) event.preventDefault();
       else if (event.destination.sameDocument && entryKey) {
         event.intercept({handler: restoreEntry});
@@ -524,6 +585,7 @@
     let prepared;
     const options = {
       ...(event.cancelable ? {async precommitHandler(commit) {
+        if (traverse && page.needsLeaveCheck() && !await page.canLeave()) throw new DOMException('Navigation canceled', 'AbortError');
         startNavigation(event);
         try {
           prepared = await preparePage(destination, event.signal);
@@ -536,6 +598,7 @@
       }} : {}),
       async handler() {
         if (!prepared) {
+          if (traverse && page.needsLeaveCheck() && !await page.canLeave()) { await restoreEntry(); return; }
           startNavigation(event);
           try { prepared = await preparePage(destination, event.signal); }
           catch {
@@ -559,7 +622,7 @@
   window.MisraWorkspace = {
     get page() { return page; },
     get preparedTemplate() { return preparedTemplate; },
-    replacePageContent, loadScript, addStyles, scopeAPI, showLoadError, setUser, refreshThemeLabel, isSoftLink
+    replacePageContent, loadScript, addStyles, scopeAPI, showLoadError, setUser, refreshThemeLabel, isSoftLink, confirm:ask
   };
   if (softNavigation) window.navigation?.addEventListener('navigate', navigate);
 })();

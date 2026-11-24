@@ -1,5 +1,8 @@
+const {staticWorkspace}=require('./fixtures/static-workspace');
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test,expect}=require('@playwright/test');
 async function fixture(page,{failSave=false,failApprove=false,holdSave=false,holdQuestion=false,failCreate=false,withSources=false,multipleCriteria=false,expandedProfile=null,automaticPreferences=true,initialDraft=false,failDelete=false,holdDelete=false,questionRows=null,holdKey=false,dropDefinition=false}={}) {
+  await staticWorkspace(page);
   const writes=[];let releaseSave,releaseQuestion,releaseDelete,releaseKey;
   const saveGate=new Promise(r=>releaseSave=r),questionGate=new Promise(r=>releaseQuestion=r),deleteGate=new Promise(r=>releaseDelete=r),keyGate=new Promise(r=>releaseKey=r);
   const base={schema_version:2,max_score:2,criteria:[{id:'work',title:'Work calculation',description:'Use W = Fd with units',points:2,scoring_type:'scaled',partial_credit_allowed:false,performance_levels:[{label:'Correct',description:'Correct result and units',points_earned:2}],common_errors:[{description:'Arithmetic error',guidance:'Follow method-credit policy'}],alternative_methods:['Equivalent rearrangement'],required_evidence:['Formula','Result']}],policy:{grading_approach:'strict',units_policy:'required',method_credit:'partial',arithmetic_error_policy:'criterion_specific',rounding_tolerance_percent:1,alternative_methods_allowed:false}};
@@ -186,9 +189,9 @@ test('failed draft total save retains the corrected value and pending saves lock
 test('delete question cancels without losing edits, then removes only the chosen draft',async({page})=>{
   const state=await fixture(page,{withSources:true});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
   await page.locator('#ac-0-title').fill('Unsaved selected question edit');
-  page.once('dialog',d=>d.dismiss());await page.getByRole('button',{name:'Delete question',exact:true}).click();
+  await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'cancel');
   await expect(page.locator('#ac-0-title')).toHaveValue('Unsaved selected question edit');expect(state.writes).toHaveLength(0);
-  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Delete question',exact:true}).click();
+  await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#guide-outline')).toBeVisible();await expect(page.locator('[data-guide-question="q"]')).toHaveCount(0);
   await expect(page.locator('#guide-outline [data-guide-question="q-other"]')).toBeVisible();await expect(page.locator('#guide-total')).toContainText('1 questions · 2 marks');
   expect(state.writes).toEqual([{kind:'delete',id:'q'}]);await expect(page.locator('#author-new-question')).toBeFocused();
@@ -197,21 +200,21 @@ test('delete question cancels without losing edits, then removes only the chosen
 
 test('deleting the last draft question leaves an actionable empty guide',async({page})=>{
   const state=await fixture(page,{initialDraft:true});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
-  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Delete question',exact:true}).click();
+  await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#guide-outline')).toContainText('Add an exam question');await expect(page.locator('#guide-total')).toContainText('0 questions · 0 marks');
   expect(state.writes).toEqual([{kind:'delete',id:'q'}]);await expect(page.locator('#author-new-question')).toBeEnabled();
 });
 
 test('rejected deletion keeps the draft, unsaved criterion and original key text',async({page})=>{
   const state=await fixture(page,{withSources:true,failDelete:true});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
-  await page.locator('#ac-0-title').fill('Keep this unsaved criterion');page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Delete question',exact:true}).click();
+  await page.locator('#ac-0-title').fill('Keep this unsaved criterion');await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#author-error')).toContainText('Papers already exist');await expect(page.locator('#ac-0-title')).toHaveValue('Keep this unsaved criterion');
   await expect(page.locator('#native-authoring')).toBeVisible();await expect(page.locator('#author-state')).toContainText('Unsaved');expect(state.writes).toEqual([{kind:'delete',id:'q'}]);
 });
 
 test('unconfirmed question deletion requires a reload before another write',async({page})=>{
   const state=await fixture(page,{initialDraft:true,failDelete:'uncertain'});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
-  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Delete question',exact:true}).click();
+  await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#author-error')).toContainText('Synthetic deletion interruption');await expect(page.locator('#author-state')).toContainText('Change not confirmed');
   await expect(page.locator('[data-author-delete]')).toBeDisabled();await expect(page.locator('#author-new-question')).toBeDisabled();await expect(page.locator('#author-reload')).toBeEnabled();
   expect(state.writes).toEqual([{kind:'delete',id:'q'}]);await page.locator('#author-reload').click();await expect(page.locator('[data-author-delete]')).toBeEnabled();
@@ -219,8 +222,8 @@ test('unconfirmed question deletion requires a reload before another write',asyn
 
 test('discard question removes an unsaved addition without an API write',async({page})=>{
   const state=await fixture(page);await edit(page);const before=state.writes.length;await page.locator('#author-new-question').click();await page.locator('#author-question-text').fill('Accidental unsaved question');
-  page.once('dialog',d=>d.dismiss());await page.getByRole('button',{name:'Discard question',exact:true}).click();await expect(page.locator('#author-question-text')).toHaveValue('Accidental unsaved question');
-  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Discard question',exact:true}).click();await expect(page.locator('#guide-outline')).toBeVisible();
+  await page.getByRole('button',{name:'Discard question',exact:true}).click();await answerWorkspaceDialog(page,'cancel');await expect(page.locator('#author-question-text')).toHaveValue('Accidental unsaved question');
+  await page.getByRole('button',{name:'Discard question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');await expect(page.locator('#guide-outline')).toBeVisible();
   expect(state.writes.length).toBe(before);await expect(page.locator('#guide-total')).toContainText('1 questions · 2 marks');
 });
 
@@ -231,7 +234,7 @@ test('approved question history disables deletion and explains why',async({page}
 
 test('pending question deletion locks duplicate actions and navigation',async({page})=>{
   const state=await fixture(page,{initialDraft:true,holdDelete:true});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
-  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Delete question',exact:true}).click();
+  await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('[data-author-delete]')).toBeDisabled();await expect(page.locator('#author-new-question')).toBeDisabled();
   await page.locator('#author-back').click();await expect(page.locator('#native-authoring')).toBeVisible();expect(state.writes.filter(w=>w.kind==='delete')).toHaveLength(1);
   state.releaseDelete();await expect(page.locator('#guide-outline')).toBeVisible();
@@ -248,7 +251,7 @@ test('delete question action fits the question editor in both themes and Arabic'
 
 test('expanded approved preferences apply to a rubric draft with explicit confirmation',async({page})=>{
   const state=await fixture(page,{expandedProfile:{id:'expanded',status:'approved',version_number:2,derived_proposal:{units_policy:'do_not_penalize',rounding_tolerance_percent:0,evidence_requirement:'complete_reasoning',illegible_response_policy:'manual_review',arithmetic_error_policy:'single_penalty',custom_instructions:'Flag contradictory answers for instructor review.'}}});
-  await edit(page);await page.locator('[data-author-section=options]>summary').click();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Use my approved profile',exact:true}).click();
+  await edit(page);await page.locator('[data-author-section=options]>summary').click();await page.getByRole('button',{name:'Use my approved profile',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
   await page.getByRole('button',{name:'Save draft',exact:true}).click();
   const policy=state.writes.filter(w=>w.kind==='save').at(-1)?.body.rubric.policy;
   expect(policy).toMatchObject({units_policy:'do_not_penalize',rounding_tolerance_percent:0,evidence_requirement:'complete_reasoning',illegible_response_policy:'manual_review'});
@@ -390,7 +393,7 @@ test('approval failure keeps saved draft and does not falsely report approval',a
   await fixture(page,{failApprove:true});await edit(page);await page.locator('#guide-review-tab').click();await page.locator('#guide-confirm').check();await page.locator('#guide-approve').click();await expect(page.locator('#guide-approval-state')).toContainText('Synthetic approval outage');await expect(page.locator('#guide-approve')).toBeDisabled();await page.locator('#guide-refresh').click();await expect(page.locator('#guide-confirm')).not.toBeChecked();
 });
 test('busy and unsaved rubric states protect assessment and task changes',async({page})=>{
-  const state=await fixture(page,{holdSave:true});await edit(page);await page.locator('#ac-0-title').fill('Protected');page.once('dialog',d=>d.dismiss());await page.locator('[data-exam="e2"]').click();await expect(page.locator('#native-authoring')).toBeVisible();
+  const state=await fixture(page,{holdSave:true});await edit(page);await page.locator('#ac-0-title').fill('Protected');await page.locator('[data-exam="e2"]').click();await answerWorkspaceDialog(page,'cancel');await expect(page.locator('#native-authoring')).toBeVisible();
   await page.getByRole('button',{name:'Save draft',exact:true}).click();await page.locator('[data-exam="e2"]').click();await expect(page.locator('#exam-title')).toHaveText('Synthetic physics pilot');await expect(page.locator('#author-foundations')).toHaveAttribute('disabled','');state.releaseSave();await expect(page.locator('#author-state')).toContainText('Draft saved');
 });
 test('new question requests a real initial draft, not approval',async({page})=>{
@@ -399,7 +402,7 @@ test('new question requests a real initial draft, not approval',async({page})=>{
 });
 test('answer key is independently saved, guarded and explicitly approved',async({page})=>{
   const state=await fixture(page);await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();await expect(page.locator('#ac-0-title')).toBeVisible();await page.locator('#author-key-section>summary').click();await expect(page.locator('#key-reference')).toBeVisible();await page.locator('#key-reference').fill('W = Fd = 246 J.');
-  page.once('dialog',d=>d.dismiss());await page.locator('[data-exam="e2"]').click();await expect(page.locator('#key-reference')).toHaveValue('W = Fd = 246 J.');await page.getByRole('button',{name:'Save answer-key draft',exact:true}).click();await expect(page.locator('#answer-key-panel')).toContainText('draft');expect(state.writes.some(w=>w.kind==='key-approve')).toBeFalsy();
+  await page.locator('[data-exam="e2"]').click();await answerWorkspaceDialog(page,'cancel');await expect(page.locator('#key-reference')).toHaveValue('W = Fd = 246 J.');await page.getByRole('button',{name:'Save answer-key draft',exact:true}).click();await expect(page.locator('#answer-key-panel')).toContainText('draft');expect(state.writes.some(w=>w.kind==='key-approve')).toBeFalsy();
   await page.locator('#guide-review-tab').click();await page.locator('#guide-confirm').check();await page.locator('#guide-approve').click();await expect.poll(()=>state.writes.filter(w=>w.kind==='approve').length).toBe(1);expect(state.writes.filter(w=>w.kind==='key-approve')).toHaveLength(0);
 });
 test('native course library saves notes, reviews text and approves checked pages',async({page},info)=>{

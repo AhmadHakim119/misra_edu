@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   const routeScope = window.MisraWorkspace?.page;
+  const confirmAction = message => window.MisraWorkspace ? MisraWorkspace.confirm(message) : window.confirm(message);
   const cancelTimer = routeScope?.cancelTimer || clearTimeout;
   const scheduleTimer = routeScope?.later || setTimeout;
   const onWindow = (...args) => routeScope ? routeScope.listen(window, ...args) : window.addEventListener(...args);
@@ -24,7 +25,7 @@
   function hasUnsaved() { return dirty || reviewDirty() || busy || revisionFiles.size > 0 || Boolean(materialForm.title || materialForm.text || materialForm.file); }
   function canLeave() {
     if (busy) { window.showToast('Wait for the source operation to finish.', 'info'); return false; }
-    return !hasUnsaved() || window.confirm('Discard unsaved course-source edits?');
+    return !hasUnsaved() || confirmAction('Discard unsaved course-source edits?');
   }
   function reset() {
     generation++; cancelTimer(timer); host = null; courseId = null; questionId = null;
@@ -169,9 +170,9 @@
     host.querySelector('[data-source-save]')?.addEventListener('click',() => saveScope(false));
     host.querySelector('[data-source-approve]')?.addEventListener('click',() => saveScope(true));
     host.querySelector('[data-source-preview]')?.addEventListener('click',() => operation(async request => { const result = await MisraAPI.materialRetrievalPreview(questionId); if (request === generation) preview = result; }));
-    host.querySelector('[data-material-reload]')?.addEventListener('click',() => { if (canLeave()) load(courseId,questionId,criteria); });
-    host.querySelectorAll('[data-material-review]').forEach(el => el.addEventListener('click',() => {
-      if (reviewDirty() && !window.confirm('Discard unsaved page-review and approval edits?')) return;
+    host.querySelector('[data-material-reload]')?.addEventListener('click',async () => { if (await canLeave()) load(courseId,questionId,criteria); });
+    host.querySelectorAll('[data-material-review]').forEach(el => el.addEventListener('click',async () => {
+      if (reviewDirty() && !await confirmAction('Discard unsaved page-review and approval edits?')) return;
       review = {materialId:el.dataset.materialReview,versionId:el.dataset.version,index:0}; pageDirty = false;
       openPage();
     }));
@@ -204,7 +205,7 @@
     let body;
     try { body = {mode,bindings:['disabled','inherit'].includes(mode) ? [] : readBindings()}; if (!['disabled','inherit'].includes(mode) && !body.bindings.length) throw new Error('Add at least one approved reference, use assessment defaults, or explicitly disable retrieval.'); }
     catch (failure) { window.showToast(failure.message,'error'); return; }
-    if (approve && !window.confirm('Approve these sources for future grading? The current rubric determines marks; source content cannot add deductions.')) return;
+    if (approve && !await confirmAction('Approve these sources for future grading? The current rubric determines marks; source content cannot add deductions.')) return;
     operation(async request => {
       const draft = await MisraAPI.createMaterialScope(questionId,body);
       if (request !== generation) return;
@@ -248,8 +249,8 @@
     target.querySelectorAll('#material-page-text,#material-page-label').forEach(el => el.addEventListener('input',() => {
       pageDirty = true; page._text = target.querySelector('#material-page-text').value; page._label = target.querySelector('#material-page-label').value;
     }));
-    target.querySelector('[data-material-close]').addEventListener('click',() => { if (reviewDirty() && !window.confirm('Discard unsaved page-review and approval edits?')) return; review = page = null; pageDirty = false; render(); });
-    for (const [selector,delta] of [['[data-material-prev]',-1],['[data-material-next]',1]]) target.querySelector(selector).addEventListener('click',() => { if (pageDirty && !window.confirm('Discard this unsaved transcription?')) return; openPage(page.page_index + delta); });
+    target.querySelector('[data-material-close]').addEventListener('click',async () => { if (reviewDirty() && !await confirmAction('Discard unsaved page-review and approval edits?')) return; review = page = null; pageDirty = false; render(); });
+    for (const [selector,delta] of [['[data-material-prev]',-1],['[data-material-next]',1]]) target.querySelector(selector).addEventListener('click',async () => { if (pageDirty && !await confirmAction('Discard this unsaved transcription?')) return; openPage(page.page_index + delta); });
     target.querySelector('[data-material-page-save]')?.addEventListener('click',() => {
       const text = target.querySelector('#material-page-text').value, printed_page_label = target.querySelector('#material-page-label').value || null;
       operation(async request => {

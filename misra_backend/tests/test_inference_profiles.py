@@ -6,13 +6,14 @@ import json
 import os
 from types import SimpleNamespace
 import unittest
+from urllib.error import HTTPError
 from unittest.mock import patch
 
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, MockTransport
 from PIL import Image
 from services.inference_profiles import (
-    LOCAL_PROFILE, TEXT_ONLY_IMAGE_ERROR, VISION_MODEL, VISION_PROFILE, active_profile, install_profile_middleware, local_profile,
+    FULL_LOCAL_PROFILE, LOCAL_MODEL, LOCAL_PROFILE, TEXT_ONLY_IMAGE_ERROR, VISION_MODEL, VISION_PROFILE, active_profile, install_profile_middleware, local_profile,
     loopback_url, profile_scope, validate_snapshot,
 )
 from services.inference_service import complete, configuration, generate_setup, verification_enabled
@@ -37,6 +38,37 @@ class InferenceProfileTests(unittest.TestCase):
         self.assertEqual(configuration('grading')['provider'], 'gemini')
         self.assertFalse(verification_enabled())
         self.assertEqual(dict(os.environ), original)
+
+    def test_ollama_connection_cancels_before_a_response_arrives(self):
+        from services.grading_control import GradingStopped, grading_checkpoint
+        from services.inference_service import _cancellable_ollama_chat
+
+        async def exercise():
+            started = asyncio.Event()
+            closed = asyncio.Event()
+
+            async def waiting_server(request):
+                started.set()
+                try:
+                    await asyncio.Future()
+                finally:
+                    closed.set()
+
+            def checkpoint(**kwargs):
+                if started.is_set():
+                    raise GradingStopped()
+
+            token = grading_checkpoint.set(checkpoint)
+            try:
+                with patch('httpx.AsyncClient', side_effect=lambda **options: AsyncClient(
+                    transport=MockTransport(waiting_server), **options)):
+                    with self.assertRaises(GradingStopped):
+                        await asyncio.wait_for(_cancellable_ollama_chat('http://127.0.0.1/api/chat', {}, 900, check_interval=.01), 1)
+                self.assertTrue(closed.is_set())
+            finally:
+                grading_checkpoint.reset(token)
+
+        asyncio.run(exercise())
 
     def test_concurrent_requests_cannot_change_each_others_provider(self):
         async def worker(profile):
@@ -84,7 +116,7 @@ class InferenceProfileTests(unittest.TestCase):
                 send.assert_not_called(); hosted.assert_not_called()
 
     def test_vision_profile_sends_images_for_grading_and_verification_to_pinned_ollama(self):
-        response = {'model': VISION_MODEL, 'choices': [{'finish_reason': 'stop', 'message': {'content': '{}'}}]}
+        response = {'model': VISION_MODEL, 'done': True, 'done_reason': 'stop', 'message': {'content': '{}'}}
         snapshot = local_profile(VISION_PROFILE)
         self.assertEqual(snapshot['tasks']['ocr']['provider'], 'gemini')
         self.assertEqual(snapshot['tasks']['setup'], local_profile()['tasks']['setup'])
@@ -97,12 +129,47 @@ class InferenceProfileTests(unittest.TestCase):
                 out = complete(['Synthetic rubric', Image.new('RGB', (2, 2))], task=task)
                 request = send.call_args.args[0]
                 body = json.loads(request.data)
-                self.assertEqual(request.full_url, 'http://127.0.0.1:11434/v1/chat/completions')
+                self.assertEqual(request.full_url, 'http://127.0.0.1:11434/api/chat')
                 self.assertEqual(body['model'], VISION_MODEL)
-                self.assertTrue(body['messages'][0]['content'][1]['image_url']['url'].startswith('data:image/png;base64,'))
+                self.assertTrue(body['messages'][0]['images'][0].startswith('iVBORw0KGgo'))
+                self.assertEqual(body['options']['num_ctx'], 16384)
+                self.assertEqual(body['options']['num_predict'], snapshot['max_output_tokens'])
+                self.assertFalse(body['truncate'])
+                self.assertFalse(body['shift'])
                 self.assertEqual(out.metadata['image_count'], 1)
+                self.assertEqual(out.metadata['context_tokens'], body['options']['num_ctx'])
                 self.assertEqual(out.metadata['inference_profile'], VISION_PROFILE)
+            # This fits in tokens, but its byte length exceeded the old guard.
+            long_prompt = 'Approved criterion and synthetic evidence.\n' * 750
+            for task in ('grading', 'verification'):
+                send.return_value = io.BytesIO(json.dumps(response).encode())
+                complete([long_prompt, Image.new('RGB', (2, 2))], task=task)
+                body = json.loads(send.call_args.args[0].data)
+                self.assertEqual(body['options']['num_ctx'], snapshot['context_tokens'])
+                self.assertEqual(body['messages'][0]['content'], long_prompt)
+                self.assertEqual(len(body['messages'][0]['images']), 1)
+                self.assertFalse(body['truncate'])
+                self.assertFalse(body['shift'])
             hosted.assert_not_called()
+
+    def test_vision_assessment_and_verifier_send_their_response_schemas(self):
+        from services.grading_service import GradingResult, _assessment_completion
+        from services.verification_agent import VerificationResult, verify
+
+        def response(content):
+            return {'model': VISION_MODEL, 'done': True, 'done_reason': 'stop',
+                    'message': {'content': json.dumps(content)}}
+
+        image = Image.new('RGB', (2, 2))
+        with profile_scope(local_profile(VISION_PROFILE)), \
+                patch('services.inference_service._ollama_json') as send:
+            send.return_value = response({})
+            _assessment_completion(['Synthetic question', image])
+            self.assertEqual(send.call_args.kwargs['body']['format'], GradingResult.model_json_schema())
+            send.return_value = response({'criteria': [{'criterion_id': 'method', 'verdict': 'needs_review',
+                'explanation': 'Check the method.'}], 'summary': 'Review required.'})
+            verify({}, {'criteria_scores': [{'criterion_id': 'method', 'points_earned': 0, 'max_points': 1}]}, [image])
+            self.assertEqual(send.call_args.kwargs['body']['format'], VerificationResult.model_json_schema())
 
     def test_incomplete_mismatched_and_tool_responses_do_not_fallback(self):
         base = {'model': 'qwen3:4b-instruct', 'done': True, 'done_reason': 'stop', 'message': {'content': '{}'}}
@@ -124,6 +191,40 @@ class InferenceProfileTests(unittest.TestCase):
             local.assert_not_called()
             generate_setup('Draft a rubric from synthetic checked text', json_mode=True)
             local.assert_called_once()
+
+    def test_fully_local_profile_routes_all_tasks_without_hosted_calls(self):
+        def response(path, body, timeout):
+            return {'model': body['model'], 'done': True, 'done_reason': 'stop', 'message': {'content': '{}'}}
+
+        image = Image.new('RGB', (2, 2))
+        with profile_scope(local_profile(FULL_LOCAL_PROFILE)), \
+                patch('services.inference_service._ollama_json', side_effect=response) as send, \
+                patch('services.inference_service.gemini_generate') as gemini, \
+                patch('services.inference_service.complete_free') as hosted:
+            for task, contents, expected in (
+                ('ocr', ['Read the page', image], VISION_MODEL), ('setup', 'Synthetic guide', LOCAL_MODEL),
+                ('grading', 'Synthetic transcription', LOCAL_MODEL), ('grading', ['Synthetic work', image], VISION_MODEL),
+                ('verification', 'Synthetic transcription', LOCAL_MODEL), ('verification', ['Synthetic work', image], VISION_MODEL),
+            ):
+                self.assertEqual(complete(contents, task=task).metadata['model'], expected)
+            generate_setup(['Synthetic page', image], json_mode=True)
+            self.assertEqual(send.call_args.kwargs['body']['model'], VISION_MODEL)
+            gemini.assert_not_called(); hosted.assert_not_called()
+
+    def test_vision_cuda_crash_tries_cpu_once_with_identical_evidence(self):
+        err = HTTPError('http://127.0.0.1:11434/api/chat', 500, 'runner failed', {},
+                        io.BytesIO(b'{"error":"llama-server process has terminated: exit status 0xc0000409"}'))
+        result = {'model': VISION_MODEL, 'done': True, 'done_reason': 'stop', 'message': {'content': '{}'}}
+        with profile_scope(local_profile(FULL_LOCAL_PROFILE)), \
+                patch('services.inference_service._ollama_json', side_effect=[err, result, result]) as send:
+            evidence = ['Synthetic evidence', Image.new('RGB', (2, 2))]
+            self.assertTrue(complete(evidence, task='ocr').metadata['cpu_vision'])
+            complete(evidence, task='verification')
+        first, second, third = (call.kwargs['body'] for call in send.call_args_list)
+        self.assertNotIn('num_gpu', first['options'])
+        self.assertEqual(second['options']['num_gpu'], 0)
+        self.assertEqual(third['options']['num_gpu'], 0)
+        self.assertEqual(first['messages'], second['messages'])
 
     def test_local_status_checks_tags_without_inference(self):
         from routers.inference_profiles import local_status
@@ -154,10 +255,10 @@ class InferenceProfileTests(unittest.TestCase):
                 self.assertEqual(catalog['configured']['tasks']['grading']['provider'], 'gemini')
                 self.assertEqual(catalog[VISION_PROFILE]['tasks']['grading']['model'], VISION_MODEL)
                 self.assertFalse(catalog[VISION_PROFILE]['text_only_grading'])
-                with patch('routers.inference_profiles._ollama_json', return_value={'models': [{'name': VISION_MODEL}]}):
+                with patch('routers.inference_profiles._ollama_json', return_value={'models': [{'name': VISION_MODEL}, {'name': LOCAL_MODEL}]}):
                     status = await client.get('/api/inference-profiles/local-status', params={'profile_id': VISION_PROFILE})
                 self.assertEqual(status.status_code, 200)
-                self.assertEqual(status.json()['model'], VISION_MODEL)
+                self.assertIn(VISION_MODEL, status.json()['models'])
                 self.assertTrue(status.json()['available'])
                 self.assertEqual((await client.get('/api/inference-profiles', headers={'X-Misra-Inference-Profile': 'arbitrary'})).status_code, 422)
         asyncio.run(exercise())
@@ -183,8 +284,11 @@ class ProfilePersistenceTests(unittest.TestCase):
     result = _fixture.result
 
     def test_failed_text_only_image_job_requires_fresh_grading(self):
+        from models import ProcessingJob
         from services.job_queue_service import retry_processing_job
-        job = SimpleNamespace(status='failed', job_type='grade_submission', error_message=TEXT_ONLY_IMAGE_ERROR)
+        job = ProcessingJob(id='text-only-image-error', institution_id='i', requested_by='teacher',
+                            submission_id='s', status='failed', job_type='grade_submission', error_message=TEXT_ONLY_IMAGE_ERROR)
+        self.db.add(job); self.db.commit()
         with patch('services.job_queue_service.dispatch_processing_job') as dispatch:
             with self.assertRaisesRegex(ValueError, 'Grade with current AI setup'):
                 retry_processing_job(job, self.db)

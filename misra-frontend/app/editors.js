@@ -32,9 +32,9 @@
   const deletable=()=>!question?.id || Boolean(versions.length && !question.active_rubric_version_id && versions.every(v=>v.status==='draft'&&!v.approved_at&&!v.approved_by));
   const isBusy=()=>busy || MisraAnswerKeys.isBusy() || MisraMaterials.isBusy() || Boolean(window.MisraAssessmentGuide?.isBusy());
   const hasUnsaved=()=>dirty || isBusy() || MisraAnswerKeys.hasUnsaved() || MisraMaterials.hasUnsaved();
-  function canLeave() {
+  async function canLeave() {
     if(isBusy()) {window.showToast('Wait for the current marking-guide operation to finish.','info');return false;}
-    return MisraAnswerKeys.canLeave() && MisraMaterials.canLeave() && (!dirty || confirm('Discard unsaved question or rubric edits?'));
+    return await MisraAnswerKeys.canLeave() && await MisraMaterials.canLeave() && (!dirty || await MisraWorkspace.confirm('Discard unsaved question or rubric edits?'));
   }
   function reset(value) {
     ++epoch;++requestId;exam=value;questions=[];question=null;versions=[];version=rubric=null;dirty=busy=loading=loaded=uncertain=false;view='';failure=notice=renderKey='';profile=null;
@@ -175,7 +175,7 @@
   async function show(next='questions',preferred) {
     if(!exam) return;
     if(view===next && (next==='library' || loaded && (!preferred || preferred===question?.id))) return;
-    if(view && view!==next && !canLeave()) return;
+    if(view && view!==next && !await canLeave()) return;
     if(view!==next) {++requestId;loading=false;MisraMaterials.reset();MisraAnswerKeys.reset();dirty=false;}
     const changed=view!==next;
     view=next;$('native-authoring').hidden=next!=='questions';$('native-library').hidden=next!=='library';
@@ -194,7 +194,7 @@
   async function save(approve) {
     if(!editable() || uncertain) return;
     try {validate();}catch(e) {failure=e.message;$('author-error').hidden=false;$('author-error').textContent=failure;$('author-error').scrollIntoView({block:'center'});window.showToast(e.message,'error');return;}
-    if(approve && !confirm('Approve this rubric and scoring policy for future grading? Historical runs are unchanged. Answer keys and source approvals are separate.')) return;
+    if(approve && !await MisraWorkspace.confirm('Approve this rubric and scoring policy for future grading? Historical runs are unchanged. Answer keys and source approvals are separate.')) return;
     await action(async current=>{
       if(!question.id) {
         const body={approve_initial_rubric:false,question_number:question.question_number,question_text:question.question_text,max_score:rubric.max_score,language:question.language,criteria:rubric.criteria,policy:rubric.policy,grading_approach:rubric.policy.grading_approach,acceptable_answers:rubric.acceptable_answers,notes:rubric.notes,reference_context:rubric.reference_context};
@@ -218,7 +218,7 @@
     if(isBusy()||loading||uncertain||!deletable())return;
     const saved=Boolean(question?.id);
     const prompt=saved?'Delete this question and its draft guide? Unsaved edits will be discarded.':'Discard this unsaved question?';
-    if(!confirm(MisraLocale.text(prompt)))return;
+    if(!await MisraWorkspace.confirm(MisraLocale.text(prompt)))return;
     let removed=false;
     await action(async current=>{
       if(saved){try{await MisraAPI.deleteQuestion(question.id);}catch(e){if(!e.status||e.status>=500)uncertain=true;throw e;}}
@@ -230,9 +230,9 @@
     if(removed){window.showToast(MisraLocale.text(saved?'Question deleted.':'Unsaved question discarded.'),'success');window.dispatchEvent(new CustomEvent('misra:guide-question-removed'));window.dispatchEvent(new CustomEvent('misra:ledger-foundations-changed'));}
   }
   $('author-question').addEventListener('change',e=>choose(e.target.value));
-  $('author-reload').addEventListener('click',()=>{if(canLeave()) {MisraMaterials.reset();MisraAnswerKeys.reset();load(question?.id);}});
-  $('author-new-question').addEventListener('click',()=>{
-    if(!canLeave()) return;if(!preferencesKnown){window.showToast('Reload marking settings before creating a draft.','error');return;}window.dispatchEvent(new CustomEvent('misra:guide-editor-opened'));MisraMaterials.reset();MisraAnswerKeys.reset();question={question_number:String(questions.length+1),question_text:'',language:'en'};version=null;versions=[];rubric=normalize({criteria:[{id:'criterion_'+crypto.randomUUID().replaceAll('-','').slice(0,12),title:'',description:'',points:1}]},1);applyProfile();blankDraft=JSON.stringify({question,rubric});dirty=false;failure='';notice=profile&&usePreferences?'Survey preferences applied. Review before approval.':'';render();$('author-question').value='';$('author-question-text').focus();
+  $('author-reload').addEventListener('click',async()=>{if(await canLeave()) {MisraMaterials.reset();MisraAnswerKeys.reset();load(question?.id);}});
+  $('author-new-question').addEventListener('click',async()=>{
+    if(!await canLeave()) return;if(!preferencesKnown){window.showToast('Reload marking settings before creating a draft.','error');return;}window.dispatchEvent(new CustomEvent('misra:guide-editor-opened'));MisraMaterials.reset();MisraAnswerKeys.reset();question={question_number:String(questions.length+1),question_text:'',language:'en'};version=null;versions=[];rubric=normalize({criteria:[{id:'criterion_'+crypto.randomUUID().replaceAll('-','').slice(0,12),title:'',description:'',points:1}]},1);applyProfile();blankDraft=JSON.stringify({question,rubric});dirty=false;failure='';notice=profile&&usePreferences?'Survey preferences applied. Review before approval.':'';render();$('author-question').value='';$('author-question-text').focus();
   });
   $('setup-overview').addEventListener('click',e=>{const b=e.target.closest('[data-author-question]');if(b) show('questions',b.dataset.authorQuestion);});
   $('rubric-workspace').addEventListener('input',e=>{if(editable() && e.target.matches('[data-rubric-edit]')) {sync();dirty=true;updateState();}});
@@ -251,13 +251,13 @@
     if(target.hasAttribute('data-author-remove')) {sync();const index=Number(target.dataset.authorRemove);rubric.criteria.splice(index,1);dirty=true;render();const next=$('rubric-workspace').querySelectorAll('[data-criterion-panel]')[Math.min(index,rubric.criteria.length-1)];(next?.querySelector('summary') || $('rubric-workspace').querySelector('[data-author-add]')).focus();}
     if(target.dataset.detailAdd || target.dataset.detailRemove) {sync();const c=rubric.criteria[Number(target.closest('[data-author-criterion]').dataset.authorCriterion)];if(target.dataset.detailAdd) c[target.dataset.detailAdd].push(target.dataset.detailAdd==='performance_levels' ? {label:'',description:'',points_earned:0} : {description:'',guidance:''});else c[target.dataset.detailRemove].splice(Number(target.dataset.detailIndex),1);dirty=true;render();const panel=$('rubric-workspace').querySelectorAll('[data-author-criterion]')[rubric.criteria.indexOf(c)].querySelector('details');panel.open=true;}
     if(target.hasAttribute('data-author-draft')) action(async current=>{if(rubric.question_definition)rubric.question_definition.previous={question_number:question.question_number,question_text:question.question_text||'',language:question.language||'en'};const value=await MisraAPI.createRubricVersion(question.id,{rubric,source:'manual',apply_instructor_preferences:true,change_summary:'Instructor editing draft; saved account preference defaults requested.'});if(current!==epoch) return;version=value;rubric=normalize(value.rubric_json,question.max_score);versions.unshift(value);notice=profile&&usePreferences?'Survey preferences applied. Review before approval.':'Editable draft created. Review before approval.';});
-    if(target.dataset.authorVersion) {if(!canLeave()) return;const selected=versions.find(v=>v.id===target.dataset.authorVersion);if(selected) {version=selected;rubric=normalize(selected.rubric_json,question.max_score);dirty=false;failure=notice='';render();}}
-    if(target.hasAttribute('data-author-profile') && confirm('Replace this draft’s preference fields with your approved profile? Nothing is saved until you save or approve.')) {sync();for(const key of ['method_credit','alternative_methods_allowed','handwritten_syntax_policy','notation_policy','error_carried_forward','language_quality_policy','arithmetic_error_policy','units_policy','rounding_tolerance_percent','evidence_requirement','illegible_response_policy']) {const value=profile?.derived_proposal?.[key];if(value!=null) rubric.policy[key]=value;}const guidance=profile?.derived_proposal?.custom_instructions;if(guidance&&!rubric.policy.custom_instructions?.includes(guidance))rubric.policy.custom_instructions=[rubric.policy.custom_instructions,guidance].filter(Boolean).join('\n');dirty=true;render();}
+    if(target.dataset.authorVersion) {if(!await canLeave()) return;const selected=versions.find(v=>v.id===target.dataset.authorVersion);if(selected) {version=selected;rubric=normalize(selected.rubric_json,question.max_score);dirty=false;failure=notice='';render();}}
+    if(target.hasAttribute('data-author-profile') && await MisraWorkspace.confirm('Replace this draft’s preference fields with your approved profile? Nothing is saved until you save or approve.')) {sync();for(const key of ['method_credit','alternative_methods_allowed','handwritten_syntax_policy','notation_policy','error_carried_forward','language_quality_policy','arithmetic_error_policy','units_policy','rounding_tolerance_percent','evidence_requirement','illegible_response_policy']) {const value=profile?.derived_proposal?.[key];if(value!=null) rubric.policy[key]=value;}const guidance=profile?.derived_proposal?.custom_instructions;if(guidance&&!rubric.policy.custom_instructions?.includes(guidance))rubric.policy.custom_instructions=[rubric.policy.custom_instructions,guidance].filter(Boolean).join('\n');dirty=true;render();}
     if(target.hasAttribute('data-author-mode')) {const selected=$('author-mode').value;action(async current=>{await MisraAPI.updateGradingPolicy(question.id,{mode:selected});if(current!==epoch) return;mode=selected;notice='Grading input saved separately for future jobs.';});}
   });
-  $('rubric-workspace').addEventListener('submit',e=>{
+  $('rubric-workspace').addEventListener('submit',async e=>{
     if(e.target.id!=='author-ai-form') return;e.preventDefault();if(isBusy()) return;
-    if(dirty && !confirm('Generate an AI draft without saving the current rubric edits?')) return;
+    if(dirty && !await MisraWorkspace.confirm('Generate an AI draft without saving the current rubric edits?')) return;
     const body=Object.fromEntries([...new FormData(e.target)].filter(([,v])=>String(v).trim()));body.grading_approach=rubric.policy.grading_approach;body.policy=clone(rubric.policy);
     action(async current=>{await MisraAPI.suggestRubric(question.id,body);if(current!==epoch) return;dirty=false;busy=false;await definitions(question.id);notice='AI draft created. It is not approved.';});
   });

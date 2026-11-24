@@ -44,7 +44,7 @@
       $('guide-review-content').insertAdjacentHTML('beforeend','<p>Approved too early? Reopen the saved guide to correct it. Previous versions and grades remain traceable.</p><button type="button" id="guide-reopen">Reopen guide for corrections</button>');
       $('guide-reopen').addEventListener('click',async()=>{
         if(!safe()||loading||uncertain)return;
-        if(!confirm('Reopen this guide? Existing text is copied into correction drafts. New grading is suspended until you approve again; previous grades and snapshots stay in history.'))return;
+        if(!await MisraWorkspace.confirm('Reopen this guide? Existing text is copied into correction drafts. New grading is suspended until you approve again; previous grades and snapshots stay in history.'))return;
         const current=epoch;busy=true;controls();
         try{const result=await MisraAPI.reopenAssessmentGuide(exam.id,{review_token:data.review_token,confirm_reviewed:true});if(current!==epoch)return;$('guide-approval-state').textContent=result.message;window.MisraLedgerEditors.reset(exam);busy=false;await refresh();window.dispatchEvent(new CustomEvent('misra:ledger-foundations-changed'));}
         catch(error){if(current===epoch){uncertain=true;$('guide-approval-state').textContent=error.message+' Refresh the saved guide before trying again.';}}
@@ -61,7 +61,7 @@
   }
   async function show(next,questionId){
     if(busy)return;
-    if(window.MisraTeaching?.canLeave()===false)return;
+    if(await window.MisraTeaching?.canLeave()===false)return;
     const current=epoch,sequence=++viewRequest;
     if(!await window.MisraLedgerEditors.saveEdits() || !await window.MisraAssessmentSources.saveDraft({allowPendingSources:true})){window.showToast('Some edits could not be saved. Resolve their error before continuing. Nothing was approved.','error');return;}
     if(current!==epoch || sequence!==viewRequest)return;
@@ -78,7 +78,7 @@
   $('guide-sources-tab').addEventListener('click',()=>show('sources'));
   $('author-rubrics').addEventListener('click',()=>show('questions'));
   $('guide-review-tab').addEventListener('click',()=>show('review'));
-  $('manage-course-library').addEventListener('click',async()=>{if(!window.MisraLedgerEditors.canLeave())return;await window.MisraLedgerEditors.show('library');});
+  $('manage-course-library').addEventListener('click',()=>window.MisraLedgerEditors.show('library'));
   $('ledger-setup').addEventListener('click',e=>{const step=e.target.closest('[data-guide-step]'),question=e.target.closest('[data-guide-question]');if(step)show(step.dataset.guideStep);if(question)show('questions',question.dataset.guideQuestion);});
   $('guide-refresh').addEventListener('click',()=>{if(safe())refresh();else window.showToast('Save your current edits before refreshing saved definitions.','error');});
   $('guide-confirm').addEventListener('change',controls);

@@ -77,7 +77,10 @@ class GradingScopeTests(unittest.TestCase):
             job_type="grade_submission", payload={"mode": "auto"})
         self.db.add(job)
         self.db.commit()
-        with patch("services.job_execution_service.process_grading_with_policy") as grade:
+        def save_paper_grade(answer_id, db, **kwargs):
+            db.get(Answer, answer_id).score = 1
+            db.commit()
+        with patch("services.job_execution_service.process_grading_with_policy", side_effect=save_paper_grade) as grade:
             _grade_submission(job, self.db)
         self.assertEqual(grade.call_count, 1)
         self.assertEqual(grade.call_args.args[0], "answer-1")

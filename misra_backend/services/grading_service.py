@@ -46,7 +46,7 @@ import math
 
 
 VISUAL_EVIDENCE_CONFIDENCE_CAP = 40.0
-PROFILE_SUPPORT_VERSION = 1
+PROFILE_SUPPORT_VERSION = 2
 
 class CriterionScore(BaseModel):
     model_config = ConfigDict(allow_inf_nan=False)
@@ -382,18 +382,24 @@ def _load_answer_source_images(
 def _assessment_completion(contents):
     """Keep initial/revised assessment on the same explicitly configured provider."""
     from services.free_model_gateway import FreeCompletion
+    from services.grading_control import check_grading_active, report_grading_stage
     from services.inference_service import configuration
-    provider = configuration('grading')['provider']
+    check_grading_active()
+    report_grading_stage('assessing')
+    metadata = configuration('grading')
+    provider = metadata['provider']
     if provider == 'openrouter_free':
         from services.free_model_gateway import complete_free
-        return complete_free(contents, model=configuration('grading')['model'])
-    if provider == 'gemini':
-        metadata = configuration('grading')
-        return FreeCompletion(generate(contents=contents, model=metadata['model'], json_mode=True), metadata)
-    if provider == 'local':
+        completion = complete_free(contents, model=metadata['model'])
+    elif provider == 'gemini':
+        completion = FreeCompletion(generate(contents=contents, model=metadata['model'], json_mode=True), metadata)
+    elif provider == 'local':
         from services.inference_service import complete
-        return complete(contents, task='grading')
-    raise ValueError('Unknown grading provider. Configure gemini, openrouter_free or local explicitly.')
+        return complete(contents, task='grading', response_schema=GradingResult.model_json_schema())
+    else:
+        raise ValueError('Unknown grading provider. Configure gemini, openrouter_free or local explicitly.')
+    check_grading_active()
+    return completion
 
 
 def grade_answer(
@@ -526,6 +532,8 @@ def grade_answer(
         break
     from services.inference_service import verification_enabled
     if verification_enabled():
+        from services.grading_control import report_grading_stage
+        report_grading_stage('verifying')
         from services.verification_agent import verify
         candidate = result.model_dump()
         evidence_ids = {value:key for key,value in evidence_aliases.items()}
@@ -615,6 +623,9 @@ def process_grading(
         rubric_version_id,
     ) = grade_answer(answer_id, db, mode, routing_context=routing_context)
 
+    from services.grading_control import check_grading_active, report_grading_stage
+    report_grading_stage('saving')
+    check_grading_active(lock=True)
     final_confidence = _compute_final_confidence(answer, result)
     from services.inference_profiles import active_profile
     if active_profile():
@@ -934,6 +945,8 @@ def _mark_routing(
     routing: dict,
     db: Session,
 ) -> Answer:
+    from services.grading_control import check_grading_active
+    check_grading_active(lock=True)
     # JSON columns do not detect nested in-place changes reliably; assign a copy.
     raw_response = dict(answer.grading_raw_response or {})
     raw_response["routing"] = routing
@@ -1042,10 +1055,11 @@ def process_grading_with_policy(
     routing = _auto_routing(
         policy.mode, "text_only", reason_code,
         "image comparison queued" if audit_selected else "no image comparison selected",
-        audit_selected,
+        False,
     )
     if audit_selected:
         routing["comparison_pair_id"] = str(uuid.uuid4())
+        routing["image_audit_pending"] = True
     primary = process_grading(
         answer_id,
         db,
@@ -1068,5 +1082,6 @@ def process_grading_with_policy(
             routing_context=audit_routing,
             **job_kwargs,
         )
+        routing = {**routing, 'image_audit_pending': False, 'image_audit_performed': True}
 
     return _mark_routing(primary, routing, db)

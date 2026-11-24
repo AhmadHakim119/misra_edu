@@ -1,6 +1,9 @@
+const {staticWorkspace}=require('./fixtures/static-workspace');
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test,expect}=require('@playwright/test');
 const file=name=>({name,mimeType:'application/pdf',buffer:Buffer.from('Synthetic API upload fixture; not a real PDF')});
 async function fixture(page,{blocked=false,uploadStatus=202,holdUpload=false,holdSources=false,pollFails=false,uploadShape='normal'}={}) {
+  await staticWorkspace(page);
   const writes=[];let releaseUpload,releaseSources,knownJobs=[];
   const uploadGate=new Promise(r=>releaseUpload=r),sourceGate=new Promise(r=>releaseSources=r);
   const versions={e:[],e2:[]};
@@ -93,7 +96,7 @@ test('accepted upload with progress outage never becomes an upload-failure retry
 test('unapproved setup blocks upload and canceled navigation retains files',async({page})=>{
   await fixture(page,{blocked:true});await page.locator('#upload-link').click();await page.locator('#ledger-files').setInputFiles(file('paper.pdf'));
   await expect(page.locator('#ledger-upload-submit')).toBeDisabled();await expect(page.locator('#ledger-readiness')).toContainText('missing');
-  page.once('dialog',d=>d.dismiss());await page.locator('[data-exam="e2"]').click();await expect(page.locator('#exam-title')).toHaveText('Work & energy');await expect(page.locator('#upload-selection')).toContainText('paper.pdf');
+  await page.locator('[data-exam="e2"]').click();await answerWorkspaceDialog(page,'cancel');await expect(page.locator('#exam-title')).toHaveText('Work & energy');await expect(page.locator('#upload-selection')).toContainText('paper.pdf');
 });
 test('source defaults save a draft before explicit approval in the new shell',async({page},info)=>{
   const state=await fixture(page);await page.locator('#sources-link').click();await page.getByRole('button',{name:'Add assessment source',exact:true}).click();

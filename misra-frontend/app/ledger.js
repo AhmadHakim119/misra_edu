@@ -6,7 +6,7 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const number = value => value == null ? '—' : Number.isFinite(Number(value)) ? Number(value).toLocaleString(undefined,{maximumFractionDigits:2}) : '—';
   const score = answer => answer?.teacher_override_score ?? answer?.score ?? null;
-  const active = new Set(['queued','processing','retrying']);
+  const active = new Set(['queued','processing','retrying','stopping']);
   const params = new URLSearchParams(location.search);
   let exams = [], papers = [], jobs = [], examId = '', paperId = '', questionId = '', pageIndex = 0;
   let results = null, extraction = null, epoch = 0, paperEpoch = 0, locationEpoch = 0, timer = null,currentView='papers';
@@ -28,7 +28,7 @@
     ()=>busy || identityBusy || window.MisraLedgerWorkflows?.isBusy() || window.MisraLedgerExport?.isBusy(),
     ()=>dirty || identityDirty || inputDirty() || hasHighlightDraft() || window.MisraLedgerWorkflows?.hasUnsaved()
   );
-  function canLeave(workflow=false) { if (busy || identityBusy || window.MisraLedgerWorkflows?.isBusy() || window.MisraLedgerExport?.isBusy()) { showError('Wait for the current operation to finish.'); return false; } if(identityDirty && !confirm('Discard unsaved paper-identity changes?')) return false;if(dirty && !window.confirm('Discard unsaved instructor-grade changes?')) return false;if(inputDirty() && !confirm('Discard the unsaved grading input?'))return false;if(window.MisraPaperHighlights?.canLeave()===false)return false; return !workflow || window.MisraLedgerWorkflows?.canLeave()!==false; }
+  async function canLeave(workflow=false) { if (busy || identityBusy || window.MisraLedgerWorkflows?.isBusy() || window.MisraLedgerExport?.isBusy()) { showError('Wait for the current operation to finish.'); return false; } if(identityDirty && !await MisraWorkspace.confirm('Discard unsaved paper-identity changes?')) return false;if(dirty && !await MisraWorkspace.confirm('Discard unsaved instructor-grade changes?')) return false;if(inputDirty() && !await MisraWorkspace.confirm('Discard the unsaved grading input?'))return false;if(await window.MisraPaperHighlights?.canLeave()===false)return false; return !workflow || await window.MisraLedgerWorkflows?.canLeave()!==false; }
   function showError(message) { $('error').hidden=false; $('error').textContent=message; }
   function clearError() { $('error').hidden=true; $('error').textContent=''; }
   function updateNextAction() {
@@ -101,10 +101,10 @@
     renderJobs();
   }
   async function chooseExam(id, {initial=false}={}) {
-    if (!initial && !canLeave(true)) return;
+    if (!initial && !await canLeave(true)) return;
     const exam=exams.find(e=>e.id===id); if (!exam) return;
     const current=++epoch; ++paperEpoch; ++locationEpoch; routeScope.cancelTimer(timer);
-    examId=id; paperId=questionId=''; papers=[];jobs=[];setupReady=null;results=extraction=null; dirty=identityDirty=false; pageIndex=0; lastPaperMarkup=''; clearError(); renderAssessments();updateNextAction();
+    examId=id; paperId=questionId=''; papers=[];jobs=[];setupReady=null;results=extraction=null; dirty=identityDirty=false; pageIndex=0; lastPaperMarkup=selectedJobSignature=''; clearError(); renderAssessments();updateNextAction();
     $('exam-title').textContent=exam.title; $('exam-context').textContent=[exam.course_code,exam.course_title].filter(Boolean).join(' · ') || 'Assessment workspace';
     window.MisraLedgerExport?.loadExam(exam);
     window.MisraLedgerWorkflows?.loadExam(exam); setView('papers');
@@ -128,13 +128,14 @@
     $('page-controls').hidden=true; $('viewer-tools').hidden=true; zoom=100; $('paper-status').textContent=''; $('paper-name').textContent=''; $('grade-editor').innerHTML=''; $('location-note').textContent='';
     $('paper-viewport').innerHTML='<div class="empty"><p>Select a paper to view the full original page.</p></div>';
   }
-  async function choosePaper(id,{initial=false,unguarded=false}={}) {
-    if (!unguarded && !canLeave(paperRoute(id)==='extraction')) return;
+  async function choosePaper(id,{initial=false,unguarded=false,background=false}={}) {
+    if (!unguarded && !await canLeave(paperRoute(id)==='extraction')) return;
     const selectedPaper=papers.find(paper=>paper.id===id);
     if(!initial&&!unguarded&&selectedPaper&&paperRoute(id)==='extraction'){dirty=identityDirty=false;location.href=nativeLink('submission',{id,question_id:'',source_id:''});return;}
     const previousQuestion=questionId, previousPage=pageIndex, retained=paperId===id && Boolean(results);
     const current=++paperEpoch, examCurrent=epoch; ++locationEpoch;
     paperId=id; dirty=identityDirty=false; clearError(); renderPapers();
+    const signature=paperResultSignature();
     $('selected-paper-copy').hidden=false;$('selected-paper-copy').textContent='Selected paper: '+(papers.find(p=>p.id===id)?.extracted_student_name || 'Name missing');
     if(window.MisraWorkspacePage==='grading' || !initial && !unguarded) $('paper-picker').open=false;
     setView(currentView);
@@ -142,12 +143,18 @@
     syncURL();
     try {
       const [record,report]=await Promise.all([MisraAPI.results(id),MisraAPI.extractionReview(id)]);
-      if (current!==paperEpoch || examCurrent!==epoch) return;
+      if (current!==paperEpoch || examCurrent!==epoch || (background && resultRefreshBlocked())) return;
       if (record?.submission?.id!==id || report?.submission?.id!==id || record.submission.exam_id!==examId || !Array.isArray(report.questions) || !Array.isArray(record.answers)) throw new Error('Paper response is incomplete or belongs to another assessment. Reload before reviewing.');
-      results=record; extraction=report;renderIdentity();
-      const wanted=initial ? params.get('question_id') : retained ? previousQuestion : null;
+      const count=papers.find(p=>p.id===id)?.grading_summary?.graded_count;
+      if(background && currentGradingJob()?.status==='completed' && count>record.answers.filter(answer=>score(answer)!=null).length) {
+        throw new Error('The saved marks are still syncing. Refreshing the paper…');
+      }
+      const visibleQuestion=background ? questionId : previousQuestion;
+      const visiblePage=background ? pageIndex : previousPage;
+      results=record; extraction=report;selectedJobSignature=signature;renderIdentity();
+      const wanted=initial ? params.get('question_id') : retained ? visibleQuestion : null;
       questionId=report.questions.find(r=>r.question.id===wanted)?.question.id || report.questions.find(r=>record.answers.find(a=>a.question_id===r.question.id)?.needs_review)?.question.id || report.questions[0]?.question.id || '';
-      renderQuestion(); if(retained && questionId===previousQuestion && previousPage<Number(report.submission.page_count)) showPage(previousPage); syncURL();
+      renderQuestion(); if(retained && questionId===visibleQuestion && visiblePage<Number(report.submission.page_count)) showPage(visiblePage); syncURL();
       return true;
     } catch (error) { if (current===paperEpoch && examCurrent===epoch) { showError(error.message); if(!retained) $('question-detail').innerHTML='<div class="empty"><button type="button" data-reload-paper>Reload saved paper</button></div>'; else { const button=document.createElement('button'); button.type='button';button.dataset.reloadPaper='';button.textContent='Reload saved paper';$('error').append(' ',button); } } return false; }
   }
@@ -156,9 +163,9 @@
     const pageCount=Number(extraction?.submission.page_count) || 0;
     $('paper-name').textContent=extraction?.submission.extracted_student_name || 'Name missing';
     const paper=papers.find(p=>p.id===paperId);
-    const ocrJob=paper?.latest_ocr_job, gradeJob=paper?.latest_grading_job;
+    const ocrJob=paper?.latest_ocr_job, gradeJob=currentGradingJob();
     const ocrState=active.has(ocrJob?.status) ? 'Processing…' : ocrJob?.status==='failed' || paper?.status==='error' ? 'Needs attention' : extraction?.readiness?.bulk_grading_allowed ? 'ready' : 'check evidence';
-    const gradeState=active.has(gradeJob?.status) ? 'Processing…' : gradeJob?.status==='failed' ? 'Grading couldn’t finish' : paper?.grading_summary?.complete ? 'complete' : paper?.grading_summary?.graded_count ? 'partly graded' : 'not started';
+    const gradeState=gradeJob?.status==='stopping' ? 'Stopping…' : gradeJob?.status==='stopped' ? 'Stopped' : active.has(gradeJob?.status) ? 'Processing…' : gradeJob?.status==='failed' ? 'Grading couldn’t finish' : paper?.grading_summary?.complete ? 'complete' : paper?.grading_summary?.graded_count ? 'partly graded' : 'not started';
     $('paper-status').innerHTML=`<span><span data-i18n>Extraction:</span> <span data-i18n>${esc(ocrState)}</span></span><span><span data-i18n>Grading:</span> <span data-i18n>${esc(gradeState)}</span></span>`;
     $('original-link').href=nativeLink('submission',{id:paperId});
     $('grading-controls').hidden=currentView!=='papers' || !row;
@@ -205,7 +212,7 @@
       <details><summary>AI rationale</summary><p dir="auto">${esc(answer?.reasoning || answer?.feedback || 'No rationale recorded.')}</p></details>
       <a href="${nativeLink('grade-results',{id:paperId})}">Full grading history and review tools</a>` : ''}</div>`;
     window.MisraTeaching?.showEvidence(pack,criteria);
-    $('question-select').addEventListener('change',event=>{ const selected=event.target.value; if (!canLeave()) { event.target.value=questionId; return; } dirty=false; questionId=selected; renderQuestion(true); syncURL(); });
+    $('question-select').addEventListener('change',async event=>{ const selected=event.target.value; if (!await canLeave()) { event.target.value=questionId; return; } dirty=false; questionId=selected; renderQuestion(true); syncURL(); });
     if (pageCount>0) {
       $('page-controls').hidden=false;
       $('viewer-tools').hidden=false;
@@ -242,7 +249,7 @@
   async function showPage(index,revealSelected=false) {
     const count=Number(extraction?.submission.page_count)||0;
     if (!Number.isInteger(index) || index<0 || index>=count || !paperId) return;
-    if(window.MisraPaperHighlights?.canLeave()===false){$('page-select').value=String(pageIndex);return;}
+    if(await window.MisraPaperHighlights?.canLeave()===false){$('page-select').value=String(pageIndex);return;}
     window.MisraPaperHighlights?.clear();
     const current=++locationEpoch, selectedPaper=paperId;
     pageIndex=index; $('page-select').value=String(index); $('previous-page').disabled=index===0; $('next-page').disabled=index===count-1;
@@ -266,7 +273,13 @@
     const paperJob=papers.find(p=>p.id===paperId)?.latest_grading_job;
     const listed=jobs.find(j=>j.submission_id===paperId && j.job_type==='grade_submission');
     if(jobsUnavailable && paperJob)return paperJob;
-    if(listed && (listed.id===paperJob?.id || active.has(listed.status)))return listed;
+    if (listed && listed.id===paperJob?.id) {
+      const paperTime=paperJob.updated_at || '', activityTime=listed.updated_at || '';
+      if (paperTime!==activityTime) return paperTime>activityTime ? paperJob : listed;
+      if (active.has(paperJob.status)!==active.has(listed.status)) return active.has(paperJob.status) ? listed : paperJob;
+      return listed;
+    }
+    if(listed && active.has(listed.status))return listed;
     return paperJob || listed;
   }
   function gradingInputLocked() {
@@ -283,6 +296,8 @@
     $('discard-grading-input').disabled=busy;
     const start=$('grading-run').querySelector('[data-grade]');
     if(start) start.disabled=busy || savedInput===null || inputDirty() || !extraction?.readiness?.bulk_grading_allowed;
+    const resume=$('grading-run').querySelector('[data-retry]');
+    if(resume) resume.disabled=busy;
   }
   function inputStatus(message='') {
     const status=$('grading-input-status');
@@ -335,15 +350,25 @@
     const panel=$('grading-run');
     const job=currentGradingJob();
     let markup='';
-    if(active.has(job?.status) || job?.status==='failed') {
+    if(active.has(job?.status) || ['failed','stopped'].includes(job?.status)) {
       const running=active.has(job.status);
-      const canStartNew = !running && extraction?.readiness?.bulk_grading_allowed &&
+      const canStartNew = job.status==='failed' && extraction?.readiness?.bulk_grading_allowed &&
         Array.isArray(results?.answers) && !results.answers.some(answer=>answer.score!=null || answer.teacher_override_score!=null);
-      const title=job.status==='queued' ? 'AI grading queued' : running ? 'AI grading in progress' : 'Grading couldn’t finish';
-      const percent=Number(job.progress_percent);
-      const progress=running ? `<progress aria-labelledby="grading-run-title" max="100" ${Number.isFinite(percent)&&percent>0?`value="${Math.min(100,percent)}"`:''}></progress>` : '';
-      const freshStart=canStartNew ? '<div class="inline-actions"><button type="button" class="primary" data-grade data-i18n disabled>Grade with current AI setup</button></div>' : '';
-      markup=`<header><h2 id="grading-run-title">${title}</h2><a href="activity.html" data-i18n>${running || canStartNew?'View activity':'Open Activity to retry'}</a></header><p role="status" data-i18n>${esc(MisraJobStatus.message(job))}</p>${progress}${freshStart}`;
+      const title=job.status==='stopping' ? 'Stopping grading…' : job.status==='stopped' ? 'Grading stopped'
+        : job.status==='queued' ? 'AI grading queued' : running ? 'AI grading in progress' : 'Grading couldn’t finish';
+      const progress=running ? MisraJobStatus.progress(job) : '';
+      const action=job.status==='stopped'
+        ? `<button type="button" class="primary" data-retry="${esc(job.id)}">Resume grading</button>`
+        : canStartNew ? '<button type="button" class="primary" data-grade data-i18n disabled>Grade with current AI setup</button>' : '';
+      markup=`<header><h2 id="grading-run-title" data-i18n>${title}</h2><a href="activity.html" data-i18n>${running || action?'View activity':'Open Activity to retry'}</a></header><p role="status" data-i18n>${esc(MisraJobStatus.message(job))}</p>${progress}${MisraJobStatus.details(job,esc)}${action?`<div class="inline-actions">${action}</div>`:''}`;
+    } else if(job?.status==='completed') {
+      const saved=results?.answers?.some(a=>score(a)!=null);
+      const stale=selectedJobSignature!==paperResultSignature();
+      const title=job.incomplete_comparison_count ? 'Grading finished with incomplete comparisons' : 'AI grading finished';
+      const message=stale ? 'Refreshing saved grades…' : job.incomplete_comparison_count ? MisraJobStatus.message(job)
+        : saved ? 'Saved grades are ready to review.' : 'No grade is available in the saved result. Check Activity before retrying.';
+      const reload=(stale || !saved) ? '<button type="button" data-reload-paper>Reload saved paper</button>' : '';
+      markup=`<header><h2 data-i18n>${title}</h2><a href="activity.html" data-i18n>View activity</a></header><p role="status" data-i18n>${esc(message)}</p>${MisraJobStatus.progress(job)}${reload}`;
     } else if(extraction && !results?.answers?.some(answer=>answer.score!=null)) {
       const ready=extraction.readiness?.bulk_grading_allowed;
       const message=ready ? 'The paper is ready for AI grading.' : (extraction.readiness?.blocking_reasons || []).join(' ') || 'Check extraction and approved assessment setup before grading.';
@@ -380,7 +405,7 @@
     form.addEventListener('submit',saveGrade);
     $('reopen-grade-review')?.addEventListener('click',async()=>{
       if(busy||dirty)return showError('Save or discard edits before reopening the saved decision.');
-      const reason=prompt('Why does this decision need another review? The previous decision and score will remain in history.');
+      const reason=await MisraWorkspace.confirm('The previous decision and score will remain in history.',{title:'Reopen this decision?',field:'Reason for another review',action:'Reopen decision'});
       if(!reason?.trim())return;
       busy=true;
       try{await MisraAPI.reopenReview(answer.id,{expected_reviewed_at:answer.reviewed_at,expected_label_id:currentLabel()?.id??null,expected_run_id:answer.grading_raw_response?.grading_run_id??null,reason:reason.trim()});await choosePaper(paperId,{unguarded:true});await refreshPapers();}
@@ -390,10 +415,10 @@
   }
   async function regradeCorrected(button){
     if(dirty||identityDirty||inputDirty()){showError('Save or discard your edits before regrading.');return;}
-    if(!canLeave()||busy)return;
+    if(!await canLeave()||busy)return;
     const answer=currentAnswer(),revisions=(currentRow()?.sources||[]).map(source=>source.area_revision?.id).filter(Boolean);
     if(!answer||!revisions.length)return;
-    if(!confirm('Create a new AI proposal for this answer using its confirmed extraction? Previous runs and any instructor grade are retained for review.'))return;
+    if(!await MisraWorkspace.confirm('The new proposal uses the confirmed extraction. Previous runs and instructor grades remain available.',{title:'Regrade this answer?',action:'Regrade answer'}))return;
     const key=JSON.stringify([answer.id,answer.grading_raw_response?.grading_run_id,revisions]);
     if(!regradeRequests.has(key))regradeRequests.set(key,crypto.randomUUID());
     busy=true;button.disabled=true;
@@ -437,6 +462,14 @@
     if(current!==epoch) return;
     if(Array.isArray(value)) { papers=value.filter(p=>p.exam_id===id); renderPapers(); }
   }
+  function paperResultSignature() {
+    const paper=papers.find(p=>p.id===paperId), ocr=paper?.latest_ocr_job, grade=currentGradingJob();
+    return JSON.stringify([paperId, ocr?.id, ocr?.status, grade?.id, grade?.status,
+      grade?.progress_current, paper?.grading_summary?.graded_count, paper?.grading_summary?.recorded_score]);
+  }
+  function resultRefreshBlocked() {
+    return dirty || busy || identityDirty || identityBusy || inputDirty() || hasHighlightDraft();
+  }
   function schedule() {
     routeScope.cancelTimer(timer); if(!examId) return;
     const current=epoch;
@@ -444,18 +477,26 @@
       if(current!==epoch) return;
       try { await Promise.all([refreshPapers(),loadJobs()]); } catch(_) { jobsUnavailable=true; renderJobs(); }
       if(current!==epoch) return;
-      const selected=papers.find(p=>p.id===paperId);
-      const signature=JSON.stringify([selected?.latest_ocr_job?.id,selected?.latest_ocr_job?.status,selected?.latest_grading_job?.id,selected?.latest_grading_job?.status]);
-      if(!dirty && !busy && !identityDirty && !identityBusy && !inputDirty() && !hasHighlightDraft() && paperId && signature!==selectedJobSignature && (selected?.latest_ocr_job || selected?.latest_grading_job)) { selectedJobSignature=signature; await choosePaper(paperId,{unguarded:true}); }
+      if(!resultRefreshBlocked() && paperId && paperResultSignature()!==selectedJobSignature) {
+        await choosePaper(paperId,{unguarded:true,background:true});
+      }
       schedule();
-    },document.hidden ? 15000 : jobs.some(j=>active.has(j.status)) || active.has(currentGradingJob()?.status) ? 5000 : 20000);
+    },document.hidden ? 15000 : jobs.some(j=>active.has(j.status)) || active.has(currentGradingJob()?.status) ||
+      (paperId && paperResultSignature()!==selectedJobSignature) ? 3000 : 20000);
   }
   async function jobAction(button,retry=false) {
     if(busy || dirty || identityBusy || identityDirty || inputDirty() || window.MisraLedgerWorkflows?.hasUnsaved() || window.MisraLedgerExport?.isBusy()) { showError('Save or finish the current operation before starting another.'); return; }
     busy=true; button.disabled=true; clearError();
     try {
-      if(retry) await MisraAPI.retryJob(button.dataset.retry);
-      else {
+      if(retry) {
+        const id=button.dataset.retry;
+        const resumed=await MisraAPI.retryJob(id);
+        if(resumed?.id!==id)throw Error('Grading acceptance is uncertain.');
+        const paper=papers.find(p=>p.id===paperId && p.latest_grading_job?.id===id);
+        if(paper)paper.latest_grading_job=resumed;
+        jobs=jobs.map(job=>job.id===id?{...job,...resumed}:job);
+        renderGradingRun();
+      } else {
         const response=await MisraAPI.gradeSubmission(paperId);
         if(!response?.job?.id)throw Error('Grading acceptance is uncertain.');
         const paper=papers.find(p=>p.id===paperId);
@@ -500,7 +541,6 @@
   $('expand-paper').addEventListener('click',()=>{ $('expanded-viewer-host').append($('paper-viewer')); $('expand-paper').hidden=true; $('expanded-paper').showModal(); });
   $('close-paper').addEventListener('click',()=>$('expanded-paper').close());
   routeScope.listen($('expanded-paper'),'close',()=>{viewerHome.after($('paper-viewer')); $('expand-paper').hidden=false; $('expand-paper').focus({preventScroll:true});});
-  routeScope.listen(document,'click',event=>{if(MisraWorkspace.isSoftLink(event))return;const link=event.target.closest('a');if(link?.hasAttribute('download') && link.getAttribute('href')?.startsWith('blob:')) return; if(link && !link.getAttribute('href')?.startsWith('#') && (dirty || busy || identityDirty || identityBusy || hasHighlightDraft() || window.MisraLedgerWorkflows?.hasUnsaved() || window.MisraLedgerExport?.isBusy()) && !canLeave(true)) event.preventDefault();});
   routeScope.listen(window,'beforeunload',event=>{if(dirty || busy || identityDirty || identityBusy || inputDirty() || hasHighlightDraft() || window.MisraLedgerExport?.isBusy()) {event.preventDefault();event.returnValue='';}});
   window.MisraLedger={canLeave,nextAction:()=>nextAction,paperRoute};
   (async()=>{try{const user=await window.MisraCurrentUser;if(user.must_change_password){location.replace('account.html?required=1');return;}const values=await MisraAPI.exams();if(!Array.isArray(values)) throw new Error('Assessment list is incomplete.');exams=values;renderAssessments();const selected=exams.find(e=>e.id===params.get('exam_id')) || exams[0];if(selected) await chooseExam(selected.id,{initial:true});else {$('exam-context').textContent='Create your first assessment to start.';$('paper-list').innerHTML='<a class="button primary" href="assessments.html">Create assessment</a>';}}catch(error){showError(error.status===401 ? 'Sign in to open your private instructor workspace.' : error.message);}})();

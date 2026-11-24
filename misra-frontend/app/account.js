@@ -2,7 +2,7 @@
   'use strict';
   const routeScope=MisraWorkspace.page;
   const $ = id => document.getElementById(id);
-  let busy = false, passwordDirty = false, deletionDirty = false, preferenceDirty = false, settings = null, currentUser = null;
+  let busy = false, loadingSettings = false, passwordDirty = false, deletionDirty = false, preferenceDirty = false, settings = null, currentUser = null;
   const hasUnsaved = () => passwordDirty || deletionDirty || preferenceDirty;
   const text = value => window.MisraLocale.text(value);
   function lock(value) {
@@ -25,10 +25,11 @@
   }
   async function loadSettings() {
     if (busy) return;
+    loadingSettings = true;
     lock(true);
     try { showSettings(await MisraAPI.accountSettings()); }
     catch (e) { $('marking-settings-status').textContent = ''; $('marking-settings-error').textContent = e.message; $('reload-marking-setting').hidden = false; }
-    finally { lock(false); }
+    finally { loadingSettings = false; lock(false); }
   }
   async function saveSetting() {
     if (busy || !settings) return;
@@ -43,7 +44,7 @@
   }
   $('use-marking-preferences').addEventListener('change', saveSetting);
   $('retry-marking-setting').addEventListener('click', saveSetting);
-  $('reload-marking-setting').addEventListener('click', () => { if (!preferenceDirty || confirm(text('Discard the unsaved setting and reload?'))) loadSettings(); });
+  $('reload-marking-setting').addEventListener('click', async () => { if (!preferenceDirty || await MisraWorkspace.confirm(text('Discard the unsaved setting and reload?'))) loadSettings(); });
   window.MisraCurrentUser.then(user => {
     currentUser = user;
     $('native-account-facts').textContent = [user.full_name, user.email, user.role === 'admin' ? text('Institution administrator') : text('Instructor')].filter(Boolean).join(' · ');
@@ -76,19 +77,14 @@
       }
     });
   }
-  routeScope.listen(window,'beforeunload', e => { if (busy || hasUnsaved()) { e.preventDefault(); e.returnValue = ''; } });
-  routeScope.guard(() => busy, hasUnsaved);
-  routeScope.listen(document,'click', e => {
-    const anchor = e.target.closest('a');
-    if (!anchor || anchor.getAttribute('href')?.startsWith('#') || MisraWorkspace.isSoftLink(e)) return;
-    if (busy || hasUnsaved() && !confirm(text('Discard unsaved settings and password entries?'))) { e.preventDefault(); e.stopImmediatePropagation(); }
-  }, true);
+  routeScope.listen(window,'beforeunload', e => { if (busy && !loadingSettings || hasUnsaved()) { e.preventDefault(); e.returnValue = ''; } });
+  routeScope.guard(() => busy && !loadingSettings, hasUnsaved);
   $('native-password-form').addEventListener('submit', async e => {
     e.preventDefault(); if (busy) return;
     const body = Object.fromEntries(new FormData(e.currentTarget));
     if (body.new_password !== body.confirm_password) { $('native-password-error').textContent = text('The new passwords do not match.'); return; }
     if (body.new_password.length < 10 || body.new_password === body.current_password) { $('native-password-error').textContent = text('Use a different password with at least 10 characters.'); return; }
-    if ((preferenceDirty || deletionDirty) && !confirm(text('Changing your password signs you out. Discard other unsaved entries?'))) return;
+    if ((preferenceDirty || deletionDirty) && !await MisraWorkspace.confirm(text('Changing your password signs you out. Discard other unsaved entries?'))) return;
     lock(true); $('native-password-error').textContent = '';
     try { await MisraAPI.changePassword({current_password:body.current_password,new_password:body.new_password}); passwordDirty = preferenceDirty = deletionDirty = busy = false; location.replace('login.html'); }
     catch (e) { $('native-password-error').textContent = e.message; }

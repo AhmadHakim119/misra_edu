@@ -212,7 +212,14 @@ body[data-workspace-page=grading] #paper-viewer .paper-viewport { max-height:cla
 #grading-run header,.grading-input-actions { display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px; }
 #grading-run header { justify-content:space-between; }
 #grading-run h2 { font-size:18px; }
-#grading-run progress { display:block;width:100%;height:8px;margin-block-start:10px;accent-color:var(--accent); }
+#grading-run progress { display:block;width:100%;height:8px;margin-block-start:10px;accent-color:var(--accent);appearance:none;border:0;border-radius:4px;background:var(--secondary); }
+#grading-run progress::-webkit-progress-bar { background:var(--secondary);border-radius:4px; }
+#grading-run progress::-webkit-progress-value { background:var(--accent);border-radius:4px; }
+#grading-run progress::-moz-progress-bar { background:var(--accent);border-radius:4px; }
+.job-progress { direction:ltr;accent-color:var(--accent); }
+#activity-host .activity-job { flex:1;min-width:0; }
+#activity-host .job-progress { display:block;width:100%;max-width:none;margin-block-start:12px; }
+.stop-grading { color:var(--danger); }
 #grading-run p,#grading-input-form p { margin-block:6px 0;color:var(--muted);font-size:14px; }
 #grading-input-form label { display:block;margin-block-end:6px;font-weight:600; }
 #grading-input-form [role=status] { overflow-wrap:anywhere; }

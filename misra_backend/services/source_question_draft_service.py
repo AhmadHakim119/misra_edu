@@ -121,7 +121,12 @@ Do not include question numbers or claim independent source/answer verification.
     prompt += "\nAPPROVED REFERENCE DATA:\n" + json.dumps(provider_sources, ensure_ascii=False)
     from services.account_settings_service import profile_prompt
     prompt += profile_prompt(profile)
-    completion = complete_free(prompt)
+    from services.inference_profiles import FULL_LOCAL_PROFILE, active_profile
+    if (active_profile() or {}).get('id') == FULL_LOCAL_PROFILE:
+        from services.inference_service import complete
+        completion = complete(prompt, task='setup')
+    else:
+        completion = complete_free(prompt)
     proposals = SourceQuestionProposals.model_validate_json(completion.text)
     if len(proposals.questions) != request.count:
         raise ValueError("The model returned the wrong question count. No questions were added.")

@@ -153,7 +153,9 @@ def confirm_area(db,source,submission,job,payload,user):
 
 
 def regrade_corrected_answer(job,db,progress):
+    from services.grading_control import check_grading_active
     from services.grading_service import process_grading
+    from services.job_queue_service import lock_grading_paper
     data=job.payload or {}
     answer=db.query(Answer).filter(Answer.id==data['answer_id'],
         Answer.institution_id==job.institution_id,Answer.submission_id==job.submission_id).first()
@@ -163,6 +165,8 @@ def regrade_corrected_answer(job,db,progress):
     existing=db.query(GradingRun).filter(GradingRun.processing_job_id==job.id,
         GradingRun.answer_id==answer.id).first()
     if existing:
+        lock_grading_paper(db, job.job_type, job.submission_id, job.institution_id)
+        check_grading_active(lock=True)
         submission=db.get(Submission,job.submission_id)
         submission.status='needs_review'
         db.commit()
@@ -179,6 +183,8 @@ def regrade_corrected_answer(job,db,progress):
         preserve_reviewed_grade=True,require_new_review=True,
         routing_context={'requested_mode':'image_text','selected_mode':'image_text',
             'route_reasons':[{'code':'instructor_corrected_extraction','detail':'Confirmed answer area and reviewed transcription'}]})
+    lock_grading_paper(db, job.job_type, job.submission_id, job.institution_id)
+    check_grading_active(lock=True)
     submission=db.get(Submission,job.submission_id)
     submission.status='needs_review'
     db.commit()

@@ -1,3 +1,4 @@
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test,expect}=require('@playwright/test');
 const {profileCatalog}=require('./fixtures/inference-profiles');
 const {staticWorkspace}=require('./fixtures/static-workspace');
@@ -38,7 +39,7 @@ test('settings service failure remains visible and rejected password changes ret
   await page.locator('#current-password').fill('Synthetic current password');await page.locator('#new-password').fill('Synthetic replacement password');await page.locator('#confirm-password').fill('Synthetic replacement password');
   await page.getByRole('button',{name:'Change password',exact:true}).click();await expect(page.locator('#native-password-error')).toContainText('Synthetic password rejection');
   expect(writes).toEqual(['/auth/change-password']);await expect(page.locator('#new-password')).toHaveValue('Synthetic replacement password');
-  page.once('dialog',dialog=>dialog.dismiss());await page.getByRole('link',{name:'Dashboard',exact:true}).click();await expect(page).toHaveURL(/account.html/);
+  await page.getByRole('link',{name:'Dashboard',exact:true}).click();await answerWorkspaceDialog(page,'cancel');await expect(page).toHaveURL(/account.html/);
   const trigger=page.locator('#native-password summary');
   await page.locator('#native-password-form').getByRole('button',{name:'Cancel'}).click();
   await expect(page.locator('#native-password-form')).toBeHidden();

@@ -1,5 +1,8 @@
+const {staticWorkspace}=require('./fixtures/static-workspace');
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test,expect}=require('@playwright/test');
 async function fixture(page,{oldProfile=false,automaticPreferences=true}={}){
+  await staticWorkspace(page);
   const state={versions:oldProfile?[{id:'old',version_number:1,status:'approved',scenario_answers:[{scenario_id:'valid_alternative_method',selected_option:'full_credit'}],explicit_preferences:{},derived_proposal:{method_credit:'full_if_valid'}}]:[],writes:[]};
   await page.route('**/api/**',route=>{
     const p=new URL(route.request().url()).pathname.replace('/api',''),method=route.request().method();let body=[];
@@ -45,7 +48,7 @@ test('expanded survey saves twelve real choices and requires completion before a
   await expect(page.locator('#marking-preferences [role=alert]')).toHaveCount(0);
   await page.locator('#app-language').click();await expect(page.locator('html')).toHaveAttribute('dir','rtl');await navFits(page);
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/survey-twelve-rtl-${info.project.name}.png`,fullPage:true,animations:'disabled'});
-  await page.locator('#app-language').click();page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Save & approve profile'}).click();
+  await page.locator('#app-language').click();await page.getByRole('button',{name:'Save & approve profile'}).click();await answerWorkspaceDialog(page,'confirm');
   expect(state.writes[0].scenario_answers).toHaveLength(12);
   expect(state.writes[0].explicit_preferences.teaching_context.question_types).toEqual(['calculation','multiple_choice']);
   await expect(page.locator('#survey-saved')).toContainText('Survey done');
@@ -132,8 +135,7 @@ test('Arabic teaching profile preserves notes and choices through failed save, a
   await expect(page.locator('[data-context="exam_language"]')).toHaveValue('ar');
   await expect(page.locator('[data-context="exam_language"] option:checked')).toHaveText('Arabic');
   await expect(page.locator('[data-scenario]:checked')).toHaveCount(12);
-  page.once('dialog',dialog=>dialog.accept());
-  await page.getByRole('button',{name:'Save & approve profile',exact:true}).click();
+  await page.getByRole('button',{name:'Save & approve profile',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#survey-saved')).toContainText('Survey done');
   expect(state.writes[0].explicit_preferences.teaching_context).toMatchObject({exam_language:'ar',question_types:['other'],...notes,subjects:['Physics','فيزياء']});
   await page.reload();
@@ -194,7 +196,7 @@ test('survey completion preserves an existing opt out and survives refresh',asyn
   await fixture(page,{automaticPreferences:false});await page.goto('/app/marking-survey.html');
   const ids=await page.locator('.preference-scenarios .preference-scenario').evaluateAll(rows=>rows.map(row=>row.querySelector('[data-scenario]').dataset.scenario));
   for(const id of ids)await page.locator('[data-scenario="'+id+'"]').first().check();
-  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Save & approve profile'}).click();
+  await page.getByRole('button',{name:'Save & approve profile'}).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#survey-saved')).toContainText('Survey done');await expect(page.locator('#survey-saved')).toContainText('Automatic preferences are off');
   await page.locator('#survey-saved').scrollIntoViewIfNeeded();await page.screenshot({path:'.impeccable/review/survey-completed-'+info.project.name+'.png',fullPage:true,animations:'disabled'});
   await page.reload();await expect(page.locator('#survey-saved')).toContainText('Automatic preferences are off');

@@ -1,6 +1,9 @@
+const {staticWorkspace}=require('./fixtures/static-workspace');
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test,expect}=require('@playwright/test');
 
 async function fixture(page,{failRead=false,failConfirm=false,failRegrade=false,pending=false,automatic=false,graded=true}={}){
+  await staticWorkspace(page);
   const state={writes:[],revision:null,preview:null,box:null,regraded:false,autoDone:false};
   const original='W = 82 + 3 = 85 J';
   const question={id:'q',question_number:'1',question_text:'Calculate work for 82 N acting through 3 m.',max_score:2};
@@ -63,7 +66,7 @@ test('selected area is read, reviewed and saved in Extraction, then explicitly r
   await page.getByRole('link',{name:'Review & regrade',exact:true}).click();
   await expect(page.locator('#instructor-score')).toHaveValue('1');
   await expect(page.locator('#adjust-highlight')).toHaveCount(0);
-  page.once('dialog',dialog=>dialog.accept());await page.getByRole('button',{name:'Regrade corrected answer',exact:true}).click();
+  await page.getByRole('button',{name:'Regrade corrected answer',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
   await expect.poll(()=>state.writes.filter(w=>w.path==='/answers/a/regrade-corrected').length).toBe(1);
   const request=state.writes.find(w=>w.path==='/answers/a/regrade-corrected').body;
   expect(request).toMatchObject({expected_run_id:'old-run',revision_ids:['area-job']});expect(request.request_id).toMatch(/^[\da-f-]{36}$/);
@@ -90,8 +93,8 @@ test('failed confirmation retains edited transcription and complete-answer check
 
 test('unsaved area guards page navigation and grading, while cancel restores original',async({page})=>{
   const state=await fixture(page,{graded:false});await selectArea(page);
-  page.once('dialog',d=>d.dismiss());await page.locator('#page-next').click();await expect(page.locator('#extraction-page')).toHaveText('Page 1 / 2');
-  page.once('dialog',d=>d.dismiss());await page.locator('#go-grading').click();await expect(page).toHaveURL(/extraction.html/);
+  await page.locator('#page-next').click();await answerWorkspaceDialog(page,'cancel');await expect(page.locator('#extraction-page')).toHaveText('Page 1 / 2');
+  await page.locator('#go-grading').click();await answerWorkspaceDialog(page,'cancel');await expect(page).toHaveURL(/extraction.html/);
   await page.locator('#start-grading').click();await expect(page.locator('#native-page-notice')).toContainText('Save your extraction');
   await page.locator('#cancel-highlight').click();await expect(page.locator('.evidence-box.editing')).toHaveCount(0);expect(state.writes).toHaveLength(0);
   await page.locator('#page-next').click();await expect(page.locator('#extraction-page')).toHaveText('Page 2 / 2');
@@ -143,7 +146,7 @@ test('Extraction controls fit both themes, Arabic and zoom with aligned evidence
 
 test('regrade failure keeps the saved instructor grade and correction',async({page})=>{
   await fixture(page,{failRegrade:true});await saveArea(page);await page.getByRole('link',{name:'Review & regrade',exact:true}).click();
-  page.once('dialog',dialog=>dialog.accept());await page.locator('[data-regrade-corrected]').click();
+  await page.locator('[data-regrade-corrected]').click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#error')).toContainText('newer grading run');await expect(page.locator('#instructor-score')).toHaveValue('1');await expect(page.locator('[data-regrade-corrected]')).toBeEnabled();
 });
 

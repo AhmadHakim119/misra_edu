@@ -67,8 +67,11 @@ conflict supported merely because the assessor calls it rounding/follow-through.
     calls = []
     rejected_hash = None
     correction = ''
+    response_schema = VerificationResult.model_json_schema()
     for attempt in range(2):
-        completion = (completion_fn or complete)([prompt + correction + payload, *images], task='verification')
+        contents = [prompt + correction + payload, *images]
+        completion = (completion_fn(contents, task='verification') if completion_fn else
+                      complete(contents, task='verification', response_schema=response_schema))
         calls.append(dict(completion.metadata))
         try:
             result = VerificationResult.model_validate_json(completion.text)

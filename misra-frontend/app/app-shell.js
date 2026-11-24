@@ -8,8 +8,6 @@
   const link=(page,params={})=>`${page}.html?${new URLSearchParams(Object.entries(params).filter(([,v])=>v!=null&&v!==''))}`;
   MisraWorkspace.refreshThemeLabel();
   let busy=false,dirty=false;
-  function guard(e){if(busy||dirty&&!confirm('Leave without saving your changes?')){e.preventDefault();e.stopImmediatePropagation();return;}dirty=false;}
-  page.listen(document,'click',e=>{if(e.target.closest('a')&&!MisraWorkspace.isSoftLink(e))guard(e);},true);
   page.listen(window,'beforeunload',e=>{if(dirty||busy){e.preventDefault();e.returnValue='';}});
   page.guard(()=>busy,()=>dirty);
   async function operation(button,fn){if(busy)return;busy=true;const main=document.querySelector('main'),was=button?.disabled;if(main){main.inert=true;main.setAttribute('aria-busy','true');}if(button)button.disabled=true;try{await fn();}catch(e){window.showToast(e.message,'error');}finally{busy=false;if(main){main.inert=false;main.removeAttribute('aria-busy');}if(button?.isConnected)button.disabled=was||false;}}

@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   const routeScope = window.MisraWorkspace?.page;
+  const confirmAction = message => window.MisraWorkspace ? MisraWorkspace.confirm(message) : window.confirm(message);
   const onWindow = (...args) => routeScope ? routeScope.listen(window, ...args) : window.addEventListener(...args);
   const native = /\/(?:next|app)\//.test(location.pathname);
   const esc = value => MisraUI.escapeHTML(String(value ?? ''));
@@ -12,7 +13,7 @@
   const pending = v => v.status==='draft' && ['ready','needs_transcription'].includes(v.ingestion_status) && v.page_count>0;
   const choices = () => materials.flatMap(m => (m.versions || []).filter(v => ['approved','superseded'].includes(v.status) || native && pending(v)).map(v => ({m,v})));
   const hasUnsaved = () => dirty || busy;
-  const canLeave = () => !busy && (!dirty || window.confirm('Discard unsaved assessment-source changes?'));
+  const canLeave = () => !busy && (!dirty || confirmAction('Discard unsaved assessment-source changes?'));
   let summaryPending = false;
   let sourceDetailsOpen = false;
   const summaryRows = () => (data?.questions || []).map(q => `<li>Question ${esc(q.question_number)}: ${q.origin === 'assessment' ? 'uses assessment default' : q.origin === 'question' ? `approved question exception (${esc(q.scope?.mode)})` : q.origin === 'blocked' ? esc(q.error) : 'no approved source scope'}</li>`).join('');
@@ -95,7 +96,7 @@
     host.querySelectorAll('[data-default-remove]').forEach(el => el.addEventListener('click', () => { capture(); rows.splice(Number(el.dataset.defaultRemove),1); dirty = true; render(); }));
     host.querySelector('[data-default-save]')?.addEventListener('click', () => save(false));
     host.querySelector('[data-default-approve]')?.addEventListener('click', () => save(true));
-    host.querySelector('[data-default-reload]')?.addEventListener('click', () => { if (canLeave()) load(examId,courseId); });
+    host.querySelector('[data-default-reload]')?.addEventListener('click', async () => { if (await canLeave()) load(examId,courseId); });
   }
   async function load(id, course) {
     if (!id) return;
@@ -127,7 +128,7 @@
       if (mode !== 'disabled' && !bindings.length) throw new Error('Add approved material or explicitly disable assessment references.');
       body = {mode,bindings,...(!approve && allowPending?{allow_pending_sources:true}:{})};
     } catch (failure) { error = failure.message; render(); return; }
-    if (approve && !window.confirm('Approve these defaults for future grading of this assessment? Question exceptions remain in force. Existing grades are not changed.')) return;
+    if (approve && !await confirmAction('Approve these defaults for future grading of this assessment? Question exceptions remain in force. Existing grades are not changed.')) return;
     const current = epoch, id = examId;
     busy = true; error = ''; render();
     try {

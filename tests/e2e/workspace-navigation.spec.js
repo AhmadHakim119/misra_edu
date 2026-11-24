@@ -1,3 +1,4 @@
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test, expect} = require('@playwright/test');
 const {staticWorkspace}=require('./fixtures/static-workspace');
 
@@ -66,28 +67,24 @@ test('workspace navigation preserves an unsaved exam when Back is canceled and r
   await page.locator('#open-creation').click();
   const title = page.locator('#manager-title');
   await title.fill('Synthetic unsaved title');
-  const dismissed = page.waitForEvent('dialog').then(dialog => dialog.dismiss());
   await page.evaluate(() => history.back());
-  await dismissed;
+  await answerWorkspaceDialog(page,'cancel');
   await expect(title).toHaveValue('Synthetic unsaved title');
   await expect(page).toHaveURL(/\/app\/assessments\.html$/);
 
   await page.route('**/app/reviews.html', route => route.abort(), {times: 1});
-  page.once('dialog', dialog => dialog.accept());
-  await nav.getByRole('link', {name: 'Review', exact: true}).click();
+  await nav.getByRole('link', {name: 'Review', exact: true}).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('.workspace-route-notice')).toContainText('The page could not load');
   await expect(title).toHaveValue('Synthetic unsaved title');
   await expect(page).toHaveURL(/\/app\/assessments\.html$/);
 
   await page.route('**/app/reviews.js', route => route.abort(), {times: 1});
-  page.once('dialog', dialog => dialog.accept());
-  await nav.getByRole('link', {name: 'Review', exact: true}).click();
+  await nav.getByRole('link', {name: 'Review', exact: true}).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('.workspace-route-notice')).toContainText('The page could not load');
   await expect(title).toHaveValue('Synthetic unsaved title');
   await expect(page).toHaveURL(/\/app\/assessments\.html$/);
 
-  page.once('dialog', dialog => dialog.accept());
-  await nav.getByRole('link', {name: 'Review', exact: true}).click();
+  await nav.getByRole('link', {name: 'Review', exact: true}).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page).toHaveURL(/\/app\/reviews\.html$/);
   await expect(page.locator('#workspace-content h1')).toHaveText('Instructor review queue');
   expect(await page.evaluate(() => window.testWorkspaceHeader === document.querySelector('.workspace-header'))).toBe(true);

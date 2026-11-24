@@ -182,7 +182,10 @@ def list_submissions(
             if (job.payload or {}).get('operation') in {'locate_answers','read_answer_area'}:
                 continue
             target = latest_ocr_jobs if job.job_type == "ocr_submission" else latest_grading_jobs
-            target.setdefault(job.submission_id, job)
+            previous = target.setdefault(job.submission_id, job)
+            if (job.job_type == 'grade_submission' and job.status in ('queued', 'processing', 'retrying')
+                    and previous.status not in ('queued', 'processing', 'retrying')):
+                target[job.submission_id] = job
 
     items = []
     for submission in submissions:

@@ -160,6 +160,7 @@ class ExtractionAuthorizationTests(unittest.TestCase):
             ("ocr-complete", "ocr_submission", "completed", 0),
             ("old-grade", "grade_submission", "failed", 1),
             ("new-grade", "grade_submission", "queued", 2),
+            ("terminal-duplicate", "grade_submission", "failed", 3),
         ]:
             self.db.add(ProcessingJob(
                 id=id_, institution_id=owner.institution_id,
