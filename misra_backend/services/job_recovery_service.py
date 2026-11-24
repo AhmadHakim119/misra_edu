@@ -13,7 +13,10 @@ from services.audit_service import record_audit_event, safe_error_message
 from services.job_queue_service import (
     ACTIVE_JOB_STATUSES,
     dispatch_processing_job,
+    finish_stopped_job,
+    lock_grading_paper,
     redis_connection,
+    stop_requested,
 )
 
 
@@ -109,6 +112,7 @@ def recover_orphaned_jobs(
             summary["healthy"] += 1
             continue
 
+        lock_grading_paper(db, candidate.job_type, candidate.submission_id, candidate.institution_id)
         job = (
             db.query(ProcessingJob)
             .filter(
@@ -116,13 +120,19 @@ def recover_orphaned_jobs(
                 ProcessingJob.status.in_(ACTIVE_JOB_STATUSES),
                 ProcessingJob.updated_at < cutoff,
             )
-            .with_for_update()
+            .populate_existing().with_for_update()
             .first()
         )
         if not job:
             continue
+        if stop_requested(job):
+            finish_stopped_job(job, db)
+            db.commit()
+            continue
 
-        if rq_status == "finished":
+        # A canceled or superseded worker can exit normally without saving marks.
+        # Only the grading worker can attest that its results were committed.
+        if rq_status == "finished" and job.job_type != 'grade_submission':
             job.status = "completed"
             job.progress_current = job.progress_total
             job.progress_message = "Recovered completed queue result"

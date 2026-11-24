@@ -1,3 +1,4 @@
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const { test, expect } = require('@playwright/test');
 const {staticWorkspace}=require('./fixtures/static-workspace');
 
@@ -89,10 +90,10 @@ test('ungraded papers open the complete extraction editor while grading links re
 test('opening extraction preserves a cancelled instructor draft and discards it only on confirmation',async({page})=>{
   const writes=await fixture(page);await page.locator('#instructor-score').fill('1.75');
   if(!await page.locator('#paper-picker').evaluate(el=>el.open))await page.locator('#paper-picker summary').click();
-  page.once('dialog',dialog=>dialog.dismiss());await page.locator('[data-paper="other"]').click();
+  await page.locator('[data-paper="other"]').click();await answerWorkspaceDialog(page,'cancel');
   await expect(page.locator('#instructor-score')).toHaveValue('1.75');await expect(page).toHaveURL(/index.html/);
-  let dialogs=0;page.on('dialog',dialog=>{dialogs++;dialog.accept();});await page.locator('[data-paper="other"]').click();
-  await expect(page).toHaveURL(/extraction.html\?.*submission_id=other/);expect(dialogs).toBe(1);expect(writes).toHaveLength(0);
+  await page.locator('[data-paper="other"]').click();await answerWorkspaceDialog(page,'confirm');
+  await expect(page).toHaveURL(/extraction.html\?.*submission_id=other/);expect(writes).toHaveLength(0);
 });
 
 test('ledger puts real criterion titles, saved references and full paper beside grade controls',async({page},info)=>{
@@ -183,8 +184,7 @@ test('flagged grade cannot be accepted before acknowledging an evidence check',a
 
 test('saved decision can reopen with a pinned label while retaining the human mark',async({page})=>{
   const writes=await fixture(page,{reviewed:true});
-  page.once('dialog',dialog=>dialog.accept('Approved before inspecting the sign'));
-  await page.locator('#reopen-grade-review').click();
+  await page.locator('#reopen-grade-review').click();await answerWorkspaceDialog(page,'confirm','Approved before inspecting the sign');
   await expect(page.locator('#review-evidence-checked')).toBeVisible();
   await expect(page.locator('#instructor-score')).toHaveValue('2');
   expect(writes[0].reopen).toMatchObject({expected_label_id:'saved-label',expected_run_id:'run2',reason:'Approved before inspecting the sign'});
@@ -192,7 +192,7 @@ test('saved decision can reopen with a pinned label while retaining the human ma
 
 test('failed override and cancelled question navigation retain the instructor draft',async({page})=>{
   await fixture(page,{failSave:true});await page.getByLabel('Instructor score',{exact:true}).fill('1');
-  page.once('dialog',d=>d.dismiss());await page.locator('#question-select').selectOption('q1');
+  await page.locator('#question-select').selectOption('q1');await answerWorkspaceDialog(page,'cancel');
   await expect(page.locator('#question-select')).toHaveValue('q2');await expect(page.locator('#instructor-score')).toHaveValue('1');
   await page.locator('#decision-reason').selectOption('other');if(await page.locator('#review-evidence-checked').count())await page.locator('#review-evidence-checked').check();await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();
   await expect(page.locator('#grade-error')).toContainText('Synthetic newer grading run');await expect(page.locator('#instructor-score')).toHaveValue('1');

@@ -18,15 +18,16 @@ from models import (  # noqa: E402
     Batch,
     Course,
     Exam,
+    GradingRun,
     Institution,
     ProcessingJob,
     Question,
     Submission,
     User,
 )
-from routers.jobs import _owned_job, list_workspace_jobs  # noqa: E402
+from routers.jobs import _owned_job, list_workspace_jobs, stop_job  # noqa: E402
 from services.job_execution_service import _grade_submission, execute_processing_job  # noqa: E402
-from services.job_queue_service import dispatch_processing_job  # noqa: E402
+from services.job_queue_service import dispatch_processing_job, retry_processing_job  # noqa: E402
 from services.job_recovery_service import recover_orphaned_jobs  # noqa: E402
 from services.ocr_service import _clear_incomplete_extraction  # noqa: E402
 from services.grading_errors import GradingResponseValidationError
@@ -288,8 +289,101 @@ class ProcessingJobTests(unittest.TestCase):
         self.assertRegex(rq_job_id, r"^[A-Za-z0-9_-]+$")
         self.assertNotIn(":", rq_job_id)
         self.db.refresh(job)
-        self.assertEqual(job.rq_job_id, QueuedJob.id)
+        self.assertEqual(job.rq_job_id, rq_job_id)
         self.assertEqual(job.status, "queued")
+
+    def test_retry_rejects_a_second_job_on_the_same_paper(self):
+        old = self._job(job_type='grade_submission', status='failed')
+        self._job(id='active', job_type='grade_submission', status='processing')
+        with patch('services.job_queue_service.dispatch_processing_job') as dispatch:
+            with self.assertRaisesRegex(ValueError, 'already active'):
+                retry_processing_job(old, self.db)
+        dispatch.assert_not_called()
+
+    def test_same_second_grading_jobs_cannot_retry_an_ambiguous_old_attempt(self):
+        now = datetime.now().replace(microsecond=0)
+        old = self._job(job_type='grade_submission', status='failed', created_at=now)
+        self._job(id='other-attempt', job_type='grade_submission', status='failed', created_at=now)
+        with self.assertRaisesRegex(ValueError, 'same time or later'):
+            retry_processing_job(old, self.db)
+
+    def test_stopped_queued_job_cannot_grade_stale_delivery(self):
+        from fastapi import HTTPException
+        job = self._job(job_type='grade_submission')
+        with self.assertRaises(HTTPException) as error:
+            stop_job(job.id, self.db, self.colleague)
+        self.assertEqual(error.exception.status_code, 404)
+        result = stop_job(job.id, self.db, self.user)
+        self.assertEqual(result['status'], 'stopped')
+        with patch('services.job_execution_service.SessionLocal', self.Session), \
+                patch('services.job_execution_service._grade_submission') as grade:
+            execute_processing_job(job.id)
+        grade.assert_not_called()
+
+    def test_running_job_stops_at_checkpoint_without_retries(self):
+        from services.grading_control import check_grading_active
+        job = self._job(job_type='grade_submission', payload={'completed_answer_ids': ['saved']})
+
+        def interrupt(job, db):
+            with self.Session() as api:
+                result = stop_job(job.id, api, self.user)
+                self.assertEqual(result['status'], 'stopping')
+            check_grading_active(lock=True)
+            self.fail('Stopped work continued after the checkpoint')
+
+        with patch('services.job_execution_service.SessionLocal', self.Session), \
+                patch('services.job_execution_service._grade_submission', side_effect=interrupt) as grade:
+            execute_processing_job(job.id)
+            execute_processing_job(job.id)
+        grade.assert_called_once()
+        self.db.refresh(job)
+        self.assertEqual(job.payload['completed_answer_ids'], ['saved'])
+        self.assertEqual(job.progress_message, 'Grading stopped')
+
+    def test_superseded_worker_cannot_complete_or_fail_replacement(self):
+        from services.grading_control import check_grading_active
+        job = self._job(job_type='grade_submission', rq_job_id='old-dispatch')
+
+        def orphaned(job, db):
+            with self.Session() as api:
+                replacement = api.get(ProcessingJob, job.id)
+                replacement.rq_job_id = 'new-dispatch'
+                replacement.status = 'queued'
+                api.commit()
+            check_grading_active(lock=True)
+            self.fail('A superseded attempt kept running')
+
+        with patch('services.job_execution_service.SessionLocal', self.Session), \
+                patch('services.job_execution_service._grade_submission', side_effect=orphaned):
+            execute_processing_job(job.id)
+        self.db.refresh(job)
+        self.assertEqual((job.status, job.rq_job_id), ('queued', 'new-dispatch'))
+
+    def test_restart_keeps_a_primary_grade_saved_before_its_progress_checkpoint(self):
+        question = Question(id='q-checkpoint', exam_id=self.exam.id, institution_id=self.institution.id,
+                            question_number='1', max_score=1, order_index=1, rubric_json={'criteria': []})
+        self.db.add(question)
+        answer = Answer(id='a-checkpoint', question_id=question.id, submission_id=self.submission.id,
+                        institution_id=self.institution.id, score=1, max_score=1, teacher_override_score=.75)
+        self.db.add(answer)
+        self.db.commit()
+        job = self._job(job_type='grade_submission', payload={'mode':'auto','completed_answer_ids':[]})
+        primary = GradingRun(id='primary-run', answer_id=answer.id, processing_job_id=job.id,
+                             mode='text_only', model_name='synthetic', prompt_version='synthetic',
+                             ocr_text_snapshot='synthetic', rubric_snapshot={}, score=1, max_score=1,
+                             feedback='', reasoning='', criteria_scores=[], llm_confidence=90,
+                             final_confidence=85, needs_review=True,
+                             response_json={'grading_package': {'routing': {'comparison_pair_id': 'pair', 'image_audit_pending': True}}})
+        self.db.add(primary)
+        self.db.commit()
+        with patch('services.job_execution_service.process_grading_with_policy') as grade:
+            _grade_submission(job, self.db)
+        grade.assert_not_called()
+        self.assertEqual(job.payload['completed_answer_ids'], [answer.id])
+        self.assertEqual(job.payload['incomplete_comparison_count'], 1)
+        self.assertEqual(self.db.get(Submission, self.submission.id).status, 'needs_review')
+        self.assertIsNotNone(self.db.get(GradingRun, primary.id))
+        self.assertEqual(float(self.db.get(Answer, answer.id).teacher_override_score), .75)
 
     def test_orphan_recovery_requeues_missing_redis_job_once(self):
         job = self._job(
@@ -353,6 +447,17 @@ class ProcessingJobTests(unittest.TestCase):
         self.assertEqual(summary["healthy"], 1)
         self.assertEqual(summary["requeued"], 0)
         dispatch.assert_not_called()
+
+    def test_finished_rq_delivery_alone_does_not_complete_grading(self):
+        job = self._job(job_type='grade_submission', status='processing', attempt_count=1)
+        self.db.query(ProcessingJob).filter_by(id=job.id).update({ProcessingJob.updated_at: datetime.now()-timedelta(hours=2)})
+        self.db.commit()
+        with patch('services.job_recovery_service.dispatch_processing_job', side_effect=lambda job, db: job):
+            summary = recover_orphaned_jobs(self.db, stale_after_seconds=60,
+                inspector=lambda job, connection: {'status': 'finished'})
+        self.assertEqual(summary['reconciled_completed'], 0)
+        self.db.refresh(job)
+        self.assertEqual(job.status, 'retrying')
 
     def test_orphan_recovery_reports_queue_dispatch_failure(self):
         job = self._job(status="processing", attempt_count=1, rq_job_id="missing-rq-job")
@@ -473,6 +578,7 @@ class ProcessingJobTests(unittest.TestCase):
             for index in (1, 2)
         ]
         self.db.add_all([*questions, *answers])
+        answers[0].score = 1
         self.db.commit()
         job = self._job(
             job_type="grade_submission",
@@ -480,6 +586,14 @@ class ProcessingJobTests(unittest.TestCase):
         )
 
         with patch("services.job_execution_service.process_grading_with_policy") as grade:
+            with self.assertRaisesRegex(GradingResponseValidationError, 'expected grade is missing'):
+                _grade_submission(job, self.db)
+            self.assertNotIn(answers[1].id, job.payload['completed_answer_ids'])
+            grade.reset_mock()
+            def save_proposal(answer_id, db, **kwargs):
+                db.get(Answer, answer_id).score = 0
+                db.commit()
+            grade.side_effect = save_proposal
             _grade_submission(job, self.db)
 
         grade.assert_called_once_with(answers[1].id, self.db, processing_job_id=job.id)

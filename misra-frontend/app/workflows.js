@@ -39,12 +39,12 @@
     if(!matchMedia('(prefers-reduced-motion: reduce)').matches) $('upload-selection').animate([{opacity:.75,transform:'translateY(-3px)'},{opacity:1,transform:'none'}],{duration:180,easing:'cubic-bezier(.16,1,.3,1)'});
   }
   function hasUnsaved() {return sending || files.length>0 || ambiguous || Boolean(window.MisraAssessmentSources?.hasUnsaved()) || Boolean(window.MisraLedgerEditors?.hasUnsaved()) || Boolean(window.MisraTeaching?.hasUnsaved());}
-  function canLeave() {
-    if(window.MisraTeaching?.canLeave()===false) return false;
+  async function canLeave() {
+    if(await window.MisraTeaching?.canLeave()===false) return false;
     if(sending || window.MisraAssessmentSources?.isBusy() || window.MisraLedgerEditors?.isBusy()) {error('Wait for the current upload or approval to finish.');return false;}
-    if(window.MisraLedgerEditors?.canLeave()===false) return false;
-    if(window.MisraAssessmentSources?.canLeave()===false) return false;
-    return !(files.length || ambiguous) || window.confirm(ambiguous ? 'Upload acceptance is uncertain. Check background activity before uploading this paper again. Leave this assessment?' : 'Discard the selected files? Nothing has been uploaded yet.');
+    if(await window.MisraLedgerEditors?.canLeave()===false) return false;
+    if(await window.MisraAssessmentSources?.canLeave()===false) return false;
+    return !(files.length || ambiguous) || await MisraWorkspace.confirm(ambiguous ? 'Upload acceptance is uncertain. Check background activity before uploading this paper again. Leave this assessment?' : 'Discard the selected files? Nothing has been uploaded yet.');
   }
   async function checks() {
     if(!exam) return;
@@ -95,7 +95,7 @@
   $('clear-upload').addEventListener('click',()=>{if(sending || accepted || ambiguous) return;files=[];$('ledger-files').value='';sync();});
   document.querySelectorAll('[data-ledger-upload-mode]').forEach(b=>b.addEventListener('click',()=>{if(!files.length && !sending && !accepted && !ambiguous) {mode=b.dataset.ledgerUploadMode;sync();}}));
   $('refresh-ledger-checks').addEventListener('click',checks);$('refresh-upload-checks').addEventListener('click',checks);
-  $('upload-another').addEventListener('click',()=>{if(sending) return;if(ambiguous && !window.confirm('Confirm you checked the papers list and background activity, and this upload was not accepted. Start a new selection?')) return;routeScope.cancelTimer(pollTimer);accepted=null;recoveryId='';ambiguous=false;files=[];$('ledger-files').value='';$('upload-accepted').innerHTML='';error('');sync();window.dispatchEvent(new CustomEvent('misra:ledger-url-changed'));});
+  $('upload-another').addEventListener('click',async()=>{if(sending) return;if(ambiguous && !await MisraWorkspace.confirm('Confirm you checked the papers list and background activity, and this upload was not accepted. Start a new selection?')) return;routeScope.cancelTimer(pollTimer);accepted=null;recoveryId='';ambiguous=false;files=[];$('ledger-files').value='';$('upload-accepted').innerHTML='';error('');sync();window.dispatchEvent(new CustomEvent('misra:ledger-url-changed'));});
   $('ledger-upload-form').addEventListener('submit',async e=>{
     e.preventDefault();if(sending || ambiguous || accepted || !ready || !files.length || !exam || window.MisraAssessmentSources?.isBusy()) return;
     const split=$('ledger-split').value.trim();

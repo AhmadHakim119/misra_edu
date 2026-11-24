@@ -1,6 +1,9 @@
+const {staticWorkspace}=require('./fixtures/static-workspace');
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test,expect}=require('@playwright/test');
 
 async function fixture(page){
+  await staticWorkspace(page);
   const exams=[
     'Synthetic grading test',
     'Synthetic source questions pilot',
@@ -48,10 +51,10 @@ test('alignment survives filtering, rejected duplication and unsaved assessment 
   await fixture(page);
   await page.locator('#manager-search').fill('mathematics');await expect(page.locator('.manager-row')).toHaveCount(1);await aligned(page);
   await expect(page.locator('.manager-row>a')).toHaveAttribute('href','grading.html?exam_id=exam-4');
-  page.once('dialog',dialog=>dialog.accept('Synthetic copied assessment'));await page.locator('[data-duplicate]').click();
+  await page.locator('[data-duplicate]').click();await answerWorkspaceDialog(page,'confirm','Synthetic copied assessment');
   await expect(page.locator('#manager-status')).toContainText('Synthetic duplicate rejection');await aligned(page);
   await page.locator('#manager-search').fill('');await expect(page.locator('.manager-row')).toHaveCount(5);await aligned(page);
   await page.locator('#open-creation').click();await page.locator('#manager-title').fill('Synthetic unsaved assessment');
-  page.once('dialog',dialog=>dialog.dismiss());await page.locator('.manager-row>a').first().click();
+  await page.locator('.manager-row>a').first().click();await answerWorkspaceDialog(page,'cancel');
   await expect(page).toHaveURL(/assessments.html/);await expect(page.locator('#manager-title')).toHaveValue('Synthetic unsaved assessment');
 });

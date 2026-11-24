@@ -1,6 +1,9 @@
+const {staticWorkspace}=require('./fixtures/static-workspace');
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test,expect}=require('@playwright/test');
 
 async function fixture(page,{completed=true,enabled=true,failSave=false,failLoad=false,failDelete=false}={}){
+  await staticWorkspace(page);
   const state={enabled,failSave,failLoad,writes:[]};
   await page.route('**/api/**',async route=>{
     const request=route.request(),path=new URL(request.url()).pathname.replace('/api',''),method=request.method();
@@ -43,7 +46,7 @@ test('failed opt out keeps the choice, protects navigation and retries the same 
   const state=await fixture(page,{failSave:true});await expect(page.locator('#use-marking-preferences')).toBeEnabled();
   await page.locator('#use-marking-preferences').uncheck();await expect(page.locator('#marking-settings-error')).toContainText('Save not confirmed');
   await expect(page.locator('#use-marking-preferences')).not.toBeChecked();expect(state.enabled).toBeTruthy();
-  page.once('dialog',d=>d.dismiss());await page.getByRole('link',{name:'Exams',exact:true}).click();await expect(page).toHaveURL(/account.html/);
+  await page.getByRole('link',{name:'Exams',exact:true}).click();await answerWorkspaceDialog(page,'cancel');await expect(page).toHaveURL(/account.html/);
   state.failSave=false;await page.locator('#retry-marking-setting').click();await expect(page.locator('#marking-settings-error')).toBeEmpty();
   expect(state.enabled).toBeFalsy();await expect(page.locator('#retry-marking-setting')).toBeHidden();
 });
@@ -69,7 +72,7 @@ test('rejected deletion preserves entries and cancel clears them without deletin
   await page.locator('#delete-password').fill('Synthetic wrong password');await page.locator('#delete-confirmation').fill('DELETE');
   await page.getByRole('button',{name:'Delete my account',exact:true}).click();await expect(page.locator('#delete-account-error')).toContainText('Current password is incorrect');
   await expect(page.locator('#delete-confirmation')).toHaveValue('DELETE');
-  page.once('dialog',d=>d.dismiss());await page.getByRole('link',{name:'Exams',exact:true}).click();await expect(page).toHaveURL(/account.html/);
+  await page.getByRole('link',{name:'Exams',exact:true}).click();await answerWorkspaceDialog(page,'cancel');await expect(page).toHaveURL(/account.html/);
   await page.locator('#delete-account-form').getByRole('button',{name:'Cancel',exact:true}).click();await expect(page.locator('#delete-password')).toBeEmpty();await expect(page.locator('#delete-confirmation')).toBeEmpty();
   expect(state.writes).toHaveLength(1);await page.getByRole('link',{name:'Exams',exact:true}).click();await expect(page).toHaveURL(/assessments.html/);
 });

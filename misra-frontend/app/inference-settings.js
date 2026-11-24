@@ -23,12 +23,15 @@
     $('inference-active').hidden = false;
     $('inference-models').hidden = false;
     $('inference-local-notes').hidden = !local;
-    $('inference-local-capability').textContent = local ? translate(selected.text_only_grading
+    $('inference-local-capability').textContent = local ? translate(selected.tasks.vision_grading
+      ? 'Qwen Vision reads pages and handles grading and verification when images are included. Qwen3 Instruct handles text-only work. All model calls stay local.'
+      : selected.text_only_grading
       ? 'Local Qwen uses text. Use a vision-capable setup when grading requires images. Gemini page reading may incur provider charges.'
       : 'Local Qwen Vision can inspect images during grading and verification. Gemini page reading may incur provider charges.') : '';
     $('native-ai-status').textContent = selected.verification_enabled ? '' :
       translate('Verification is disabled for this setup.');
-    $('native-ai-agents').innerHTML = roles.map(([key, name]) => {
+    const shownRoles=selected.tasks.vision_grading ? [...roles,['vision_grading','Image grading & verification']] : roles;
+    $('native-ai-agents').innerHTML = shownRoles.map(([key, name]) => {
       const task = selected.tasks[key];
       const model = key === 'verification' && !selected.verification_enabled
         ? escaped(translate('Disabled'))
@@ -49,7 +52,8 @@
       if (!Array.isArray(data?.profiles) || data.profiles.length !== optionIds.size || new Set(data.profiles.map(item => item?.id)).size !== optionIds.size || !data.profiles.every(item =>
         optionIds.has(item?.id) && typeof item.label === 'string' &&
         typeof item.verification_enabled === 'boolean' && typeof item.text_only_grading === 'boolean' &&
-        roles.every(([task]) => typeof item.tasks?.[task]?.model === 'string' && typeof item.tasks?.[task]?.provider === 'string'))) {
+        (item.id==='local_qwen_all_v1' ? [...roles,['vision_grading']] : roles)
+          .every(([task]) => typeof item.tasks?.[task]?.model === 'string' && typeof item.tasks?.[task]?.provider === 'string'))) {
         throw Error('AI services could not be confirmed. Reload or restart the API with the updated code.');
       }
       const active = MisraAPI.inferenceProfile();
@@ -84,7 +88,7 @@
     try { MisraAPI.setInferenceProfile(selectedProfile()); dirty = false; render(); status('AI setup saved on this browser. Existing jobs and grades stay unchanged.'); }
     catch (_) { dirty = true; $('inference-error').textContent = translate('AI setup was not saved. Your selection is still here. Allow browser storage, then retry Save AI setup.'); }
   });
-  scope.listen($('reload-inference-profile'), 'click', () => { if (!dirty || confirm(translate('Discard the unsaved AI setup and reload?'))) load(); });
+  scope.listen($('reload-inference-profile'), 'click', async () => { if (!dirty || await MisraWorkspace.confirm('Discard the unsaved AI setup and reload?')) load(); });
   scope.listen(check, 'click', async () => {
     if (checking) return;
     const profile = selectedProfile();
@@ -98,13 +102,8 @@
     } catch (error) { if (!scope.signal.aborted && selectedProfile() === profile) $('local-model-status').textContent = error.message; }
     finally { checking = false; if (!scope.signal.aborted) check.disabled = busy || !loaded; }
   });
-  scope.guard(() => busy, () => dirty);
+  scope.guard(() => false, () => dirty);
   scope.listen(window, 'beforeunload', event => { if (dirty) { event.preventDefault(); event.returnValue = ''; } });
-  scope.listen(document, 'click', event => {
-    const anchor = event.target.closest('a');
-    if (!dirty || !anchor || anchor.getAttribute('href')?.startsWith('#') || MisraWorkspace.isSoftLink(event)) return;
-    if (!confirm(translate('Leave without saving the AI setup?'))) { event.preventDefault(); event.stopImmediatePropagation(); }
-  }, true);
   scope.listen(window, 'misra:language', () => { if (loaded) render(); });
   scope.listen(window, 'storage', () => {
     if (!loaded || busy) return;

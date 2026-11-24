@@ -1,6 +1,7 @@
 /* Answer references are independently versioned; scoring remains in the rubric. */
 (function () {
   'use strict';
+  const confirmAction = message => window.MisraWorkspace ? MisraWorkspace.confirm(message) : window.confirm(message);
   let host, examId, questionId, versions = [], current, draft, dirty = false, busy = false, loading = false, error = '', generation = 0;
   const esc = value => MisraUI.escapeHTML(String(value ?? ''));
   const blank = () => ({ mode: 'reference', reference_text: '', acceptable_answers: [], document_refs: [], change_summary: '' });
@@ -11,7 +12,7 @@
   function reset() { generation++; host = null; versions = []; current = null; draft = blank(); dirty = false; busy = false; loading = false; error = ''; }
   function canLeave() {
     if (busy) { window.showToast('Wait for the answer-key operation to finish.', 'info'); return false; }
-    return !dirty || window.confirm('Discard unsaved answer-key edits?');
+    return !dirty || confirmAction('Discard unsaved answer-key edits?');
   }
   function sync() {
     if (!host || !editable()) return;
@@ -55,7 +56,7 @@
     host.querySelector('[data-key-approve]')?.addEventListener('click', () => save(true));
     host.querySelector('[data-key-upload]')?.addEventListener('click', upload);
     host.querySelectorAll('[data-key-remove]').forEach(el => el.addEventListener('click', () => { sync(); draft.document_refs.splice(Number(el.dataset.keyRemove), 1); dirty = true; render(); }));
-    host.querySelectorAll('[data-key-version]').forEach(el => el.addEventListener('click', () => { if (canLeave()) { choose(versions.find(v => v.id === el.dataset.keyVersion)); error = ''; render(); } }));
+    host.querySelectorAll('[data-key-version]').forEach(el => el.addEventListener('click', async () => { if (await canLeave()) { choose(versions.find(v => v.id === el.dataset.keyVersion)); error = ''; render(); } }));
   }
   function payload() {
     sync();
@@ -74,7 +75,7 @@
     if (busy || !editable()) return;
     let body;
     try { body = payload(); } catch (e) { error = e.message; render(); return; }
-    if (approve && !window.confirm('Approve this answer key for future grading? Approved versions cannot be edited.')) return;
+    if (approve && !await confirmAction('Approve this answer key for future grading? Approved versions cannot be edited.')) return;
     const request = generation, qid = questionId; busy = true; error = ''; render();
     try {
       const saved = current ? await MisraAPI.updateAnswerKey(qid, current.id, body) : await MisraAPI.createAnswerKey(qid, body);

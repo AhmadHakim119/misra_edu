@@ -1,3 +1,4 @@
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test,expect}=require('@playwright/test');
 const {staticWorkspace}=require('./fixtures/static-workspace');
 async function fixture(page,{graded=true,failCorrection=false,admin=false,pageCount=1}={}){
@@ -75,7 +76,7 @@ test('native rubric → upload → extraction correction → grading → feedbac
 test('transcription conflict retains edits and prevents navigation on cancellation',async({page})=>{
   await fixture(page,{graded:false,failCorrection:true});await page.goto('/app/extraction.html?exam_id=e&submission_id=s');
   await page.locator('[data-source="seg"] textarea').fill('Keep this unsaved correction');await page.getByRole('button',{name:'Save correction',exact:true}).click();await expect(page.locator('#native-page-notice')).toContainText('conflict');await expect(page.locator('[data-source="seg"] textarea')).toHaveValue('Keep this unsaved correction');
-  page.once('dialog',d=>d.dismiss());await page.locator('#go-grading').click();await expect(page).toHaveURL(/extraction.html/);
+  await page.locator('#go-grading').click();await answerWorkspaceDialog(page,'cancel');await expect(page).toHaveURL(/extraction.html/);
 });
 
 test('approved guide can be reopened without discarding its saved criteria',async({page})=>{
@@ -85,7 +86,7 @@ test('approved guide can be reopened without discarding its saved criteria',asyn
     await route.fulfill({json:{exam_id:'e',draft_version_ids:['draft'],message:'Guide reopened with saved correction drafts.'}});
   });
   await page.goto('/app/setup.html?exam_id=e');await page.locator('#guide-review-tab').click();
-  page.once('dialog',d=>d.accept());await page.locator('#guide-reopen').click();
+  await page.locator('#guide-reopen').click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#guide-approval-state')).toContainText('reopened');
   expect(state.writes.find(w=>w.path.endsWith('/reopen')).body).toEqual({review_token:'a'.repeat(64),confirm_reviewed:true});
 });
@@ -285,6 +286,64 @@ test('assessment workspace uses the available width and keeps grading input and 
   expect(state.gradingProfile).toBe('local_qwen_vision_gemini_v1');
 });
 
+test('View and grade resumes the stopped job from the paper',async({page},info)=>{
+  const state=await fixture(page);
+  state.gradingJob={id:'stopped-job',exam_id:'e',submission_id:'s',job_type:'grade_submission',status:'stopped'};
+  let retries=0;
+  await page.route('**/api/jobs/stopped-job/retry',route=>{
+    if(++retries===1)return route.fulfill({status:409,json:{detail:'Synthetic retry conflict'}});
+    state.gradingJob={...state.gradingJob,status:'queued'};
+    return route.fulfill({status:202,json:state.gradingJob});
+  });
+  await page.goto('/app/grading.html?exam_id=e&submission_id=s');
+  const resume=page.locator('#grading-run').getByRole('button',{name:'Resume grading'});
+  await expect(resume).toBeEnabled();
+  for(const theme of ['light','dark']){
+    await page.evaluate(value=>MisraTheme.set(value),theme);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:`.impeccable/review/grading-resume-${theme}-${info.project.name}.png`,animations:'disabled'});
+  }
+  await resume.click();
+  await expect(page.locator('#error')).toContainText('Synthetic retry conflict');
+  await expect(resume).toBeEnabled();
+  await resume.click();
+  await expect(page.getByRole('heading',{name:'AI grading queued'})).toBeVisible();
+  await expect(resume).toHaveCount(0);
+  await expect(page.locator('#instructor-score')).toHaveValue('1');
+  expect(state.writes.some(write=>write.path.endsWith('/grade'))).toBe(false);
+  expect(retries).toBe(2);
+});
+
+test('one-answer grading advances through its phases and reloads saved marks after a failed poll',async({page},info)=>{
+  const state=await fixture(page,{graded:false});
+  let failedRefresh=false, staleRefresh=false;
+  const job={id:'one-answer',exam_id:'e',submission_id:'s',job_type:'grade_submission',status:'processing',progress_current:0};
+  state.gradingJob={...job,grading_stage:'assessing',progress_percent:20};
+  await page.route('**/api/jobs?*',route=>route.fulfill({json:{items:[state.gradingJob],active_count:state.graded?0:1}}));
+  await page.route('**/api/results/s',route=>{
+    if(state.graded && !failedRefresh){failedRefresh=true;return route.fulfill({status:503,json:{detail:'Synthetic result refresh failure'}});}
+    if(state.graded && !staleRefresh){staleRefresh=true;return route.fulfill({json:{submission:{id:'s',exam_id:'e'},answers:[]}});}
+    return route.fallback();
+  });
+  await page.goto('/app/grading.html?exam_id=e&submission_id=s');
+  const bar=page.locator('#grading-run progress');
+  await expect(bar).toHaveAttribute('value','20');
+  state.gradingJob={...job,grading_stage:'verifying',progress_percent:65};
+  await expect(bar).toHaveAttribute('value','65',{timeout:7000});
+  await expect(page.locator('#grading-run').getByText('The AI is checking the proposed marks…')).toBeVisible();
+  for(const theme of ['light','dark']){
+    await page.evaluate(value=>MisraTheme.set(value),theme);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:`.impeccable/review/grading-progress-${theme}-${info.project.name}.png`,animations:'disabled'});
+  }
+  state.graded=true;
+  state.gradingJob={...job,status:'completed',progress_current:1,progress_percent:100};
+  await expect(bar).toHaveAttribute('value','100',{timeout:7000});
+  await expect(page.getByText('Saved grades are ready to review.')).toBeVisible({timeout:10000});
+  await expect(page.locator('#instructor-score')).toHaveValue('1');
+  expect(failedRefresh && staleRefresh).toBe(true);
+});
+
 test('administration is restricted and admin controls call existing endpoints',async({page})=>{
   await fixture(page);await page.goto('/app/admin.html');await expect(page.locator('#admin-error')).toContainText('Administrator');await expect(page.locator('#admin-content')).toBeHidden();
 });
@@ -309,14 +368,52 @@ test('page recovery must be previewed again after changing original pages',async
 test('admin creates accounts, changes access, resets passwords and recovers jobs',async({page},info)=>{
   const state=await fixture(page,{admin:true});await page.goto('/app/admin.html');await expect(page.locator('#admin-instructors')).toContainText('Synthetic teacher');
   await page.getByText('Create instructor account',{exact:true}).click();await page.locator('#create-instructor [name=full_name]').fill('Synthetic new teacher');await page.locator('#create-instructor [name=email]').fill('new@example.edu');await page.locator('#create-instructor [name=temporary_password]').fill('Synthetic-Only-123');await page.getByRole('button',{name:'Create instructor',exact:true}).click();await expect(page.locator('#native-page-notice')).toContainText('created');
-  page.once('dialog',d=>d.accept());await page.locator('[data-toggle-user]').click();await expect(page.locator('[data-toggle-user]')).toHaveText('Enable');
+  await page.locator('[data-toggle-user]').click();await answerWorkspaceDialog(page,'confirm');await expect(page.locator('[data-toggle-user]')).toHaveText('Enable');
   await page.getByText('Reset password',{exact:true}).click();await page.locator('[data-reset-user] input').fill('Synthetic-Reset-123');await page.getByRole('button',{name:'Apply reset'}).click();await expect(page.locator('#native-page-notice')).toContainText('Temporary password set');
-  page.once('dialog',d=>d.accept());await page.locator('#recover-jobs').click();await expect(page.locator('#native-page-notice')).toContainText('2 jobs checked');
+  await page.locator('#recover-jobs').click();await answerWorkspaceDialog(page,'confirm');await expect(page.locator('#native-page-notice')).toContainText('2 jobs checked');
   expect(state.writes.some(w=>w.path.endsWith('/reset-password'))).toBeTruthy();await page.screenshot({path:`.impeccable/review/native-admin-${info.project.name}.png`,fullPage:true,animations:'disabled'});
 });
 
 test('native activity obeys the live API job limit',async({page})=>{
   await fixture(page);await page.goto('/app/activity.html?exam_id=e');await expect(page.locator('#activity-host')).toContainText('Synthetic extraction completed');await expect(page.locator('#activity-error')).toBeEmpty();
+});
+
+test('Activity stops a grading job once through an app dialog and keeps progress left-to-right',async({page},info)=>{
+  await fixture(page);
+  let state='processing', stops=0;
+  const grading={id:'running',job_type:'grade_submission',submission_id:'s',exam_id:'e',progress_percent:0};
+  await page.route('**/api/jobs?*',route=>route.fulfill({json:{items:[{...grading,status:state},
+    {...grading,id:'old-failed',status:'failed'}],active_count:state==='stopped'?0:1}}));
+  await page.route('**/api/jobs/running/stop',route=>{stops++;state='stopping';return route.fulfill({status:202,json:{...grading,status:state}});});
+  await page.goto('/app/activity.html');
+  const stop=page.getByRole('button',{name:'Stop grading'});
+  await expect(page.getByRole('progressbar')).toHaveAttribute('value','0');
+  await expect(page.getByRole('progressbar')).toHaveAttribute('dir','ltr');
+  await expect(page.getByRole('button',{name:'Retry safely'})).toHaveCount(0);
+  await stop.click();
+  await expect(page.getByRole('dialog',{name:'Stop grading this paper?'})).toBeVisible();
+  await page.screenshot({path:`.impeccable/review/grading-stop-${info.project.name}.png`,animations:'disabled'});
+  await page.keyboard.press('Escape');
+  await expect(stop).toBeFocused();expect(stops).toBe(0);
+  await stop.click();await answerWorkspaceDialog(page,'confirm');
+  await expect(page.getByText('Stopping…',{exact:true})).toBeVisible();
+  await expect(stop).toHaveCount(0);expect(stops).toBe(1);
+  state='stopped';await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Resume grading'})).toBeVisible();
+  await expect(page.getByRole('button',{name:'Retry safely'})).toHaveCount(0);
+});
+
+test('Back closes an answer-action dialog without writing to the old page',async({page})=>{
+  const state=await fixture(page);state.reviewed=true;
+  await page.goto('/app/activity.html');
+  await expect(page.getByRole('heading',{name:'Processing activity'})).toBeVisible();
+  await page.evaluate(()=>location.assign('/app/grading.html?exam_id=e&submission_id=s'));
+  await page.getByRole('button',{name:'Reopen saved decision for review'}).click();
+  await expect(page.getByRole('dialog',{name:'Reopen this decision?'})).toBeVisible();
+  await page.evaluate(()=>history.back());
+  await expect(page).toHaveURL(/activity\.html/);
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(state.writes.some(write=>write.path.includes('reopen'))).toBe(false);
 });
 
 test('grading controls switch to Arabic while evidence remains verbatim',async({page},info)=>{

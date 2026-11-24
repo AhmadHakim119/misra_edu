@@ -1,5 +1,6 @@
 (function () {
   'use strict';
+  const confirmAction = message => window.MisraWorkspace ? MisraWorkspace.confirm(message) : window.confirm(message);
   const routeScope = window.MisraWorkspace?.page;
   const onDocument = (...args) => routeScope ? routeScope.listen(document, ...args) : document.addEventListener(...args);
   const onWindow = (...args) => routeScope ? routeScope.listen(window, ...args) : window.addEventListener(...args);
@@ -174,8 +175,8 @@
     host.querySelector('[data-preference-approve]')?.addEventListener('click', () => save(true));
     host.querySelector('[data-preference-new]')?.addEventListener('click', () => { current = null; dirty = true; render(); });
     host.querySelectorAll('[data-use-suggestion]').forEach(button => button.addEventListener('click', () => useSuggestion(suggestions[Number(button.dataset.useSuggestion)])));
-    host.querySelectorAll('[data-preference-version]').forEach(button => button.addEventListener('click', () => {
-      if (!dirty || window.confirm(t('Discard unsaved preference changes?'))) { choose(versions.find(version => version.id === button.dataset.preferenceVersion)); render(); }
+    host.querySelectorAll('[data-preference-version]').forEach(button => button.addEventListener('click', async () => {
+      if (!dirty || await confirmAction(t('Discard unsaved preference changes?'))) { choose(versions.find(version => version.id === button.dataset.preferenceVersion)); render(); }
     }));
     if (focusTarget) {
       host.querySelector(`[data-scenario="${CSS.escape(focusTarget.scenario)}"][value="${CSS.escape(focusTarget.value)}"]`)?.focus();
@@ -190,7 +191,7 @@
     }
     if (!Object.keys(answers).length && !Object.keys(explicitPreferences).length) { error = t('Answer at least one scenario or use an observed decision before saving.'); render(); return; }
     if(native && approve && Object.keys(answers).length<scenarios.length){error=t('Answer all 12 scenarios before approving this expanded profile. You can save a partial draft.');render();return;}
-    if (approve && !window.confirm(t(native?'Approve this profile? Its rules will fill new guide drafts when automatic preferences are enabled in Settings. Existing guides are unchanged.':'Approve this preference profile? It will remain a suggestion and will not change existing rubrics.'))) return;
+    if (approve && !await confirmAction(t(native?'Approve this profile? Its rules will fill new guide drafts when automatic preferences are enabled in Settings. Existing guides are unchanged.':'Approve this preference profile? It will remain a suggestion and will not change existing rubrics.'))) return;
     busy = true; error = ''; render();
     try {
       const saved = current ? await window.MisraAPI.updateInstructorPreference(current.id, versionBody()) : await window.MisraAPI.createInstructorPreference(versionBody());
@@ -210,7 +211,7 @@
   routeScope?.guard(() => busy, () => dirty);
   window.MisraInstructorPreferences={hasUnsaved:()=>dirty,isBusy:()=>busy,current:()=>current};
   if(native)onWindow('misra:language',()=>{sync();render();});
-  if(native)onDocument('click',event=>{
+  if(native && !routeScope)onDocument('click',event=>{
     if(!event.target.closest('a,#native-sign-out')||routeScope&&(event.target.closest('#native-sign-out')||MisraWorkspace.isSoftLink(event)))return;
     if(busy||dirty&&!confirm(t('Leave without saving your marking preferences?'))){event.preventDefault();event.stopImmediatePropagation();}
   },true);

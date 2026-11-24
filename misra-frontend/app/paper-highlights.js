@@ -80,7 +80,7 @@
     draw();
   }
   function start(id){++areaEpoch;routeScope.cancelTimer(areaTimer);areaJob=areaPreview=null;areaText='';completeArea=false;areaBusy=false;selected=id;const source=context.sources.find(s=>s.id===id);draft=copy(base(source).box||{x:.1,y:.4,width:.8,height:.2});changed=false;drag=null;editing=true;controls();}
-  function canLeave(){if((changed||areaPreview)&&!confirm(t('Discard the unsaved highlight adjustment?')))return false;++areaEpoch;routeScope.cancelTimer(areaTimer);areaPreview=areaJob=null;areaBusy=false;editing=false;changed=false;draft=null;drag=null;controls();return true;}
+  async function canLeave(){if((changed||areaPreview)&&!await MisraWorkspace.confirm(t('Discard the unsaved highlight adjustment?')))return false;++areaEpoch;routeScope.cancelTimer(areaTimer);areaPreview=areaJob=null;areaBusy=false;editing=false;changed=false;draft=null;drag=null;controls();return true;}
   function mount(value){locationMessage='';context=value;selected=value.sources.some(source=>source.id===value.selectedSourceId)?value.selectedSourceId:value.sources[0]?.id||'';editing=changed=false;draft=drag=null;
     const image=$('paper-viewport')?.querySelector('img');
     value.imageFailed=!image||image.complete&&!image.naturalWidth;
@@ -179,7 +179,7 @@
     if(id==='save-highlight'){saveArea();return;}
   });
   $('highlight-tools').addEventListener('input',event=>{if(event.target.id==='area-text'){areaText=event.target.value;changed=true;draw();}if(event.target.id==='complete-area'){completeArea=event.target.checked;draw();}});
-  $('highlight-tools').addEventListener('change',event=>{if(event.target.id!=='highlight-part')return;const id=event.target.value;if(changed&&!confirm(t('Discard the unsaved highlight adjustment?'))){event.target.value=selected;return;}start(id);});
+  $('highlight-tools').addEventListener('change',async event=>{if(event.target.id!=='highlight-part')return;const id=event.target.value;if(changed&&!await MisraWorkspace.confirm(t('Discard the unsaved highlight adjustment?'))){event.target.value=selected;return;}start(id);});
   const point=event=>{const rect=$('evidence-boxes').getBoundingClientRect();return {x:Math.max(0,Math.min(1,(event.clientX-rect.left)/rect.width)),y:Math.max(0,Math.min(1,(event.clientY-rect.top)/rect.height))};};
   $('paper-viewport').addEventListener('pointerdown',event=>{
     if(!editing||areaBusy||event.button!==0||event.target!==$('evidence-boxes')||!event.target.getBoundingClientRect().height)return;
@@ -203,6 +203,6 @@
   function focusSource(id){if(!context?.sources.some(source=>source.id===id)||editing)return false;selected=id;highlightsVisible=true;context.revealSelected=true;controls('');reveal();return true;}
   function revealSource(id=selected){if(!context||id!==selected)return;highlightsVisible=true;draw();reveal(true);}
   routeScope.guard(()=>areaBusy,()=>changed||Boolean(areaPreview));
-  window.MisraPaperHighlights={mount,clear,canLeave,focusSource,revealSource,hasUnsaved:()=>changed||Boolean(areaPreview),selectSource:id=>{if(context?.editable&&context.sources.some(source=>source.id===id)&&canLeave()){highlightsVisible=true;start(id);reveal(true);$('evidence-boxes').focus({preventScroll:true});}}};
+  window.MisraPaperHighlights={mount,clear,canLeave,focusSource,revealSource,hasUnsaved:()=>changed||Boolean(areaPreview),selectSource:async id=>{if(context?.editable&&context.sources.some(source=>source.id===id)&&await canLeave()){highlightsVisible=true;start(id);reveal(true);$('evidence-boxes').focus({preventScroll:true});}}};
   routeScope.listen(window,'misra:language',draw);
 })();

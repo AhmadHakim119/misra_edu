@@ -43,7 +43,7 @@
     });
   }
   async function openIndex(materialId,versionId){
-    if(chapterDirty&&!confirm('Discard unsaved chapter boundary edits?'))return;
+    if(chapterDirty&&!await MisraWorkspace.confirm('Discard unsaved chapter boundary edits?'))return;
     const request=++indexGeneration,selectedCourse=course;
     try{const catalog=await MisraAPI.materialChapters(materialId,versionId);if(request!==indexGeneration||selectedCourse!==course)return;editor={materialId,versionId,catalog};chapterDirty=false;renderIndex();dirty();}
     catch(e){if(request===indexGeneration&&selectedCourse===course)error(e);}
@@ -54,18 +54,18 @@
     const form=$('chapter-boundaries');form.addEventListener('input',()=>{chapterDirty=true;dirty();});
     $('chapter-add').addEventListener('click',()=>{const rows=$('chapter-boundary-rows');rows.insertAdjacentHTML('beforeend',row({title:'',start_page:1,end_page:1},rows.children.length));chapterDirty=true;dirty();});
     form.addEventListener('click',e=>{if(e.target.closest('[data-remove-chapter]')){e.target.closest('.chapter-boundary-row').remove();chapterDirty=true;dirty();}});
-    $('chapter-close').addEventListener('click',()=>{if(!chapterDirty||confirm('Discard unsaved chapter boundary edits?')){indexGeneration++;host.hidden=true;editor=null;chapterDirty=false;dirty();}});
+    $('chapter-close').addEventListener('click',async()=>{if(!chapterDirty||await MisraWorkspace.confirm('Discard unsaved chapter boundary edits?')){indexGeneration++;host.hidden=true;editor=null;chapterDirty=false;dirty();}});
     form.addEventListener('submit',async e=>{
       e.preventDefault();const body={chapters:[...form.querySelectorAll('.chapter-boundary-row')].map(el=>({title:el.querySelector('[name=title]').value,start_page:Number(el.querySelector('[name=start_page]').value),end_page:Number(el.querySelector('[name=end_page]').value)})),expected_text_fingerprint:editor.catalog.text_fingerprint,confirm_boundaries_reviewed:$('chapter-checked').checked};
       await operation(form.querySelector('[type=submit]'),async()=>{try{editor.catalog=await MisraAPI.saveMaterialChapters(editor.materialId,editor.versionId,body);chapterDirty=false;dirty();$('chapter-save-state').textContent='Checked chapters saved. You can now select their approved pages in an assessment.';await refresh(true);}catch(failure){$('chapter-save-state').textContent=`${failure.message} Your entries remain here.`;throw failure;}});
     });host.scrollIntoView({block:'start'});
   }
   function row(c,i){return `<div class="chapter-boundary-row"><label>Chapter name<input name="title" value="${esc(c.title)}" maxlength="255" required></label><label>From PDF page<input name="start_page" type="number" min="1" max="${editor.catalog.version.page_count}" value="${c.start_page}" required></label><label>Through PDF page<input name="end_page" type="number" min="1" max="${editor.catalog.version.page_count}" value="${c.end_page}" required></label><button type="button" data-remove-chapter="${i}">Remove</button></div>`;}
-  $('library-course').addEventListener('change',()=>{if(unsaved()&&!confirm('Discard unsaved library edits and switch courses?')){$('library-course').value=course;return;}routeScope.cancelTimer(timer);data=null;indexGeneration++;MisraMaterials.reset();MisraMaterials.mount($('library-material-host'));uploadDirty=chapterDirty=false;pendingFiles=[];uncertain=false;$('library-upload').querySelector('[type=submit]').disabled=false;editor=null;$('library-chapter-editor').hidden=true;$('library-upload').reset();course=$('library-course').value;history.replaceState(null,'',`course-library.html?course_id=${encodeURIComponent(course)}`);dirty();refresh(true);});
+  $('library-course').addEventListener('change',async()=>{if(unsaved()&&!await MisraWorkspace.confirm('Discard unsaved library edits and switch courses?')){$('library-course').value=course;return;}routeScope.cancelTimer(timer);data=null;indexGeneration++;MisraMaterials.reset();MisraMaterials.mount($('library-material-host'));uploadDirty=chapterDirty=false;pendingFiles=[];uncertain=false;$('library-upload').querySelector('[type=submit]').disabled=false;editor=null;$('library-chapter-editor').hidden=true;$('library-upload').reset();course=$('library-course').value;history.replaceState(null,'',`course-library.html?course_id=${encodeURIComponent(course)}`);dirty();refresh(true);});
   $('library-refresh').addEventListener('click',()=>refresh());
   $('library-upload').addEventListener('input',()=>{uploadDirty=true;dirty();});
   $('library-files').addEventListener('change',()=>{pendingFiles=[...$('library-files').files];});
-  $('library-clear').addEventListener('click',()=>{if(uncertain&&!confirm('Confirm you checked the saved library for accepted files before clearing this uncertain selection.'))return;pendingFiles=[];uncertain=uploadDirty=false;$('library-upload').reset();$('library-upload').querySelector('[type=submit]').disabled=false;dirty();$('library-upload-state').textContent='Selection cleared. Saved course files remain in the library.';refresh(true);});
+  $('library-clear').addEventListener('click',async()=>{if(uncertain&&!await MisraWorkspace.confirm('Confirm you checked the saved library for accepted files before clearing this uncertain selection.'))return;pendingFiles=[];uncertain=uploadDirty=false;$('library-upload').reset();$('library-upload').querySelector('[type=submit]').disabled=false;dirty();$('library-upload-state').textContent='Selection cleared. Saved course files remain in the library.';refresh(true);});
   $('library-upload').addEventListener('submit',async e=>{
     e.preventDefault();if(uncertain)return;const files=[...pendingFiles],scan=$('library-scan-ocr').checked;
     if(files.length>25||files.reduce((n,f)=>n+f.size,0)>104857600){error(Error('Choose up to 25 PDF/PPTX files and 100 MB per upload.'));return;}
@@ -81,6 +81,5 @@
   materialObserver.observe($('library-material-host'),{childList:true});
   routeScope.signal.addEventListener('abort',()=>materialObserver.disconnect(),{once:true});
   $('library-material-host').addEventListener('input',dirty);
-  routeScope.listen(document,'click',e=>{if(e.target.closest('a')&&!MisraWorkspace.isSoftLink(e)&&MisraMaterials.hasUnsaved()&&!MisraMaterials.canLeave()){e.preventDefault();e.stopImmediatePropagation();}},true);
   MisraApp.ready.then(async()=>{const courses=await MisraAPI.courses();if(!Array.isArray(courses))throw Error('Course list is incomplete.');$('library-course').innerHTML=courses.map(c=>`<option value="${esc(c.id)}">${esc(c.course_code)} · ${esc(c.title)}</option>`).join('');const requested=MisraApp.params.get('course_id');course=courses.some(c=>c.id===requested)?requested:courses[0]?.id||'';$('library-course').value=course;MisraMaterials.mount($('library-material-host'));if(course){await refresh();const material=MisraApp.params.get('material_id'),version=MisraApp.params.get('version_id');if(material&&version){const button=[...$('library-material-host').querySelectorAll('[data-material-review]')].find(b=>b.dataset.materialReview===material&&b.dataset.version===version);if(button&&!button.disabled){button.click();button.scrollIntoView({block:'center'});}else error(Error('This source is unavailable or still being read. Check its library status.'));}}else $('library-summary').textContent='Create a course in Exams before adding its book.';}).catch(error);
 })();

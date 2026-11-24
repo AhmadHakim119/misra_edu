@@ -1,7 +1,19 @@
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test, expect} = require('@playwright/test');
-const {localProfile, visionProfile, profileCatalog} = require('./fixtures/inference-profiles');
+const {localProfile, visionProfile, fullyLocalProfile, profileCatalog} = require('./fixtures/inference-profiles');
 const {staticWorkspace} = require('./fixtures/static-workspace');
 const choice = (page, value) => page.locator(`#inference-profile input[value="${value}"]`);
+
+test('fully local setup shows distinct text and image routes and persists the selection',async({page})=>{
+  await fixture(page);
+  await choice(page,fullyLocalProfile).check();
+  const roles=page.locator('#native-ai-agents');
+  await expect(roles.getByText('qwen3-vl:4b-instruct',{exact:true})).toHaveCount(2);
+  await expect(roles.getByText('qwen3:4b-instruct',{exact:true})).toHaveCount(3);
+  await expect(roles.getByText('Google Gemini')).toHaveCount(0);
+  await page.getByRole('button',{name:'Save AI setup'}).click();
+  await page.reload();await expect(choice(page,fullyLocalProfile)).toBeChecked();
+});
 
 async function fixture(page, options = {}) {
   const state = {fail: !!options.fail, requests: [], ready: false};
@@ -108,8 +120,7 @@ test('storage failure keeps the unsaved choice and protects navigation until ret
   await expect(page.locator('#inference-error')).toContainText('was not saved');
   await expect(choice(page, 'configured')).toBeChecked();
   expect(await page.evaluate(() => MisraAPI.inferenceProfile())).toBe(localProfile);
-  page.once('dialog', dialog => dialog.dismiss());
-  await page.getByRole('link', {name: 'Dashboard', exact: true}).click();
+  await page.getByRole('link', {name: 'Dashboard', exact: true}).click();await answerWorkspaceDialog(page,'cancel');
   await expect(page).toHaveURL(/account.html/);
   await page.evaluate(() => { window.blockInferenceSave = false; });
   await page.locator('#save-inference-profile').click();

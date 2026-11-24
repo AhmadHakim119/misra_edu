@@ -10,13 +10,13 @@
     document.getElementById('toggle-assessments').setAttribute('aria-expanded','false');
     document.querySelector('.ledger-layout').classList.add('index-hidden');
     const targets={'sources-link':'setup','upload-link':'upload','papers-tab':'grading','review-tab':'reviews','review-nav':'reviews','export-link':'results','insights-link':'feedback','activity-link':'activity'};
-    routeScope.listen(document,'click',e=>{const button=e.target.closest('button');if(!button)return;
-      if(button.dataset.exam){e.preventDefault();e.stopImmediatePropagation();if(window.MisraLedger?.canLeave(true)===false)return;location.href=location.pathname+'?'+new URLSearchParams({exam_id:button.dataset.exam});return;}
+    routeScope.listen(document,'click',async e=>{const button=e.target.closest('button');if(!button)return;
+      if(button.dataset.exam){e.preventDefault();e.stopImmediatePropagation();if(await window.MisraLedger?.canLeave(true)===false)return;location.href=location.pathname+'?'+new URLSearchParams({exam_id:button.dataset.exam});return;}
       const next=button.id==='next-action'?window.MisraLedger?.nextAction():null;
       const paper=button.dataset.openSavedPaper;
       const page=paper?(window.MisraLedger?.paperRoute(paper)||'grading'):button.hasAttribute('data-show-papers')?'grading':next?.kind==='paper'?(window.MisraLedger?.paperRoute(next.id)||'grading'):next?(routes[next.kind]||'grading'):targets[button.id];
       if(!page||page===window.MisraWorkspacePage)return;
-      e.preventDefault();e.stopImmediatePropagation();if(window.MisraLedger?.canLeave(true)===false)return;const exam=new URLSearchParams(location.search).get('exam_id');const query=new URLSearchParams({exam_id:exam||''});if(paper||next?.id)query.set('submission_id',paper||next.id);location.href=page+'.html?'+query;},true);
+      e.preventDefault();e.stopImmediatePropagation();if(await window.MisraLedger?.canLeave(true)===false)return;const exam=new URLSearchParams(location.search).get('exam_id');const query=new URLSearchParams({exam_id:exam||''});if(paper||next?.id)query.set('submission_id',paper||next.id);location.href=page+'.html?'+query;},true);
     const tab=document.querySelector('.task-tabs');tab.hidden=true;
   }
 })();

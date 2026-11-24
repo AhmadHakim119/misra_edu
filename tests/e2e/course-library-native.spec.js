@@ -1,6 +1,9 @@
+const {staticWorkspace}=require('./fixtures/static-workspace');
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test,expect}=require('@playwright/test');
 
 async function fixture(page,{failScope=false,failIndex=false,failSurvey=false,chapterFiles=false,combinedSources=false}={}){
+  await staticWorkspace(page);
   const version={id:'book-v',version_number:1,status:'approved',ingestion_status:'ready',page_count:500,approved_page_indices:Array.from({length:500},(_,i)=>i),media_type:'application/pdf',chunk_count:500};
   const chapters=Array.from({length:10},(_,i)=>({title:`Chapter ${i+1}`,start_page:i*50+1,end_page:(i+1)*50,key:`book-v:${i*50+1}-${(i+1)*50}`,page_indices:Array.from({length:50},(_,j)=>i*50+j),approved:true,selectable:true}));
   const catalog={version,chapters,text_fingerprint:'a'.repeat(64),boundaries_reviewed:true,index_available:true};
@@ -147,7 +150,7 @@ test('chapter review link opens that material directly in the library reviewer',
 test('failed chapter selection retains checked boxes and blocks leaving until discard',async({page})=>{
   await fixture(page,{failScope:true});await page.goto('/app/setup.html?exam_id=e');await expect(page.locator('#guide-questions-stage')).toBeVisible();await page.locator('#guide-sources-tab').click();await page.locator('[data-chapter-key]').first().check();await page.locator('#chapter-save-selection').click();
   await expect(page.locator('[data-chapter-key]').first()).toBeChecked();await expect(page.locator('#assessment-sources-host')).toContainText('Synthetic source rejection');
-  page.once('dialog',d=>d.dismiss());await page.locator('#assessment-chapters a').click();await expect(page).toHaveURL(/setup.html/);await expect(page.locator('[data-chapter-key]').first()).toBeChecked();
+  await page.locator('#assessment-chapters a').click();await answerWorkspaceDialog(page,'cancel');await expect(page).toHaveURL(/setup.html/);await expect(page.locator('[data-chapter-key]').first()).toBeChecked();
 });
 
 test('course library shows the existing book without uploading and supports chapter review',async({page},info)=>{
@@ -192,7 +195,7 @@ test('switching course mounts its source reviewer and exposes the original PDF',
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/source-viewer-rtl-${info.project.name}.png`,animations:'disabled'});
   await page.locator('#material-page-text').fill('Unsaved equation correction');
-  page.once('dialog',dialog=>dialog.dismiss());await page.locator('#library-course').selectOption('c');
+  await page.locator('#library-course').selectOption('c');await answerWorkspaceDialog(page,'cancel');
   await expect(page.locator('#library-course')).toHaveValue('other');
   await expect(page.locator('#material-page-text')).toHaveValue('Unsaved equation correction');
 });
@@ -239,7 +242,7 @@ test('marking survey is offered after sign in and persists explicit scenario ans
   const answers=[['valid_alternative_method','full_credit'],['minor_handwritten_syntax','full_credit'],['equivalent_notation','full_credit'],['carried_forward_error','single_penalty'],['language_quality_outside_criterion','ignore']];
   for(const [scenario,value] of answers)await page.locator(`[data-scenario="${scenario}"][value="${value}"]`).check();
   for(const scenario of ['correct_method_arithmetic_error','missing_units','rounding_difference','correct_result_without_working','illegible_handwriting','incomplete_solution','contradictory_answers'])await page.locator(`[data-scenario="${scenario}"]`).first().check();
-  page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Save & approve profile'}).click();await expect(page.locator('#survey-saved')).toContainText('Survey done');
+  await page.getByRole('button',{name:'Save & approve profile'}).click();await answerWorkspaceDialog(page,'confirm');await expect(page.locator('#survey-saved')).toContainText('Survey done');
   expect(state.writes[0].body.scenario_answers).toHaveLength(12);
   await page.reload();await expect(page.locator('[data-scenario="valid_alternative_method"][value="full_credit"]')).toBeChecked();await expect(page.locator('[data-scenario="valid_alternative_method"][value="full_credit"]')).toBeDisabled();
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/marking-survey-light-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#app-theme').click();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/marking-survey-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
@@ -247,7 +250,7 @@ test('marking survey is offered after sign in and persists explicit scenario ans
 });
 
 test('rejected survey save retains choices and unsaved navigation is guarded',async({page})=>{
-  await fixture(page,{failSurvey:true});await page.goto('/app/marking-survey.html');await page.locator('[data-scenario="valid_alternative_method"][value="full_credit"]').check();await page.getByRole('button',{name:'Save draft',exact:true}).click();await expect(page.locator('#marking-preferences')).toContainText('Synthetic survey rejection');await expect(page.locator('[data-scenario="valid_alternative_method"][value="full_credit"]')).toBeChecked();page.once('dialog',d=>d.dismiss());await page.locator('#survey-continue').click();await expect(page).toHaveURL(/marking-survey.html/);
+  await fixture(page,{failSurvey:true});await page.goto('/app/marking-survey.html');await page.locator('[data-scenario="valid_alternative_method"][value="full_credit"]').check();await page.getByRole('button',{name:'Save draft',exact:true}).click();await expect(page.locator('#marking-preferences')).toContainText('Synthetic survey rejection');await expect(page.locator('[data-scenario="valid_alternative_method"][value="full_credit"]')).toBeChecked();await page.locator('#survey-continue').click();await answerWorkspaceDialog(page,'cancel');await expect(page).toHaveURL(/marking-survey.html/);
 });
 
 test('course batch retry sends only files that were not accepted',async({page})=>{

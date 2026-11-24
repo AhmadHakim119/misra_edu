@@ -1,5 +1,8 @@
+const {staticWorkspace}=require('./fixtures/static-workspace');
+const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test,expect}=require('@playwright/test');
 async function fixture(page,{preflightFails=false}={}){
+  await staticWorkspace(page);
   const calls=[];let name='Synthetic A',number='TEST1';const student=()=>({id:'s',exam_id:'e',page_count:1,extracted_student_name:name,extracted_student_number:number});await page.route('**/api/**',async route=>{const req=route.request(),p=new URL(req.url()).pathname.replace('/api','');calls.push({p,method:req.method()});let body={};
     if(p==='/auth/me')body={id:'u',full_name:'Synthetic instructor',email:'synthetic@example.edu',role:'teacher'};
     else if(p==='/exams')body=[{id:'e',course_id:'c',title:'Synthetic physics assessment',course_code:'TEST',submission_count:1}];
@@ -43,7 +46,7 @@ test('identity can be corrected beside the paper without losing an unsaved grade
   await fixture(page);await page.goto('/app/index.html?exam_id=e&submission_id=s');await expect(page.locator('#instructor-score')).toHaveValue('0');await page.locator('#instructor-score').fill('1');await page.locator('.identity-inline>summary').click();await page.locator('#native-student-name').fill('Synthetic corrected');await page.locator('#native-student-number').fill('TEST2');await page.getByRole('button',{name:'Save student details',exact:true}).click();await expect(page.locator('#identity-save-state')).toContainText('saved');await expect(page.locator('#instructor-score')).toHaveValue('1');await expect(page.locator('#save-status')).toContainText('Unsaved');await page.locator('#export-link').click();await expect(page.locator('#error')).toContainText('unsaved edits');await expect(page.locator('#ledger-export')).toBeHidden();
 });
 test('cancelled sign out preserves assessment entries and never calls logout',async({page})=>{
-  const calls=await fixture(page);await page.goto('/app/assessments.html');await page.locator('#open-creation').click();await page.locator('#manager-title').fill('Synthetic unsaved assessment');page.once('dialog',dialog=>dialog.dismiss());await page.locator('#native-sign-out').click();await expect(page.locator('#manager-title')).toHaveValue('Synthetic unsaved assessment');await expect(page).toHaveURL(/assessments.html/);expect(calls.filter(c=>c.p==='/auth/logout')).toHaveLength(0);
+  const calls=await fixture(page);await page.goto('/app/assessments.html');await page.locator('#open-creation').click();await page.locator('#manager-title').fill('Synthetic unsaved assessment');await page.locator('#native-sign-out').click();await answerWorkspaceDialog(page,'cancel');await expect(page.locator('#manager-title')).toHaveValue('Synthetic unsaved assessment');await expect(page).toHaveURL(/assessments.html/);expect(calls.filter(c=>c.p==='/auth/logout')).toHaveLength(0);
 });
 test('pending assessment creation blocks sign out before session invalidation',async({page})=>{
   const calls=await fixture(page);let release,started;const gate=new Promise(resolve=>release=resolve),saving=new Promise(resolve=>started=resolve);await page.route('**/api/exams',async(route)=>{if(route.request().method()!=='POST')return route.fallback();started();await gate;await route.fulfill({status:422,json:{detail:'Synthetic validation error'}});});await page.goto('/app/assessments.html');await page.locator('#open-creation').click();await page.locator('#manager-title').fill('Synthetic pending assessment');await page.getByRole('button',{name:'Create & prepare assessment'}).click();await saving;await expect(page.locator('#native-sign-out')).toBeDisabled();await page.evaluate(()=>document.getElementById('native-sign-out').dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true})));expect(calls.filter(c=>c.p==='/auth/logout')).toHaveLength(0);release();await expect(page.locator('#manager-status')).toContainText('Synthetic validation error');await expect(page.locator('#manager-title')).toHaveValue('Synthetic pending assessment');
@@ -69,9 +72,9 @@ test('assessment create link waits for courses and keeps optional course creatio
   await page.screenshot({path:`.impeccable/review/assessment-create-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
   await page.locator('#add-course').click();await expect(page.locator('#create-course')).toBeVisible();
   await page.locator('#manager-code').fill('DRAFT');
-  page.once('dialog',dialog=>dialog.dismiss());await page.locator('#close-creation').click();
+  await page.locator('#close-creation').click();await answerWorkspaceDialog(page,'cancel');
   await expect(page.locator('#manager-code')).toHaveValue('DRAFT');
-  page.once('dialog',dialog=>dialog.accept());await page.locator('#close-creation').click();
+  await page.locator('#close-creation').click();await answerWorkspaceDialog(page,'confirm');
   await page.locator('#open-creation').click();
   await expect(page.locator('#create-course')).toBeHidden();
   await expect(page.locator('#manager-title')).toBeEmpty();

@@ -1,13 +1,13 @@
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import case, or_
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Batch, Course, CourseMaterial, Exam, ProcessingJob, Submission, User
 from services.auth_dependencies import require_instructor
-from services.job_queue_service import job_to_dict, retry_processing_job
+from services.job_queue_service import ACTIVE_JOB_STATUSES, job_to_dict, retry_processing_job, stop_grading_job
 from services.audit_service import record_audit_event
 
 
@@ -86,7 +86,7 @@ def list_workspace_jobs(
     Active jobs remain visible regardless of age. Recently terminal jobs are
     included for 24 hours so completion or failure is not lost on navigation.
     """
-    active_statuses = ("queued", "processing", "retrying")
+    active_statuses = ACTIVE_JOB_STATUSES
     recent_cutoff = datetime.now() - timedelta(hours=24)
     jobs = db.query(ProcessingJob).filter(
         ProcessingJob.institution_id == user.institution_id,
@@ -95,7 +95,8 @@ def list_workspace_jobs(
             ProcessingJob.status.in_(active_statuses),
             ProcessingJob.completed_at >= recent_cutoff,
         ),
-    ).order_by(ProcessingJob.created_at.desc()).limit(limit).all()
+    ).order_by(case((ProcessingJob.status.in_(active_statuses), 0), else_=1),
+               ProcessingJob.created_at.desc()).limit(limit).all()
     active_count = db.query(ProcessingJob).filter(
         ProcessingJob.institution_id == user.institution_id,
         ProcessingJob.requested_by == user.id,
@@ -160,3 +161,18 @@ def retry_job(
         return job_to_dict(retried)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.post('/jobs/{job_id}/stop', status_code=202)
+def stop_job(job_id: str, db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    job = _owned_job(job_id, db, user)
+    if not job or (job.requested_by != user.id and user.role != 'admin'):
+        raise HTTPException(status_code=404, detail='Processing job not found')
+    try:
+        stopped = stop_grading_job(job, db)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
+                       action='grading_stop_requested', entity_type='processing_job', entity_id=job_id)
+    db.commit()
+    return job_to_dict(stopped)
