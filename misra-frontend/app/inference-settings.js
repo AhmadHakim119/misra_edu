@@ -7,7 +7,7 @@
   const optionIds = new Set(options.map(option => option.value));
   const check = $('check-local-model');
   const roles = [['ocr', 'Page reading'], ['setup', 'Guide drafting'], ['grading', 'Grading proposal'], ['verification', 'Verification check']];
-  const providerNames = new Map([['gemini', 'Google Gemini'], ['openrouter_free', 'OpenRouter Free'], ['local', 'Local']]);
+  const providerNames = new Map([['gemini', 'Google Gemini'], ['openrouter_free', 'OpenRouter'], ['local', 'Local']]);
   let dirty = false, busy = false, checking = false, loaded = false, profiles = [], activeProfile;
   const translate = value => window.MisraLocale?.text(value) || value;
   const escaped = value => MisraUI.escapeHTML(value);
@@ -23,14 +23,16 @@
     $('inference-active').hidden = false;
     $('inference-models').hidden = false;
     $('inference-local-notes').hidden = !local;
-    $('inference-local-capability').textContent = local ? translate(selected.tasks.vision_grading
-      ? 'Qwen Vision reads pages and handles grading and verification when images are included. Qwen3 Instruct handles text-only work. All model calls stay local.'
-      : selected.text_only_grading
-      ? 'Local Qwen uses text. Use a vision-capable setup when grading requires images. Gemini page reading may incur provider charges.'
-      : 'Local Qwen Vision can inspect images during grading and verification. Gemini page reading may incur provider charges.') : '';
     $('native-ai-status').textContent = selected.verification_enabled ? '' :
       translate('Verification is disabled for this setup.');
-    const shownRoles=selected.tasks.vision_grading ? [...roles,['vision_grading','Image grading & verification']] : roles;
+    const shownRoles=selected.tasks.vision_grading
+      ? [roles[0], ['vision_grading','Image + text grading & verification'], roles[1],
+        ['grading','Text-only grading'], ['verification','Text-only verification']]
+      : roles;
+    const routing=$('inference-routing');
+    routing.hidden=!shownRoles.some(([key])=>selected.tasks[key].provider==='openrouter_free');
+    routing.textContent=translate(selected.paid_fallback_enabled
+      ? 'OpenRouter tries free models first, then low-cost paid models.' : 'OpenRouter can switch between compatible free models.');
     $('native-ai-agents').innerHTML = shownRoles.map(([key, name]) => {
       const task = selected.tasks[key];
       const model = key === 'verification' && !selected.verification_enabled

@@ -15,7 +15,46 @@
   const ledgerRoutes = new Set(['index', 'setup', 'upload', 'grading', 'feedback', 'results']);
   const softNavigation = 'NavigationPrecommitController' in window;
   const appRoot = new URL('./', document.currentScript.src);
-  const currentURL = () => new URL(location.href);
+  const recordParam = name => name === 'id' || name.endsWith('_id') || name === 'rubric_question';
+  let recordContext = null;
+  function routeURL(href, state) {
+    const url = new URL(href, location.href);
+    const context = state?.misraRecordContext;
+    if (context?.path === url.pathname) {
+      for (const [name, value] of new URLSearchParams(context.query)) {
+        if (recordParam(name) && !url.searchParams.has(name)) url.searchParams.set(name, value);
+      }
+    }
+    return url;
+  }
+  const currentURL = () => routeURL(location.href, history.state);
+
+  function replaceRoute(href) {
+    const url = new URL(href, location.href);
+    if (!routeName(url)) return;
+    const query = new URLSearchParams();
+    for (const [name, value] of [...url.searchParams]) {
+      if (!recordParam(name)) continue;
+      query.set(name, value);
+      url.searchParams.delete(name);
+    }
+    const context = query.size ? {path: url.pathname, query: query.toString()} : null;
+    const previous = history.state?.misraRecordContext;
+    recordContext = context;
+    if (location.href === url.href && previous?.path === context?.path && previous?.query === context?.query) return;
+    // Keep record selections private to this history entry, including reload and traversal.
+    history.replaceState({...history.state, misraRecordContext: context}, '', url);
+    const entry = window.navigation?.currentEntry;
+    if (entry) window.navigation.updateCurrentEntry({state: {...entry.getState(), misraRecordContext: context}});
+  }
+
+  window.addEventListener('hashchange', event => {
+    const before = new URL(event.oldURL), after = new URL(event.newURL);
+    if (!history.state?.misraRecordContext && before.pathname === after.pathname &&
+        before.search === after.search && recordContext?.path === after.pathname) {
+      replaceRoute(routeURL(after, {misraRecordContext: recordContext}));
+    }
+  });
   function routeName(url) {
     if (url.origin !== appRoot.origin || !url.pathname.startsWith(appRoot.pathname)) return null;
     const file = url.pathname.slice(appRoot.pathname.length) || 'index.html';
@@ -514,6 +553,7 @@
     document.head.querySelectorAll('[data-workspace-script],[data-workspace-style]').forEach(node => node.remove());
     page = createPage();
     rendered = destination;
+    replaceRoute(destination);
     entryKey = window.navigation.currentEntry.key;
     selectRoute(destination);
     replacePageContent(source);
@@ -559,12 +599,13 @@
   }
 
   function navigate(event) {
-    const destination = new URL(event.destination.url);
+    const traverse = event.navigationType === 'traverse';
+    const original = new URL(event.destination.url);
+    const destination = routeURL(original, traverse ? event.destination.getState() : null);
     const name = routeName(destination);
     if (!name || !event.canIntercept || event.hashChange || event.downloadRequest !== null
         || event.formData || event.navigationType === 'reload') return;
     if (name === 'account' && destination.searchParams.get('required') === '1') return;
-    const traverse = event.navigationType === 'traverse';
     if (!traverse && event.destination.sameDocument) return; // In-page URL updates use replaceState.
     if (restoreKey === event.destination.key) {
       restoreKey = null;
@@ -580,7 +621,7 @@
       return;
     }
     if (traverse && !event.destination.sameDocument) return;
-    if (traverse && destination.pathname === rendered.pathname && destination.search === location.search) return;
+    if (traverse && destination.pathname === rendered.pathname && destination.search === currentURL().search) return;
     if (name === 'index' && !destination.searchParams.has('exam_id')) destination.pathname = appRoot.pathname + 'dashboard.html';
     let prepared;
     const options = {
@@ -589,7 +630,7 @@
         startNavigation(event);
         try {
           prepared = await preparePage(destination, event.signal);
-          if (destination.href !== event.destination.url) commit.redirect(destination.href);
+          if (destination.pathname !== original.pathname) commit.redirect(destination.href);
         } catch (error) {
           finishNavigation(event);
           if (!event.signal.aborted) announce('The page could not load. Try opening it again.');
@@ -618,11 +659,12 @@
     event.intercept(options);
   }
 
+  replaceRoute(rendered);
   selectRoute(rendered);
   window.MisraWorkspace = {
     get page() { return page; },
     get preparedTemplate() { return preparedTemplate; },
-    replacePageContent, loadScript, addStyles, scopeAPI, showLoadError, setUser, refreshThemeLabel, isSoftLink, confirm:ask
+    currentURL, replaceRoute, replacePageContent, loadScript, addStyles, scopeAPI, showLoadError, setUser, refreshThemeLabel, isSoftLink, confirm:ask
   };
   if (softNavigation) window.navigation?.addEventListener('navigate', navigate);
 })();

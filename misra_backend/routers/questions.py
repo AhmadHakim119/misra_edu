@@ -71,6 +71,8 @@ async def create_question(
         raise HTTPException(status_code=404, detail=f"Exam {exam_id} not found")
 
     try:
+        if payload.scoring_contract == "exact" and payload.approve_initial_rubric:
+            raise ValueError("Save exact-scoring questions as drafts and approve the whole assessment guide")
         rubric = build_rubric(
             max_score=payload.max_score,
             criteria=[criterion.model_dump() for criterion in payload.criteria],
@@ -79,6 +81,7 @@ async def create_question(
             acceptable_answers=payload.acceptable_answers,
             notes=payload.notes,
             reference_context=payload.reference_context,
+            scoring_contract=payload.scoring_contract,
         )
     except ValueError as error:
         raise HTTPException(status_code=422, detail=f"Invalid rubric: {error}") from error

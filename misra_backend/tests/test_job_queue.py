@@ -3,6 +3,7 @@ import unittest
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -26,6 +27,9 @@ from models import (  # noqa: E402
     User,
 )
 from routers.jobs import _owned_job, list_workspace_jobs, stop_job  # noqa: E402
+from routers.grading import continue_grading  # noqa: E402
+from schemas.grading_input import ContinueGradeRequest  # noqa: E402
+from services.inference_profiles import FULL_LOCAL_PROFILE, local_profile, profile_scope  # noqa: E402
 from services.job_execution_service import _grade_submission, execute_processing_job  # noqa: E402
 from services.job_queue_service import dispatch_processing_job, retry_processing_job  # noqa: E402
 from services.job_recovery_service import recover_orphaned_jobs  # noqa: E402
@@ -242,6 +246,21 @@ class ProcessingJobTests(unittest.TestCase):
             grade.assert_called_once()
         self.db.expire_all()
         self.assertEqual(self.db.get(ProcessingJob, job.id).status, 'completed')
+
+    def test_exhausted_openrouter_routing_is_terminal_for_grading(self):
+        from services.free_model_gateway import RoutedInferenceError
+
+        job = self._job(job_type='grade_submission', max_attempts=3)
+        with patch('services.job_execution_service.SessionLocal', self.Session), \
+                patch('services.job_execution_service._grade_submission',
+                      side_effect=RoutedInferenceError('No compatible hosted model completed')) as grade:
+            with self.assertRaises(RoutedInferenceError):
+                execute_processing_job(job.id)
+            execute_processing_job(job.id)
+        grade.assert_called_once()
+        self.db.refresh(job)
+        self.assertEqual((job.status, job.attempt_count), ('failed', 1))
+        self.assertEqual(job.progress_message, 'OpenRouter needs attention')
 
     def test_worker_passes_explicit_reprocess_intent_to_ocr(self):
         job = self._job()
@@ -599,6 +618,68 @@ class ProcessingJobTests(unittest.TestCase):
         grade.assert_called_once_with(answers[1].id, self.db, processing_job_id=job.id)
         self.assertEqual(job.progress_current, 2)
         self.assertEqual(set(job.payload["completed_answer_ids"]), {answer.id for answer in answers})
+
+    def test_continue_grading_uses_new_profile_and_keeps_saved_work(self):
+        self.submission.status = 'extracted'
+        for number in (1, 2):
+            question = Question(id=f'q{number}', exam_id=self.exam.id, institution_id=self.institution.id,
+                                question_number=str(number), max_score=1, order_index=number, rubric_json={})
+            answer = Answer(id=f'a{number}', question_id=question.id, submission_id=self.submission.id,
+                            institution_id=self.institution.id, raw_ocr_text='Synthetic answer')
+            self.db.add_all([question, answer, AnswerSource(answer_id=answer.id, page_index=0,
+                segment_index=number, question_number=str(number), extracted_text='Synthetic answer', ocr_segment={})])
+        old_profile = local_profile()
+        new_profile = local_profile(FULL_LOCAL_PROFILE)
+        source = self._job(job_type='grade_submission', status='failed',
+            payload={'mode': 'auto', '_inference_profile': old_profile, 'grading_stop_requested': True})
+        self.db.add(GradingRun(id='primary', answer_id='a1', processing_job_id=source.id,
+            mode='text_only', model_name='synthetic', prompt_version='synthetic', ocr_text_snapshot='synthetic',
+            rubric_snapshot={}, score=0, max_score=1, feedback='', reasoning='', criteria_scores=[],
+            llm_confidence=90, final_confidence=85, needs_review=True,
+            response_json={'grading_package': {'routing': {'comparison_pair_id': 'unfinished'}}}))
+        first = self.db.get(Answer, 'a1')
+        first.score = 0
+        first.teacher_override_score = .5
+        first.grading_raw_response = {'grading_run_id': 'primary'}
+        self.db.commit()
+        request = ContinueGradeRequest(from_job_id=source.id)
+
+        with patch('services.job_queue_service.dispatch_processing_job') as dispatch, profile_scope(new_profile):
+            with self.assertRaises(HTTPException) as unauthorized:
+                continue_grading(self.submission.id, request, self.db, self.other_user)
+            self.assertEqual(unauthorized.exception.status_code, 404)
+            active = self._job(id='already-active', job_type='grade_submission')
+            with self.assertRaises(HTTPException) as busy:
+                continue_grading(self.submission.id, request, self.db, self.user)
+            self.assertEqual(busy.exception.status_code, 409)
+            self.db.delete(active)
+            self.db.commit()
+            job_id = continue_grading(self.submission.id, request, self.db, self.user)['job']['id']
+            repeated = continue_grading(self.submission.id, request, self.db, self.user)
+            self.assertEqual(repeated['job']['id'], job_id)
+            dispatch.assert_called_once()
+
+        with profile_scope(old_profile), self.assertRaises(HTTPException) as changed:
+            continue_grading(self.submission.id, request, self.db, self.user)
+        self.assertEqual(changed.exception.status_code, 409)
+        self.assertNotEqual(job_id, source.id)
+        self.assertEqual(source.payload, {'mode': 'auto', '_inference_profile': old_profile, 'grading_stop_requested': True})
+        job = self.db.get(ProcessingJob, job_id)
+        self.assertEqual(job.payload, {'mode': 'auto', '_inference_profile': new_profile,
+                                     'completed_answer_ids': ['a1'], 'continued_from_job_id': source.id})
+
+        def save_proposal(answer_id, db, **kwargs):
+            db.get(Answer, answer_id).score = 1
+            db.commit()
+
+        with patch('services.job_execution_service.process_grading_with_policy', side_effect=save_proposal) as grade:
+            _grade_submission(job, self.db)
+
+        grade.assert_called_once_with('a2', self.db, processing_job_id=job.id)
+        self.assertEqual((first.score, first.teacher_override_score), (0, .5))
+        self.assertEqual(job.payload['completed_answer_ids'], ['a1', 'a2'])
+        self.assertEqual(job.payload['incomplete_comparison_count'], 1)
+        self.assertEqual(self.submission.status, 'needs_review')
 
 
 if __name__ == "__main__":

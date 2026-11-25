@@ -3,7 +3,8 @@ MisraWorkspace.mounting = (async function () {
   'use strict';
   const page = MisraWorkspace.page;
   const route = document.body.dataset.workspacePage;
-  if (route === 'dashboard' && !new URLSearchParams(location.search).has('exam_id')) {
+  const url = MisraWorkspace.currentURL();
+  if (route === 'dashboard' && !url.searchParams.has('exam_id')) {
     location.replace('dashboard.html');
     return;
   }
@@ -11,9 +12,8 @@ MisraWorkspace.mounting = (async function () {
   const views = {setup: 'setup', upload: 'upload', grading: 'papers', results: 'export', feedback: 'insights'};
   window.MisraWorkspacePage = route;
   if (views[route]) {
-    const url = new URL(location.href);
     url.searchParams.set('view', views[route]);
-    history.replaceState(null, '', url);
+    MisraWorkspace.replaceRoute(url);
   }
 
   async function templateDocument() {

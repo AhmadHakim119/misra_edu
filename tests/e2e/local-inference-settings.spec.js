@@ -1,18 +1,21 @@
 const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test, expect} = require('@playwright/test');
-const {localProfile, visionProfile, fullyLocalProfile, profileCatalog} = require('./fixtures/inference-profiles');
+const {fullyLocalProfile: localProfile, profileCatalog} = require('./fixtures/inference-profiles');
 const {staticWorkspace} = require('./fixtures/static-workspace');
 const choice = (page, value) => page.locator(`#inference-profile input[value="${value}"]`);
 
 test('fully local setup shows distinct text and image routes and persists the selection',async({page})=>{
   await fixture(page);
-  await choice(page,fullyLocalProfile).check();
+  await expect(page.locator('#inference-profile input[type=radio]')).toHaveCount(2);
+  await choice(page,'configured').check();
+  await page.getByRole('button',{name:'Save AI setup'}).click();
+  await choice(page,localProfile).check();
   const roles=page.locator('#native-ai-agents');
   await expect(roles.getByText('qwen3-vl:4b-instruct',{exact:true})).toHaveCount(2);
   await expect(roles.getByText('qwen3:4b-instruct',{exact:true})).toHaveCount(3);
   await expect(roles.getByText('Google Gemini')).toHaveCount(0);
   await page.getByRole('button',{name:'Save AI setup'}).click();
-  await page.reload();await expect(choice(page,fullyLocalProfile)).toBeChecked();
+  await page.reload();await expect(choice(page,localProfile)).toBeChecked();
 });
 
 async function fixture(page, options = {}) {
@@ -36,16 +39,16 @@ async function fixture(page, options = {}) {
   return state;
 }
 
-test('local hybrid is the default and the explicit readiness check never starts inference', async ({page}) => {
+test('fully local is the default and the explicit readiness check never starts inference', async ({page}) => {
   const state = await fixture(page);
   await expect(choice(page, localProfile)).toBeEnabled();
   await expect(choice(page, localProfile)).toBeChecked();
   await expect(page.locator('#save-inference-profile')).toBeDisabled();
   await expect(page.locator('#native-ai-agents')).toBeVisible();
   await expect(page.locator('#native-ai-agents')).toContainText('Guide drafting');
-  await expect(page.locator('#native-ai-agents')).toContainText('gemini-2.5-flash');
+  await expect(page.locator('#native-ai-agents')).toContainText('qwen3-vl:4b-instruct');
   await expect(page.locator('#native-ai-agents')).toContainText('qwen3:4b-instruct');
-  await expect(page.locator('#ai-settings')).toContainText('Every local grading proposal is sent for instructor review');
+  await expect(page.locator('#ai-settings')).toContainText('Every grading proposal goes to instructor review');
   await page.locator('#check-local-model').click();
   await expect(page.locator('#local-model-status')).toContainText('Start Ollama');
   state.ready = true;
@@ -60,8 +63,9 @@ test('an unsaved choice does not change requests; saving persists only the selec
   await expect(choice(page, localProfile)).toBeEnabled();
   await choice(page, 'configured').check();
   await expect(page.locator('#inference-save-status')).toContainText('Unsaved');
-  await expect(page.locator('#inference-active-name')).toContainText('Local Qwen');
+  await expect(page.locator('#inference-active-name')).toHaveText('Fully local Qwen');
   await expect(page.locator('#native-ai-agents')).toContainText('Synthetic assessment model');
+  await expect(page.locator('#inference-routing')).toHaveText('OpenRouter can switch between compatible free models.');
   await expect(page.locator('#native-ai-agents')).not.toContainText('qwen3:4b-instruct');
   await page.evaluate(() => MisraAPI.currentUser());
   expect(state.requests.at(-1).profile).toBe(localProfile);
@@ -74,20 +78,14 @@ test('an unsaved choice does not change requests; saving persists only the selec
   expect(state.requests.every(request => request.method === 'GET')).toBeTruthy();
 });
 
-test('the vision option previews and checks its installed model, then persists for new requests', async ({page}) => {
+test('a saved hybrid setup resolves to fully local for new requests', async ({page}) => {
+  await page.addInitScript(()=>localStorage.setItem('misra.inference-profile.v1','local_qwen_vision_gemini_v1'));
   const state = await fixture(page);
-  await expect(choice(page, visionProfile)).toBeEnabled();
-  await choice(page, visionProfile).check();
-  await expect(page.locator('#inference-local-capability')).toContainText('can inspect images');
+  await expect(choice(page, localProfile)).toBeChecked();
   await expect(page.locator('#native-ai-agents')).toContainText('qwen3-vl:4b-instruct');
   await page.locator('#check-local-model').click();
   await expect(page.locator('#local-model-status')).toContainText('Start Ollama');
-  expect(state.requests.at(-1)).toMatchObject({profile: localProfile, checkedProfile: visionProfile});
-  await page.locator('#save-inference-profile').click();
-  await expect(page.locator('#inference-active-name')).toContainText('Local Qwen Vision');
-  await page.reload();
-  await expect(choice(page, visionProfile)).toBeChecked();
-  expect(state.requests.at(-1).profile).toBe(visionProfile);
+  expect(state.requests.at(-1)).toMatchObject({profile: localProfile, checkedProfile: localProfile});
 });
 
 test('the active setup follows a save in another browser tab', async ({page, context}) => {
@@ -146,13 +144,15 @@ test('AI settings preserve the theme, keyboard controls and RTL without overflow
   await panel.scrollIntoViewIfNeeded();
   await choice(page, localProfile).focus();
   await page.keyboard.press('ArrowDown');
-  await expect(choice(page, visionProfile)).toBeChecked();
+  await expect(choice(page, 'configured')).toBeChecked();
   await page.keyboard.press('Tab');
   await expect(page.locator('#save-inference-profile')).toBeFocused();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await choice(page, localProfile).check();
   const capture = async variant => {
     await page.evaluate(() => window.scrollTo(0, 0));
-    await page.screenshot({path: `.impeccable/review/local-qwen-settings-${variant}-${info.project.name}.png`, fullPage: true, animations: 'disabled'});
+    await panel.screenshot({path: `.impeccable/review/local-qwen-settings-${variant}-${info.project.name}.png`,
+      animations: 'disabled', style: '.workspace-header { visibility: hidden }'});
   };
   await capture('light');
   await page.locator('[data-theme-option][value=dark]').check();

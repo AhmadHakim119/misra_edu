@@ -164,12 +164,31 @@ class InferenceProfileTests(unittest.TestCase):
         with profile_scope(local_profile(VISION_PROFILE)), \
                 patch('services.inference_service._ollama_json') as send:
             send.return_value = response({})
-            _assessment_completion(['Synthetic question', image])
-            self.assertEqual(send.call_args.kwargs['body']['format'], GradingResult.model_json_schema())
+            _assessment_completion(['Synthetic question', image], ['custom_instructions'])
+            expected = GradingResult.model_json_schema()
+            expected['$defs']['CriterionScore']['properties']['policy_applied']['items']['enum'] = ['custom_instructions']
+            self.assertEqual(send.call_args.kwargs['body']['format'], expected)
             send.return_value = response({'criteria': [{'criterion_id': 'method', 'verdict': 'needs_review',
                 'explanation': 'Check the method.'}], 'summary': 'Review required.'})
             verify({}, {'criteria_scores': [{'criterion_id': 'method', 'points_earned': 0, 'max_points': 1}]}, [image])
             self.assertEqual(send.call_args.kwargs['body']['format'], VerificationResult.model_json_schema())
+
+    def test_text_assessment_sends_policy_citation_constraints_to_ollama(self):
+        from services.grading_service import _assessment_completion
+
+        response = {'model': 'qwen3:4b-instruct', 'done': True, 'done_reason': 'stop',
+                    'message': {'content': '{}'}}
+        with profile_scope(local_profile(FULL_LOCAL_PROFILE)), \
+                patch('services.inference_service._ollama_json', return_value=response) as send:
+            _assessment_completion('Synthetic question', ['units_policy'])
+            schema = send.call_args.kwargs['body']['format']
+            policy = schema['$defs']['CriterionScore']['properties']['policy_applied']
+            self.assertEqual(policy['items']['enum'], ['units_policy'])
+
+            _assessment_completion('Synthetic question without policy fields', [])
+            schema = send.call_args.kwargs['body']['format']
+            policy = schema['$defs']['CriterionScore']['properties']['policy_applied']
+            self.assertEqual(policy['maxItems'], 0)
 
     def test_incomplete_mismatched_and_tool_responses_do_not_fallback(self):
         base = {'model': 'qwen3:4b-instruct', 'done': True, 'done_reason': 'stop', 'message': {'content': '{}'}}
@@ -192,6 +211,29 @@ class InferenceProfileTests(unittest.TestCase):
             generate_setup('Draft a rubric from synthetic checked text', json_mode=True)
             local.assert_called_once()
 
+    def test_exact_rubric_drafting_sends_the_scoring_schema_to_text_qwen(self):
+        from services.rubric_service import suggest_rubric
+
+        response = {'model': LOCAL_MODEL, 'done': True, 'done_reason': 'stop',
+                    'message': {'content': json.dumps({'criteria': [
+                        {'title': 'Method', 'description': 'Shows the force-distance product.', 'points': 2},
+                    ]})}}
+        with profile_scope(local_profile(FULL_LOCAL_PROFILE)), \
+                patch('services.inference_service._ollama_json', return_value=response) as send, \
+                patch('services.inference_service.gemini_generate') as gemini, \
+                patch('services.inference_service.complete_routed') as hosted:
+            rubric = suggest_rubric('Calculate work.', 'Physics', 2, 'en',
+                                    answer_key='W = Fd', exact_scoring=True)
+        body = send.call_args.kwargs['body']
+        self.assertEqual(body['model'], LOCAL_MODEL)
+        self.assertEqual(body['format']['required'], ['criteria'])
+        self.assertEqual(body['format']['properties']['criteria']['items']['required'],
+                         ['title', 'description', 'points'])
+        self.assertEqual(rubric.criteria[0].scoring_type, 'binary')
+        self.assertEqual(rubric.max_score, 2)
+        gemini.assert_not_called()
+        hosted.assert_not_called()
+
     def test_fully_local_profile_routes_all_tasks_without_hosted_calls(self):
         def response(path, body, timeout):
             return {'model': body['model'], 'done': True, 'done_reason': 'stop', 'message': {'content': '{}'}}
@@ -200,7 +242,7 @@ class InferenceProfileTests(unittest.TestCase):
         with profile_scope(local_profile(FULL_LOCAL_PROFILE)), \
                 patch('services.inference_service._ollama_json', side_effect=response) as send, \
                 patch('services.inference_service.gemini_generate') as gemini, \
-                patch('services.inference_service.complete_free') as hosted:
+                patch('services.inference_service.complete_routed') as hosted:
             for task, contents, expected in (
                 ('ocr', ['Read the page', image], VISION_MODEL), ('setup', 'Synthetic guide', LOCAL_MODEL),
                 ('grading', 'Synthetic transcription', LOCAL_MODEL), ('grading', ['Synthetic work', image], VISION_MODEL),
@@ -228,7 +270,7 @@ class InferenceProfileTests(unittest.TestCase):
 
     def test_local_status_checks_tags_without_inference(self):
         from routers.inference_profiles import local_status
-        with patch('routers.inference_profiles._ollama_json', return_value={'models': [{'name': 'qwen3:4b-instruct'}]}) as read:
+        with patch('routers.inference_profiles._ollama_json', return_value={'models': [{'name': LOCAL_MODEL}, {'name': VISION_MODEL}]}) as read:
             result = local_status()
         self.assertTrue(result['available']); self.assertFalse(result['inference_started'])
         read.assert_called_once_with('/api/tags')
@@ -247,14 +289,13 @@ class InferenceProfileTests(unittest.TestCase):
                 app.dependency_overrides[require_instructor] = denied
                 self.assertEqual((await client.get('/api/inference-profiles')).status_code, 401)
                 app.dependency_overrides[require_instructor] = lambda: SimpleNamespace(id='teacher', institution_id='i')
-                response = await client.get('/api/inference-profiles', headers={'X-Misra-Inference-Profile': LOCAL_PROFILE})
+                response = await client.get('/api/inference-profiles', headers={'X-Misra-Inference-Profile': FULL_LOCAL_PROFILE})
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.json()['selected_profile'], LOCAL_PROFILE)
-                self.assertEqual(response.json()['profiles'][0]['tasks']['ocr']['provider'], 'gemini')
+                self.assertEqual(response.json()['selected_profile'], FULL_LOCAL_PROFILE)
                 catalog = {item['id']: item for item in response.json()['profiles']}
                 self.assertEqual(catalog['configured']['tasks']['grading']['provider'], 'gemini')
-                self.assertEqual(catalog[VISION_PROFILE]['tasks']['grading']['model'], VISION_MODEL)
-                self.assertFalse(catalog[VISION_PROFILE]['text_only_grading'])
+                self.assertEqual(set(catalog), {FULL_LOCAL_PROFILE, 'configured'})
+                self.assertEqual(catalog[FULL_LOCAL_PROFILE]['tasks']['vision_grading']['model'], VISION_MODEL)
                 with patch('routers.inference_profiles._ollama_json', return_value={'models': [{'name': VISION_MODEL}, {'name': LOCAL_MODEL}]}):
                     status = await client.get('/api/inference-profiles/local-status', params={'profile_id': VISION_PROFILE})
                 self.assertEqual(status.status_code, 200)
@@ -290,7 +331,7 @@ class ProfilePersistenceTests(unittest.TestCase):
                             submission_id='s', status='failed', job_type='grade_submission', error_message=TEXT_ONLY_IMAGE_ERROR)
         self.db.add(job); self.db.commit()
         with patch('services.job_queue_service.dispatch_processing_job') as dispatch:
-            with self.assertRaisesRegex(ValueError, 'Grade with current AI setup'):
+            with self.assertRaisesRegex(ValueError, 'Continue with current AI setup'):
                 retry_processing_job(job, self.db)
         self.assertEqual(job.status, 'failed')
         dispatch.assert_not_called()
@@ -388,3 +429,26 @@ class ProfilePersistenceTests(unittest.TestCase):
                 process_grading('a', self.db, mode='image_text')
         send.assert_not_called(); self.assertEqual(self.db.query(GradingRun).count(), 0)
         self.assertIsNone(self.answer.score)
+
+    def test_fully_local_image_and_text_grading_saves_a_vision_proposal_and_verification(self):
+        from models import GradingRun
+        from services.grading_service import process_grading
+
+        proposal = self.result(evidence_refs=['student:page:1'], reference_refs=['instructor:answer_key'])
+        verifier = {'criteria': [{'criterion_id': 'logic', 'verdict': 'supported',
+            'explanation': 'Synthetic support'}], 'summary': 'Synthetic verification'}
+        responses = [{'model': VISION_MODEL, 'done': True, 'done_reason': 'stop',
+                      'message': {'content': json.dumps(item)}} for item in (proposal, verifier)]
+        image = Image.new('RGB', (2, 2))
+        with profile_scope(local_profile(FULL_LOCAL_PROFILE)), \
+                patch('services.grading_service._load_answer_source_images', return_value=([image], [0])), \
+                patch('services.inference_service._ollama_json', side_effect=responses) as send, \
+                patch('services.inference_service.complete_routed') as hosted:
+            answer = process_grading('a', self.db, mode='image_text')
+        grading, verification = [call.kwargs['body'] for call in send.call_args_list]
+        self.assertEqual((grading['model'], verification['model']), (VISION_MODEL, VISION_MODEL))
+        self.assertEqual(grading['messages'][0]['images'], verification['messages'][0]['images'])
+        self.assertEqual(len(grading['messages'][0]['images']), 1)
+        self.assertEqual(answer.score, 2)
+        self.assertEqual(self.db.query(GradingRun).one().mode, 'image_text')
+        hosted.assert_not_called()

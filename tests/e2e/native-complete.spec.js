@@ -4,7 +4,11 @@ const {staticWorkspace}=require('./fixtures/static-workspace');
 async function fixture(page,{graded=true,failCorrection=false,admin=false,pageCount=1}={}){
   await staticWorkspace(page);
   const state={writes:[],graded,approved:true,reviewed:false,text:'W = F + d',name:'Synthetic student',number:'TEST01',teacherActive:true};
-  const rubric={schema_version:2,max_score:2,criteria:[{id:'work',title:'Correct work calculation',description:'Use W = Fd and report joules.',points:2,scoring_type:'scaled',partial_credit_allowed:true,performance_levels:[],common_errors:[],alternative_methods:[],required_evidence:['Formula']}],policy:{grading_approach:'balanced'}};
+  const rubric={schema_version:2,max_score:2,criteria:[{id:'work',title:'Correct work calculation',description:'Use W = Fd and report joules.',points:2,scoring_type:'scaled',partial_credit_allowed:true,performance_levels:[
+    {label:'No credit',description:'No valid work relationship is visible.',points_earned:0},
+    {label:'Method',description:'Correct relationship with incomplete substitution.',points_earned:1},
+    {label:'Full credit',description:'Correct result with joules.',points_earned:2},
+  ],common_errors:[],alternative_methods:[],required_evidence:['Formula']}],policy:{grading_approach:'balanced'}};
   let version={id:'rv',version_number:1,status:'approved',rubric_json:rubric};
   const submission=()=>({id:'s',exam_id:'e',extracted_student_name:state.name,extracted_student_number:state.number,page_count:pageCount,status:state.graded?'graded':'extracted',identity_status:'matched'});
   const answer=()=>({id:'a',submission_id:'s',question_id:'q',score:state.graded?1:null,max_score:2,needs_review:state.graded&&!state.reviewed,review_status:state.reviewed?'approved':'pending',raw_ocr_text:state.text,reasoning:'The formula should multiply force and displacement.',feedback:'Check the formula.',criteria_scores:state.graded?[{criterion_id:'work',points_earned:1,max_points:2,feedback:'Method needs checking.',evidence_refs:['source:seg'],reference_refs:['key:k']}]:[],grading_raw_response:state.graded?{grading_run_id:'run',grading_package:{rubric,answer_key:{reference_text:'W = Fd = 246 J.'},policy:{},course_references:{mode:'disabled',passages:[]}},verification:{status:'needs_review',summary:'Check formula support.',criteria:[{criterion_id:'work',verdict:'needs_review',explanation:'The formula was not correctly applied.'}]}}:{}});
@@ -67,7 +71,7 @@ test('native rubric → upload → extraction correction → grading → feedbac
   await page.locator('#ledger-files').setInputFiles({name:'synthetic.pdf',mimeType:'application/pdf',buffer:Buffer.from('%PDF-synthetic')});await page.locator('#ledger-upload-submit').click();await expect(page.locator('#upload-accepted')).toContainText('completed');await page.locator('[data-open-saved-paper="s"]').first().click();await expect(page).toHaveURL(/\/app\/extraction.html/);
   await page.locator('[data-source="seg"] textarea').fill('W = Fd = 246 J.');await page.getByRole('button',{name:'Save correction',exact:true}).click();await expect(page.locator('#extraction-state')).toContainText('ready');expect(state.text).toBe('W = Fd = 246 J.');
   await page.locator('#start-grading').click();await expect(page).toHaveURL(/\/app\/grading.html/);await expect(page.locator('.agent-strip')).toContainText('Verification agent');await expect(page.getByRole('heading',{name:'Verification findings'})).toBeVisible();await expect(page.locator('#original-paper')).toBeVisible();if(await page.locator('#review-evidence-checked').count())await page.locator('#review-evidence-checked').check();await page.getByRole('button',{name:'Save instructor grade',exact:true}).click();await expect.poll(()=>state.reviewed).toBe(true);
-  await page.locator('#native-exam-navigation a[href^="feedback"]').click();await expect(page.locator('#learning-insights')).toContainText('1 graded');
+  await page.locator('#native-exam-navigation a[href^="feedback"]').click();await expect(page.locator('.insight-question-stats dd').first()).toHaveText('1');
   await page.locator('#native-exam-navigation a[href^="results"]').click();await expect(page.locator('#native-export-checks')).toContainText('1 included');const download=page.waitForEvent('download');await page.locator('#native-export-csv').click();expect((await download).suggestedFilename()).toBe('synthetic-grades.csv');
   expect(state.writes.some(w=>w.path.endsWith('/marking-guide/approve'))).toBeTruthy();
   await expect(page.locator('a[href*="/pages/"]')).toHaveCount(0);
@@ -198,6 +202,34 @@ test('removed exam question keeps accessible read-only grading history',async({p
   await page.screenshot({path:`.impeccable/review/extraction-removal-20261027/history-${info.project.name}.png`,fullPage:true,animations:'disabled'});
 });
 
+test('review shows criterion and evidence labels and restores a paper from its clean address',async({page},info)=>{
+  await fixture(page);
+  await page.route('**/api/results/s',route=>route.fulfill({json:{
+    submission:{id:'s',exam_id:'e',extracted_student_name:'Synthetic student'}, latest_review_labels:[],
+    answers:[{id:'a',question_id:'q',score:1,max_score:2,needs_review:true,
+      grading_raw_response:{grading_package:{rubric:{criteria:[{id:'criterion_internal',title:'Work formula'}]}}},
+      review_explanation:{items:[{criterion_id:'criterion_internal',title:'Method credit uncertain',
+        reason:'The multiplication needs a check.',action:'Inspect the original paper.',
+        evidence_refs:['source:internal-segment-id'],reference_refs:['material:internal-material-id']}]}}],
+  }}));
+  await page.goto('/app/grading.html?exam_id=e&submission_id=s&question_id=q');
+  const explanation=page.getByRole('region',{name:'Review explanation'});
+  await expect(explanation).toContainText('Method credit uncertain · Work formula');
+  await expect(explanation).toContainText('Student work · Course material');
+  await expect(explanation).not.toContainText(/internal/);
+  await expect(page).toHaveURL(/\/app\/grading\.html$/);
+  for(const theme of ['light','dark']){
+    await page.evaluate(value=>MisraTheme.set(value),theme);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await explanation.screenshot({path:`.impeccable/review/review-labels-${theme}-${info.project.name}.png`,animations:'disabled'});
+  }
+  await page.evaluate(()=>{location.hash='evidence-title';});
+  await expect(page).toHaveURL(/\/app\/grading\.html#evidence-title$/);
+  await page.reload();
+  await expect(explanation).toContainText('Work formula');
+  await expect(page.locator('#question-select')).toHaveValue('q');
+});
+
 test('extraction and grading layouts fit desktop/mobile in both themes',async({page},info)=>{
   await fixture(page,{graded:false});await page.goto('/app/extraction.html?exam_id=e&submission_id=s');await expect(page.locator('[data-source="seg"]')).toBeVisible();
   for(const theme of ['light','dark']){await page.evaluate(theme=>MisraTheme.set(theme),theme);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.screenshot({path:`.impeccable/review/native-extraction-${theme}-${info.project.name}.png`,fullPage:true,animations:'disabled'});}
@@ -221,6 +253,14 @@ test('assessment workspace uses the available width and keeps grading input and 
     expect(route.request().postDataJSON()).toEqual({mode:'auto'});
     state.gradingProfile=route.request().headers()['x-misra-inference-profile'];
     state.gradingJob={id:'synthetic-grading',exam_id:'e',submission_id:'s',job_type:'grade_submission',status:'processing',progress_percent:40,progress_message:'Assessing the synthetic paper.'};
+    return route.fulfill({status:202,json:{submission_id:'s',job:state.gradingJob}});
+  });
+  let continuations=0;
+  await page.route('**/api/submissions/s/grade/continue',route=>{
+    expect(route.request().postDataJSON()).toEqual({from_job_id:'synthetic-grading'});
+    if(++continuations===1)return route.fulfill({status:409,json:{detail:'Synthetic continuation conflict'}});
+    state.gradingProfile=route.request().headers()['x-misra-inference-profile'];
+    state.gradingJob={...state.gradingJob,id:'continued-grading',status:'processing',error_message:null};
     return route.fulfill({status:202,json:{submission_id:'s',job:state.gradingJob}});
   });
   await page.route('**/api/jobs?*',route=>activityUnavailable?route.fulfill({status:503,json:{detail:'Synthetic activity outage'}}):route.fulfill({json:{items:state.gradingJob?[state.gradingJob]:[],active_count:state.gradingJob?1:0}}));
@@ -276,14 +316,42 @@ test('assessment workspace uses the available width and keeps grading input and 
   await expect(page.getByRole('heading',{name:'AI grading in progress'})).toBeVisible();
   activityUnavailable=true;
   state.gradingJob={...state.gradingJob,status:'failed',error_message:'Synthetic failure'};
-  const freshStart=page.getByRole('button',{name:'Grade with current AI setup'});
+  const freshStart=page.getByRole('button',{name:'Continue with current AI setup'});
   await expect(freshStart).toBeEnabled({timeout:7000});
   await expect(input).toBeEnabled();
   await expect(start).toHaveCount(0);
-  await page.evaluate(()=>MisraAPI.setInferenceProfile('local_qwen_vision_gemini_v1'));
+  await page.evaluate(()=>MisraAPI.setInferenceProfile('configured'));
+  await freshStart.click();
+  await expect(page.locator('#error')).toContainText('Synthetic continuation conflict');
+  await expect(freshStart).toBeEnabled();
   await freshStart.click();
   await expect(page.getByRole('heading',{name:'AI grading in progress'})).toBeVisible();
-  expect(state.gradingProfile).toBe('local_qwen_vision_gemini_v1');
+  expect(state.gradingProfile).toBe('configured');
+});
+
+test('stopped grading offers continuation with the saved setup while work remains',async({page},info)=>{
+  const state=await fixture(page,{graded:false});
+  state.gradingJob={id:'stopped-job',exam_id:'e',submission_id:'s',job_type:'grade_submission',status:'stopped'};
+  await page.route('**/api/submissions/s/grade/continue',route=>{
+    expect(route.request().postDataJSON()).toEqual({from_job_id:'stopped-job'});
+    expect(route.request().headers()['x-misra-inference-profile']).toBe('local_qwen_all_v1');
+    state.gradingJob={...state.gradingJob,id:'continued-job',status:'queued'};
+    return route.fulfill({status:202,json:{submission_id:'s',job:state.gradingJob}});
+  });
+  await page.goto('/app/grading.html?exam_id=e&submission_id=s');
+  const continueButton=page.getByRole('button',{name:'Continue with current AI setup'});
+  await expect(continueButton).toBeEnabled();
+  await page.evaluate(()=>MisraAPI.setInferenceProfile('local_qwen_all_v1'));
+  await expect(page.getByRole('button',{name:'Resume grading with original setup'})).toBeEnabled();
+  for(const theme of ['light','dark']){
+    await page.evaluate(value=>MisraTheme.set(value),theme);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.locator('#grading-run').screenshot({path:`.impeccable/review/grading-continue-${theme}-${info.project.name}.png`,animations:'disabled'});
+  }
+  await continueButton.click();
+  await expect(page.getByRole('heading',{name:'AI grading queued'})).toBeVisible();
+  await expect(continueButton).toHaveCount(0);
+  expect(state.writes).toEqual([]);
 });
 
 test('View and grade resumes the stopped job from the paper',async({page},info)=>{
@@ -423,12 +491,71 @@ test('grading controls switch to Arabic while evidence remains verbatim',async({
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.screenshot({path:`.impeccable/review/native-grading-rtl-${info.project.name}.png`,fullPage:true,animations:'disabled'});
 });
 
+test('class feedback shows credit counts and keeps sources and failures in context',async({page},info)=>{
+  await fixture(page);
+  let fail=false, empty=false, alternate=false;
+  const criterion={criterion_id:'method',title:'method',rubric_version_id:'synthetic-internal-guide-id',
+    full_credit_count:3,partial_credit_count:1,zero_credit_count:1,assessed_count:5,average_percent:70,
+    source_pages:[{title:'Synthetic course chapter',page_index:1,material_id:'m',material_version_id:'v'}]};
+  await page.route('**/api/exams/e/learning-insights',route=>fail
+    ? route.fulfill({status:503,json:{detail:'Synthetic feedback outage'}})
+    : route.fulfill({json:{exam_id:'e',submission_count:5,notes:['Counts are drawn from saved marks.',''],questions:[{
+      question_number:'1',question_text:'Calculate work for a force and displacement.',graded_count:empty?0:5,
+      average_percent:empty?null:80,awaiting_review_count:empty?0:1,course_grounded_count:empty?0:3,
+      criteria:empty?[]:[criterion,{...criterion,criterion_id:'units',title:'Units',average_percent:100,
+        full_credit_count:5,partial_credit_count:0,zero_credit_count:0,source_pages:[]},
+        ...(alternate?[{...criterion,rubric_version_id:'synthetic-alternate-guide-id',title:'Revised method',source_pages:[]}]:[])],
+    }]}}));
+  await page.goto('/app/feedback.html?exam_id=e');
+  const feedback=page.locator('#learning-insights');
+  const method=feedback.locator('.insight-criterion').filter({has:page.getByRole('heading',{name:'Method',exact:true})});
+  await expect(method.locator('dd')).toHaveText(['3','1','1']);
+  await expect(feedback.locator('.insight-focus')).toContainText('Method');
+  await expect(feedback).not.toContainText('synthetic-internal-guide-id');
+  await expect(feedback.getByRole('link',{name:'Review flagged papers'})).toHaveAttribute('href','reviews.html?exam_id=e');
+  const source=method.locator('a').filter({hasText:'Synthetic course chapter'});
+  await expect(source).toBeHidden();
+  for(const theme of ['light','dark']){
+    await page.evaluate(value=>MisraTheme.set(value),theme);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    await page.screenshot({path:`.impeccable/review/class-feedback-${theme}-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  }
+  await method.getByText('Cited course pages',{exact:true}).click();
+  await expect(source).toBeVisible();
+  await expect(source).toHaveAttribute('href',/materials\/m\/versions\/v\/document#page=2$/);
+  await page.locator('#app-language').click();
+  await expect(method).toContainText('إجابات مصححة');
+  await expect(source).toContainText('صفحة');
+  await page.locator('#app-language').click();
+  await expect(method).toContainText('scored answers');
+  fail=true;
+  const refresh=page.getByRole('button',{name:'Refresh class feedback'});
+  await refresh.click();
+  await expect(page.locator('#insights-state')).toContainText('Showing the last loaded feedback');
+  await expect(method.locator('dd')).toHaveText(['3','1','1']);
+  await expect(source).toBeVisible();
+  fail=false;alternate=true;
+  await refresh.click();
+  const references=feedback.locator('.insight-rubric-reference');
+  await expect(references).toHaveCount(2);
+  const version=references.first().locator('code');
+  await expect(version).toHaveText('synthetic-alternate-guide-id');
+  await expect(version).toBeHidden();
+  await references.first().locator('summary').click();
+  await expect(version).toBeVisible();
+  empty=true;
+  await refresh.click();
+  await expect(feedback).toContainText('Class feedback appears after the first paper is graded.');
+  await expect(feedback.locator('.insight-criterion')).toHaveCount(0);
+  await expect(page.locator('#insights-state')).toBeEmpty();
+});
+
 test('focused setup, upload, feedback and results stay usable across themes and RTL',async({page},info)=>{
   const state=await fixture(page);state.reviewed=true;
   for(const [route,ready] of [['setup','#guide-outline'],['upload','#ledger-upload'],['feedback','#learning-insights'],['results','#native-export-checks']]){
     await page.goto(`/app/${route}.html?exam_id=e`);await expect(page.locator(ready)).toBeVisible();
     if(route==='setup')await expect(page.locator('[data-guide-question="q"]').first()).toBeVisible();
-    if(route==='feedback')await expect(page.locator(ready)).toContainText('1 graded');
+    if(route==='feedback')await expect(page.locator('.insight-question-stats dd').first()).toHaveText('1');
     if(route==='results')await expect(page.locator(ready)).toContainText('1 included');
     for(const theme of ['light','dark']){
       await page.evaluate(theme=>{localStorage.setItem('misra-theme',theme);dispatchEvent(new StorageEvent('storage',{key:'misra-theme'}));},theme);

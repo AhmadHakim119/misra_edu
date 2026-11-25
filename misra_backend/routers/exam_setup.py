@@ -76,19 +76,22 @@ def readiness(exam_id: str, db: Session = Depends(get_db), user: User = Depends(
 
 
 @router.post('/exams/{exam_id}/setup-imports', status_code=202)
-async def upload_setup(exam_id: str, exam_file: UploadFile = File(...),
+async def upload_setup(exam_id: str, exam_file: UploadFile | None = File(None),
     answer_key: UploadFile | None = File(None), db: Session = Depends(get_db),
     user: User = Depends(require_instructor)):
     owned_exam(db, user, exam_id)
+    uploads = [(role, file) for role, file in (('blank_exam', exam_file), ('answer_key', answer_key)) if file is not None]
+    if not uploads:
+        raise HTTPException(422, 'Choose an exam or an answer key containing the question text.')
     stored = []
     try:
-        stored = await store_validated_batch([f for f in [exam_file, answer_key] if f is not None], SETUP_DIR)
+        stored = await store_validated_batch([file for _, file in uploads], SETUP_DIR)
         job = ProcessingJob(institution_id=user.institution_id, requested_by=user.id,
             job_type='exam_setup', status='queued', max_attempts=3,
             progress_total=sum(s.page_count for s in stored), progress_message='Waiting for a setup worker',
             payload=dict(exam_id=exam_id, documents=[dict(path=str(s.path.resolve()),
-                media_type=s.media_type, page_count=s.page_count, role='blank_exam' if i == 0 else 'answer_key')
-                for i, s in enumerate(stored)]))
+                media_type=s.media_type, page_count=s.page_count, role=role)
+                for (role, _), s in zip(uploads, stored, strict=True)]))
         db.add(job)
         db.commit()
     except Exception as error:
@@ -98,9 +101,8 @@ async def upload_setup(exam_id: str, exam_file: UploadFile = File(...),
             raise HTTPException(error.status_code, error.detail) from error
         raise
     finally:
-        await exam_file.close()
-        if answer_key is not None:
-            await answer_key.close()
+        for _, file in uploads:
+            await file.close()
     dispatch_processing_job(job, db)
     record_audit_event(db, institution_id=user.institution_id, actor_id=user.id,
         action='assessment_setup_uploaded', entity_type='processing_job', entity_id=job.id,
@@ -156,6 +158,9 @@ def confirm(exam_id: str, job_id: str, payload: ConfirmImport,
             details={'question_count': len(ids), 'job_id': job_id})
         db.commit()
         return {'question_ids': ids, 'message': 'Questions added. Review and approve their draft rubrics next.'}
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(422, 'Check the imported question marks and marking criteria.') from error
     except Exception:
         db.rollback()
         raise

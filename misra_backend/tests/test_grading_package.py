@@ -344,6 +344,28 @@ class GradingPackageTests(unittest.TestCase):
         self.assertEqual(float(run.score),2)
         self.assertTrue(run.needs_review)
 
+    def test_policy_citation_correction_names_allowed_fields_and_rejects_persistent_errors(self):
+        rubric = {**self.rubric, 'policy': {'custom_instructions': 'Accept valid cross-part follow-through.'}}
+        self.db.get(RubricVersion, 'rubric1').rubric_json = rubric
+        self.db.commit()
+        rejected = json.dumps(self.result(policy_applied=['cross_part_follow_through']))
+        corrected = json.dumps(self.result(policy_applied=['custom_instructions']))
+
+        with patch('services.grading_service.generate', side_effect=[rejected, rejected]) as generate:
+            with self.assertRaisesRegex(GradingResponseValidationError, 'unknown marking-policy field'):
+                process_grading('a', self.db)
+        self.assertEqual(generate.call_count, 2)
+        self.assertIsNone(self.answer.score)
+        self.assertEqual(self.db.query(GradingRun).count(), 0)
+        correction = generate.call_args_list[1].kwargs['contents'].split('CITATION CORRECTION', 1)[1]
+        self.assertIn('The only policy_applied field names are ["custom_instructions"]', correction)
+
+        with patch('services.grading_service.generate', side_effect=[rejected, corrected]):
+            process_grading('a', self.db)
+        run = self.db.query(GradingRun).one()
+        self.assertEqual((run.score, run.criteria_scores[0]['policy_applied']), (2, ['custom_instructions']))
+        self.assertTrue(run.needs_review)
+
     def test_real_processing_saves_snapshot_unchanged_after_edits(self):
         with patch("services.grading_service.generate", return_value=json.dumps(self.result())) as generate:
             process_grading("a", self.db)
@@ -457,7 +479,7 @@ class GradingPackageTests(unittest.TestCase):
                     'prompt_tokens': 10, 'completion_tokens': 5, 'reported_cost_usd': 0}
         responses = [SimpleNamespace(text=json.dumps(item), metadata=metadata) for item in (first, second)]
         with patch.dict(os.environ, {'GRADING_PROVIDER': 'openrouter_free'}), \
-             patch('services.free_model_gateway.complete_free', side_effect=responses) as provider, \
+             patch('services.inference_service.complete_routed', side_effect=responses) as provider, \
              patch('services.grading_service.generate') as gemini:
             process_grading('a', self.db)
         self.assertEqual(provider.call_count, 2)

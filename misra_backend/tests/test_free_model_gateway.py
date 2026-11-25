@@ -4,7 +4,7 @@ import unittest
 import urllib.error
 from unittest.mock import patch
 from PIL import Image
-from services.free_model_gateway import complete_free
+from services.free_model_gateway import complete_free, complete_routed, RoutedInferenceError
 from services.openrouter_client import OpenRouterError
 
 
@@ -154,6 +154,111 @@ class FreeModelGatewayTests(unittest.TestCase):
         for response in [self.response(model="synthetic/paid"),self.response(usage=[1,2])]:
             with patch("services.free_model_gateway._read_json",side_effect=[self.catalog(),response]):
                 with self.assertRaises(OpenRouterError): complete_free("hello",model=self.model,api_key="key")
+
+    def test_routing_preserves_images_and_skips_text_only_candidates_after_503(self):
+        vision = 'google/gemma-4-26b-a4b-it:free'
+        text_only = 'nvidia/nemotron-3.5-super-vl:free'
+        catalog = {'data': [*self.catalog()['data'],
+            *self.catalog(id=text_only, architecture={'input_modalities': ['text']})['data'],
+            *self.catalog(id=vision, supported_parameters=['structured_outputs'])['data']]}
+        with patch.dict('os.environ', {'OPENROUTER_API_KEY': 'synthetic-key', 'OPENROUTER_ALLOW_PAID_FALLBACK': 'false'}), \
+             patch('services.free_model_gateway.urllib.request.urlopen', side_effect=[self.http_response(catalog),
+                 self.http_error(503), self.http_response(self.response(model=vision))]) as send:
+            result = complete_routed(['Check synthetic evidence', Image.new('RGB', (2, 2))], model=self.model,
+                                     response_schema={'type': 'object'})
+        first, second = [json.loads(call.args[0].data) for call in send.call_args_list[1:]]
+        self.assertEqual([first['model'], second['model']], [self.model, vision])
+        self.assertEqual(first['messages'], second['messages'])
+        self.assertEqual(second['messages'][0]['content'][1]['type'], 'image_url')
+        self.assertEqual(second['response_format']['type'], 'json_schema')
+        self.assertNotIn('require_parameters', second['provider'])
+        self.assertEqual(second['provider']['max_price'], {'prompt':0, 'completion':0, 'image':0, 'request':0})
+        self.assertEqual(result.metadata['attempted_models'], [self.model, vision])
+
+    def test_adaptive_image_request_can_reach_same_model_without_format_parameter(self):
+        catalog = self.catalog(supported_parameters=['structured_outputs', 'response_format'])
+        with patch.dict('os.environ', {'OPENROUTER_API_KEY': 'synthetic-key', 'OPENROUTER_ALLOW_PAID_FALLBACK': 'false'}), \
+             patch('services.free_model_gateway.urllib.request.urlopen', side_effect=[self.http_response(catalog),
+                 self.http_error(404), self.http_response(self.response())]) as send:
+            result = complete_routed(['Adaptive grading', Image.new('RGB', (2, 2))], model=self.model,
+                                     response_schema={'type': 'object'})
+        first, second = [json.loads(call.args[0].data) for call in send.call_args_list[1:]]
+        self.assertEqual(first.pop('response_format')['type'], 'json_schema')
+        self.assertEqual(first, second)
+        self.assertEqual(result.metadata['attempted_models'], [self.model])
+
+    def test_routing_can_discover_another_free_vision_model_in_the_live_catalog(self):
+        extra = 'synthetic/compatible:free'
+        architecture = {'input_modalities': ['text', 'image'], 'output_modalities': ['text']}
+        catalog = {'data': [*self.catalog()['data'],
+            *self.catalog(id=extra, architecture=architecture)['data'],
+            *self.catalog(id='synthetic/a-transcription:free', architecture={'input_modalities': ['audio'], 'output_modalities': ['text']})['data'],
+            *self.catalog(id='synthetic/b-ocr:free', architecture={'input_modalities': ['image'], 'output_modalities': ['text']})['data'],
+            *self.catalog(id='synthetic/audio:free', architecture={'input_modalities': ['image'], 'output_modalities': ['audio']})['data'],
+            *self.catalog(id='synthetic/paid:free', architecture=architecture, pricing={'prompt': '.0001', 'completion': 0})['data']]}
+        with patch.dict('os.environ', {'OPENROUTER_API_KEY': 'synthetic-key', 'OPENROUTER_ALLOW_PAID_FALLBACK': 'false'}), \
+             patch('services.free_model_gateway.urllib.request.urlopen', side_effect=[self.http_response(catalog),
+                 self.http_error(503), self.http_response(self.response(model=extra))]) as send:
+            result = complete_routed(['Adaptive grading', Image.new('RGB', (2, 2))], model=self.model)
+        self.assertEqual(send.call_count, 3)
+        self.assertEqual(result.metadata['attempted_models'], [self.model, extra])
+
+    def test_account_free_limit_skips_other_free_models_and_respects_paid_setting(self):
+        alternate = 'google/gemma-4-26b-a4b-it:free'
+        paid = alternate.removesuffix(':free')
+        catalog = {'data': [*self.catalog()['data'], *self.catalog(id=alternate)['data'],
+            *self.catalog(id=paid, pricing={'prompt': '0.00000005', 'completion': '0.00000019'})['data']]}
+        for opted_in in (False, True):
+            quota = urllib.error.HTTPError('https://openrouter.ai/api/v1/chat/completions', 429, 'rate limited', {},
+                self.http_response({'error': {'metadata': {'limit_source': 'openrouter_free_tier_per_minute'}}}))
+            responses = [self.http_response(catalog), quota]
+            if opted_in:
+                responses.append(self.http_response(self.response(model=paid)))
+            with self.subTest(opted_in=opted_in), patch.dict('os.environ', {'OPENROUTER_API_KEY': 'synthetic-key',
+                    'OPENROUTER_ALLOW_PAID_FALLBACK': str(opted_in).lower()}), \
+                 patch('services.free_model_gateway.urllib.request.urlopen', side_effect=responses) as send:
+                if opted_in:
+                    result = complete_routed('Adaptive grading', model=self.model)
+                    self.assertEqual(result.metadata['attempted_models'], [self.model, paid])
+                else:
+                    with self.assertRaisesRegex(RoutedInferenceError, 'shared free-model limit. Paid fallback is disabled'):
+                        complete_routed('Adaptive grading', model=self.model)
+                self.assertEqual(send.call_count, len(responses))
+
+    def test_paid_fallback_is_opt_in_and_has_price_caps(self):
+        gemma = 'google/gemma-4-26b-a4b-it'
+        deepseek = 'deepseek/deepseek-v4.1-flash'
+        catalog = {'data': [*self.catalog()['data'],
+            *self.catalog(id=gemma, pricing={'prompt': '0.00000005', 'completion': '0.00000019'})['data'],
+            *self.catalog(id=deepseek, pricing={'prompt': '0.000000051', 'completion': '0.000000567'})['data']]}
+        with patch.dict('os.environ', {'OPENROUTER_API_KEY': 'synthetic-key', 'OPENROUTER_ALLOW_PAID_FALLBACK': 'false'}), \
+             patch('services.free_model_gateway.urllib.request.urlopen', side_effect=[self.http_response(catalog),
+                 self.http_error(429)]) as blocked:
+            with self.assertRaises(RoutedInferenceError):
+                complete_routed('Synthetic', model=self.model)
+        self.assertEqual(blocked.call_count, 2)
+
+        response = self.response(model=deepseek, usage={'cost': .0006})
+        with patch.dict('os.environ', {'OPENROUTER_API_KEY': 'synthetic-key', 'OPENROUTER_ALLOW_PAID_FALLBACK': 'true'}), \
+             patch('services.free_model_gateway.urllib.request.urlopen', side_effect=[self.http_response(catalog),
+                 self.http_error(429), self.http_error(503), self.http_response(response)]) as send:
+            result = complete_routed(['Synthetic', Image.new('RGB', (2, 2))], model=self.model)
+        bodies = [json.loads(call.args[0].data) for call in send.call_args_list[1:]]
+        self.assertEqual([body['model'] for body in bodies], [self.model, gemma, deepseek])
+        self.assertEqual(bodies[-1]['provider']['sort'], 'price')
+        self.assertEqual(bodies[-1]['provider']['max_price'], {'prompt':.20, 'completion':.70, 'image':0, 'request':0})
+        self.assertEqual(result.metadata['provider'], 'openrouter_paid')
+        self.assertEqual(result.metadata['reported_cost_usd'], .0006)
+
+    def test_auth_failure_and_unexpected_free_charge_stop_routing(self):
+        alternate = 'google/gemma-4-26b-a4b-it:free'
+        catalog = {'data': [*self.catalog()['data'], *self.catalog(id=alternate)['data']]}
+        for failure in (self.http_error(401), self.http_response(self.response(usage={'cost': .01}))):
+            with patch.dict('os.environ', {'OPENROUTER_API_KEY': 'synthetic-key', 'OPENROUTER_ALLOW_PAID_FALLBACK': 'true'}), \
+                 patch('services.free_model_gateway.urllib.request.urlopen', side_effect=[self.http_response(catalog), failure]) as send:
+                with self.assertRaises(RoutedInferenceError):
+                    complete_routed('Synthetic', model=self.model)
+            self.assertEqual(send.call_count, 2)
 
     def test_missing_gemini_key_blocks_only_gemini_operation(self):
         from services import gemini_client

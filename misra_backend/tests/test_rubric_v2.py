@@ -1,5 +1,6 @@
 from services.review_state_service import review_token
 import os
+from copy import deepcopy
 import unittest
 from unittest.mock import patch
 
@@ -34,6 +35,7 @@ from services.rubric_service import build_rubric  # noqa: E402
 from services.grading_service import (  # noqa: E402
     CriterionScore,
     GradingResult,
+    _aggregate_criterion_total,
     _validate_grading_against_rubric,
 )
 from services.rubric_version_service import (  # noqa: E402
@@ -88,9 +90,92 @@ class RubricV2Tests(unittest.TestCase):
         with self.assertRaises(ValueError):
             RubricV2(**data)
 
+    def test_quiz_example_binary_allocations_and_defined_level_validation(self):
+        quiz = {
+            "Q1": (3, [.50] * 6),
+            "Q2.1": (2, [.50] * 4),
+            "Q2.2": (2, [.19, .19, .19, .18] * 2 + [.25, .25]),
+            "Q3A": (1.5, [.50, .50, .20, .15, .15]),
+            "Q3B": (1.5, [.25] * 6),
+        }
+        for question, (maximum, marks) in quiz.items():
+            with self.subTest(question=question):
+                rubric = build_rubric(max_score=maximum, scoring_contract="exact",
+                    criteria=[{"title": f"Requirement {index}", "description": "Observable evidence",
+                               "points": mark, "scoring_type": "binary"} for index, mark in enumerate(marks)])
+                proposal = GradingResult(score=maximum, max_score=maximum, llm_confidence=80,
+                    feedback="Meets the criteria", reasoning="All listed requirements are visible",
+                    criteria_scores=[CriterionScore(criterion_id=c.id, max_points=c.points,
+                        points_earned=c.points, feedback="Visible evidence") for c in rubric.criteria])
+                self.assertEqual(_aggregate_criterion_total(proposal, rubric.model_dump()).score, maximum)
+                proposal.criteria_scores[0].points_earned -= .01
+                with self.assertRaisesRegex(ValueError, "unlisted"):
+                    _aggregate_criterion_total(proposal, rubric.model_dump())
+
+        data = self.make_rubric().model_dump()
+        data["scoring_contract"] = "exact"
+        data["criteria"][0]["performance_levels"] = [
+            {"label": "None", "points_earned": 0, "description": "No valid relationship"},
+            {"label": "Some", "points_earned": .5, "description": "Correct relationship only"},
+            {"label": "Full", "points_earned": 1, "description": "Correct relationship and substitution"},
+        ]
+        rubric = RubricV2.model_validate(data).model_dump()
+        score = GradingResult(score=1.5, max_score=2, llm_confidence=80, feedback="Check substitution",
+            reasoning="Correct relation, incomplete substitution", criteria_scores=[
+                CriterionScore(criterion_id=rubric["criteria"][0]["id"], max_points=1,
+                    points_earned=.5, feedback="Correct relationship is visible"),
+                CriterionScore(criterion_id=rubric["criteria"][1]["id"], max_points=1,
+                    points_earned=1, feedback="Conclusion is visible"),
+            ])
+        self.assertEqual(_aggregate_criterion_total(score, rubric).score, 1.5)
+        score.criteria_scores[0].points_earned = .75
+        with self.assertRaisesRegex(ValueError, "unlisted"):
+            _aggregate_criterion_total(score, rubric)
+        for value in (.25, .505, 1.01):
+            with self.subTest(invalid_mark=value):
+                invalid = deepcopy(data)
+                invalid["criteria"][0]["performance_levels"][0]["points_earned"] = value
+                with self.assertRaises(ValueError):
+                    RubricV2.model_validate(invalid)
+        invalid = deepcopy(data)
+        invalid["criteria"][0]["performance_levels"][1]["description"] = " "
+        with self.assertRaisesRegex(ValueError, "observable"):
+            RubricV2.model_validate(invalid)
+        invalid = deepcopy(data)
+        invalid["max_score"] = 2.01
+        with self.assertRaisesRegex(ValueError, "exactly"):
+            RubricV2.model_validate(invalid)
+
     def test_custom_policy_requires_instructions(self):
         with self.assertRaises(ValueError):
             RubricPolicy(grading_approach="custom")
+
+    def test_exact_draft_cannot_downgrade_or_bypass_whole_guide_approval(self):
+        rubric = build_rubric(max_score=1, scoring_contract="exact", criteria=[
+            {"title": "Conclusion", "description": "States the conclusion", "points": 1,
+             "scoring_type": "binary"},
+        ]).model_dump()
+        question = Question(id="exact-q", institution_id="institution-1", exam_id="exam-1",
+            question_number="1", question_text="State the conclusion", max_score=1,
+            rubric_json={}, order_index=1, language="en")
+        self.db.add(question)
+        self.db.commit()
+        downgrade = {key: value for key, value in rubric.items() if key != "scoring_contract"}
+        old_draft = create_rubric_version(question=question, rubric_json=downgrade, source="manual",
+            change_summary=None, db=self.db)
+        draft = create_rubric_version(question=question, rubric_json=rubric, source="manual",
+            change_summary=None, db=self.db)
+        with self.assertRaisesRegex(ValueError, "exact scoring"):
+            update_rubric_version(version=draft, rubric_json=downgrade, change_summary=None, db=self.db)
+        with self.assertRaisesRegex(ValueError, "exact scoring"):
+            create_rubric_version(question=question, rubric_json=downgrade, source="manual",
+                change_summary=None, db=self.db)
+        with self.assertRaisesRegex(ValueError, "whole-assessment"):
+            approve_rubric_version(version=draft, db=self.db)
+        with self.assertRaisesRegex(ValueError, "exact scoring"):
+            approve_rubric_version(version=old_draft, db=self.db)
+        self.assertEqual(draft.status, "draft")
+        self.assertIsNone(question.active_rubric_version_id)
 
     def test_draft_edit_and_approval_lifecycle(self):
         legacy = {

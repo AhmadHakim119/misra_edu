@@ -13,7 +13,7 @@
     $('library-error').textContent='';
     $('library-summary').textContent='Loading saved course material…';
     try{
-      const result=await MisraAPI.courseLibrary(selectedCourse,new URLSearchParams(location.search).get('exam_id'));
+      const result=await MisraAPI.courseLibrary(selectedCourse,MisraWorkspace.currentURL().searchParams.get('exam_id'));
       if(current!==generation)return;if(!Array.isArray(result?.items))throw Error('Library response is incomplete.');
       data=result;$('library-summary').textContent=`${data.items.length} saved course material(s). These are available across this course’s assessments.`;
       if(!MisraMaterials.hasUnsaved())await MisraMaterials.load(selectedCourse,null,[]);if(current!==generation)return;
@@ -61,7 +61,7 @@
     });host.scrollIntoView({block:'start'});
   }
   function row(c,i){return `<div class="chapter-boundary-row"><label>Chapter name<input name="title" value="${esc(c.title)}" maxlength="255" required></label><label>From PDF page<input name="start_page" type="number" min="1" max="${editor.catalog.version.page_count}" value="${c.start_page}" required></label><label>Through PDF page<input name="end_page" type="number" min="1" max="${editor.catalog.version.page_count}" value="${c.end_page}" required></label><button type="button" data-remove-chapter="${i}">Remove</button></div>`;}
-  $('library-course').addEventListener('change',async()=>{if(unsaved()&&!await MisraWorkspace.confirm('Discard unsaved library edits and switch courses?')){$('library-course').value=course;return;}routeScope.cancelTimer(timer);data=null;indexGeneration++;MisraMaterials.reset();MisraMaterials.mount($('library-material-host'));uploadDirty=chapterDirty=false;pendingFiles=[];uncertain=false;$('library-upload').querySelector('[type=submit]').disabled=false;editor=null;$('library-chapter-editor').hidden=true;$('library-upload').reset();course=$('library-course').value;history.replaceState(null,'',`course-library.html?course_id=${encodeURIComponent(course)}`);dirty();refresh(true);});
+  $('library-course').addEventListener('change',async()=>{if(unsaved()&&!await MisraWorkspace.confirm('Discard unsaved library edits and switch courses?')){$('library-course').value=course;return;}routeScope.cancelTimer(timer);data=null;indexGeneration++;MisraMaterials.reset();MisraMaterials.mount($('library-material-host'));uploadDirty=chapterDirty=false;pendingFiles=[];uncertain=false;$('library-upload').querySelector('[type=submit]').disabled=false;editor=null;$('library-chapter-editor').hidden=true;$('library-upload').reset();course=$('library-course').value;MisraWorkspace.replaceRoute(`course-library.html?course_id=${encodeURIComponent(course)}`);dirty();refresh(true);});
   $('library-refresh').addEventListener('click',()=>refresh());
   $('library-upload').addEventListener('input',()=>{uploadDirty=true;dirty();});
   $('library-files').addEventListener('change',()=>{pendingFiles=[...$('library-files').files];});

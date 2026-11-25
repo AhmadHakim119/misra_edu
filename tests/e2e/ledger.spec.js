@@ -82,7 +82,7 @@ test('ungraded papers open the complete extraction editor while grading links re
   if(!await page.locator('#paper-picker').evaluate(el=>el.open))await page.locator('#paper-picker summary').click();
   await expect(page.locator('[data-paper="other"]')).toHaveText('Check extraction');
   await page.locator('[data-paper="other"]').click();
-  await expect(page).toHaveURL(/extraction.html\?.*submission_id=other/);
+  await expect(page).toHaveURL(/extraction\.html$/);
   await expect(page.locator('#mapping-host .extraction-item')).toHaveCount(2);
   await expect(page.locator('#reading-question option')).toHaveCount(2);
 });
@@ -93,7 +93,7 @@ test('opening extraction preserves a cancelled instructor draft and discards it 
   await page.locator('[data-paper="other"]').click();await answerWorkspaceDialog(page,'cancel');
   await expect(page.locator('#instructor-score')).toHaveValue('1.75');await expect(page).toHaveURL(/index.html/);
   await page.locator('[data-paper="other"]').click();await answerWorkspaceDialog(page,'confirm');
-  await expect(page).toHaveURL(/extraction.html\?.*submission_id=other/);expect(writes).toHaveLength(0);
+  await expect(page).toHaveURL(/extraction\.html$/);expect(writes).toHaveLength(0);
 });
 
 test('ledger puts real criterion titles, saved references and full paper beside grade controls',async({page},info)=>{

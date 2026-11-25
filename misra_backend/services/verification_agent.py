@@ -11,7 +11,7 @@ from services.grading_decision_service import (
 from services.grading_policy_checks import policy_arithmetic_audit
 from services.grading_errors import GradingResponseValidationError
 
-VERIFICATION_PROMPT_VERSION = 'v7-bounded-format-correction'
+VERIFICATION_PROMPT_VERSION = 'v8-hosted-verifier-fallback'
 
 
 class CriterionCheck(BaseModel):
@@ -37,7 +37,9 @@ external searches or new requirements. Check missing work, equivalent methods,
 partial-credit policy, teacher-mark leakage, and whether citations support each
 award/deduction. A valid citation ID alone does not prove support. If the evidence
 is unclear, contradictory or insufficient, verdict needs_review. Do not change
-scores or grant approval. Return JSON exactly:
+scores or grant approval. When rubric.scoring_contract is "exact", check that the
+listed mark matches the observable level, an error affects only its criterion, and
+equivalent work meeting the criterion receives the same credit. Return JSON exactly:
 {"criteria":[{"criterion_id":"...","verdict":"needs_review","explanation":"...",
 "decision_check":{"criterion_kind":"method","method_status":"uncertain",
 "alternative_method":"uncertain","work_status":"unclear","error_type":"unclear",
@@ -67,11 +69,12 @@ conflict supported merely because the assessor calls it rounding/follow-through.
     calls = []
     rejected_hash = None
     correction = ''
+    alternate = ()
     response_schema = VerificationResult.model_json_schema()
     for attempt in range(2):
         contents = [prompt + correction + payload, *images]
         completion = (completion_fn(contents, task='verification') if completion_fn else
-                      complete(contents, task='verification', response_schema=response_schema))
+                      complete(contents, task='verification', response_schema=response_schema, exclude_models=alternate))
         calls.append(dict(completion.metadata))
         try:
             result = VerificationResult.model_validate_json(completion.text)
@@ -90,6 +93,7 @@ conflict supported merely because the assessor calls it rounding/follow-through.
         # Keep rejected text out of exceptions/prompts; retain a provenance hash.
         if isinstance(completion.text, str):
             rejected_hash = hashlib.sha256(completion.text.encode('utf-8')).hexdigest()
+        alternate = tuple(completion.metadata.get('attempted_models', ()))
         correction = (
             '\nFORMAT CORRECTION — ONE ATTEMPT ONLY:\n' + reason + '\n'
             'Return complete verification JSON with criteria and summary. Include each '

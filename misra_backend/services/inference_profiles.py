@@ -123,7 +123,7 @@ def execute_profile_job(processing_job_id):
     """Versioned RQ target: an old worker must fail before sending any evidence."""
     from services import grading_service, inference_service, job_execution_service
     if not all(getattr(module, 'PROFILE_SUPPORT_VERSION', 0) == version for module, version in (
-        (grading_service, 2), (inference_service, 6), (job_execution_service, 3)
+        (grading_service, 3), (inference_service, 8), (job_execution_service, 4)
     )):
         from database import SessionLocal
         from models import ProcessingJob

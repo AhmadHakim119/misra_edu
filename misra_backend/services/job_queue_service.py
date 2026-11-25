@@ -128,7 +128,8 @@ def lock_job(db: Session, job_id: str) -> ProcessingJob | None:
 
 def lock_grading_paper(db, job_type, submission_id, institution_id):
     if job_type == 'grade_submission' and submission_id:
-        db.query(Submission.id).filter_by(id=submission_id, institution_id=institution_id).with_for_update().scalar()
+        return db.query(Submission.id).filter_by(id=submission_id, institution_id=institution_id).with_for_update().scalar()
+    return None
 
 
 def stop_requested(job):
@@ -283,7 +284,7 @@ def retry_processing_job(job: ProcessingJob, db: Session) -> ProcessingJob:
         raise ValueError('This paper has another grading job from the same time or later. Open the paper to review the saved work.')
     from services.inference_profiles import TEXT_ONLY_IMAGE_ERROR
     if job.job_type == 'grade_submission' and (job.error_message or '').startswith(TEXT_ONLY_IMAGE_ERROR):
-        raise ValueError('This job uses text-only Qwen. Save Qwen Vision in AI services, then open the paper and select Grade with current AI setup.')
+        raise ValueError('This job uses text-only Qwen. Save an image-capable setup in AI services, then open the paper and select Continue with current AI setup.')
     job.status = "retrying"
     job.rq_job_id = None
     if stop_requested(job):

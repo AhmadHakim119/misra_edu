@@ -17,9 +17,9 @@ async function fixture(page,{healthFailure=false}={}){
 }
 
 test('settings keeps AI setup in the existing compact layout in both themes and RTL',async({page},info)=>{
-  await fixture(page);await expect(page.locator('#native-ai-agents dt')).toHaveCount(4);
+  await fixture(page);await expect(page.locator('#native-ai-agents dt')).toHaveCount(5);
   await expect(page.getByText('Model configuration',{exact:true})).toHaveCount(0);await expect(page.locator('#native-ai-config')).toHaveCount(0);
-  await expect(page.locator('#native-ai-agents')).toContainText('Verification check');
+  await expect(page.locator('#native-ai-agents')).toContainText('Image + text grading & verification');
   const sections=await page.locator('.settings-content>.settings-section').evaluateAll(elements=>elements.map(el=>({top:el.getBoundingClientRect().top,bottom:el.getBoundingClientRect().bottom})));
   expect(sections).toHaveLength(5);
   for(let i=1;i<sections.length;i++)expect(sections[i].top-sections[i-1].bottom).toBeLessThanOrEqual(1);

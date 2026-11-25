@@ -21,6 +21,9 @@ from services.source_question_draft_service import generate_source_questions
 
 class SourceQuestionDraftTests(unittest.TestCase):
     def setUp(self):
+        provider = patch.dict(os.environ, {'SETUP_PROVIDER': 'openrouter_free', 'SETUP_MODEL': 'synthetic/drafts:free'})
+        provider.start()
+        self.addCleanup(provider.stop)
         self.engine = create_engine("sqlite://"); Base.metadata.create_all(self.engine)
         self.db = sessionmaker(bind=self.engine)()
         self.user = User(id="u", institution_id="i", email="test@example.edu", hashed_password="unused", role="teacher")
@@ -56,7 +59,7 @@ class SourceQuestionDraftTests(unittest.TestCase):
     def generate(self, job=None, output=None):
         job = job or self.queue()
         response = FreeCompletion(json.dumps(output or self.proposal()),dict(provider="synthetic-free",reported_cost_usd=0,latency_ms=3))
-        with patch("services.source_question_draft_service.complete_free",return_value=response) as provider:
+        with patch("services.inference_service.complete_routed",return_value=response) as provider:
             extract_setup_documents(job,self.db,lambda *args:self.db.commit())
         job.status = "completed"; self.db.commit()
         return job, provider
@@ -89,7 +92,7 @@ class SourceQuestionDraftTests(unittest.TestCase):
         self.assertIn('"exam_language": "ar"',provider.call_args.args[0])
         self.assertNotIn('Changed after request',provider.call_args.args[0])
         self.assertNotIn('teacher@example',provider.call_args.args[0])
-        with patch('services.source_question_draft_service.complete_free') as retry:
+        with patch('services.inference_service.complete_routed') as retry:
             generate_source_questions(job,self.db,lambda *args:None)
             retry.assert_not_called()
         metadata=setup_api.public_import(job)['instructor_profile']
@@ -120,7 +123,7 @@ class SourceQuestionDraftTests(unittest.TestCase):
         self.assertEqual(payload["source_package"]["passages"][0]["version_id"],self.version_id)
         self.assertEqual(payload["draft_questions"][0]["citations"][0]["quote"],"W = mgh")
         self.assertEqual(len(payload["draft_snapshot_sha256"]),64)
-        with patch("services.source_question_draft_service.complete_free") as retry:
+        with patch("services.inference_service.complete_routed") as retry:
             generate_source_questions(job,self.db,lambda *args:None)
             retry.assert_not_called()
 
@@ -164,7 +167,7 @@ class SourceQuestionDraftTests(unittest.TestCase):
     def test_changed_approved_content_is_rejected_on_execution(self):
         job = self.queue()
         page = self.db.query(MaterialPage).one(); page.text = "Unexpected replacement"; self.db.commit()
-        with patch("services.source_question_draft_service.complete_free") as provider:
+        with patch("services.inference_service.complete_routed") as provider:
             with self.assertRaises(ValueError): generate_source_questions(job,self.db,lambda *args:None)
             provider.assert_not_called()
 

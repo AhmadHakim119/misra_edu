@@ -5,6 +5,8 @@
   const clone=value=>structuredClone(value), lines=value=>String(value || '').split('\n').map(v=>v.trim()).filter(Boolean);
   let exam=null, questions=[], question=null, versions=[], version=null, rubric=null, epoch=0, requestId=0;
   let busy=false, loading=false, dirty=false, loaded=false, uncertain=false, view='', failure='', notice='', mode='adaptive', profile=null, renderKey='', usePreferences=true, preferencesKnown=true, preferenceUserId='', blankDraft='';
+  let suggestion=null, suggesting=false, aiFields={}, assistError='', manualCriteria=false, contextRevision=0;
+  const dismissedHints=new Set();
   const reminderKey=()=>`misra-rubric-survey-later:${preferenceUserId}`;
   function reminder(){return !profile&&!sessionStorage.getItem(reminderKey())?'<aside class="survey-reminder"><div><strong data-i18n>Personalize your marking rules · Optional</strong><p data-i18n>Continue with standard rules, or use your survey preferences.</p><button type="button" data-author-survey>Take survey</button></div><button type="button" data-author-survey-later>Not now</button></aside>':'';}
   function applyProfile(){
@@ -29,6 +31,7 @@
     handwritten_syntax_policy:['Handwritten syntax',[['criterion_specific','Follow each criterion'],['accept_unambiguous','Accept unambiguous intent'],['require_correct','Require correct syntax']]]
   };
   const editable=()=>Boolean(rubric && (!version || version.status==='draft'));
+  const pendingImport=()=>rubric?.scoring_contract==='needs_exact_scoring'&&!manualCriteria;
   const deletable=()=>!question?.id || Boolean(versions.length && !question.active_rubric_version_id && versions.every(v=>v.status==='draft'&&!v.approved_at&&!v.approved_by));
   const isBusy=()=>busy || MisraAnswerKeys.isBusy() || MisraMaterials.isBusy() || Boolean(window.MisraAssessmentGuide?.isBusy());
   const hasUnsaved=()=>dirty || isBusy() || MisraAnswerKeys.hasUnsaved() || MisraMaterials.hasUnsaved();
@@ -38,73 +41,175 @@
   }
   function reset(value) {
     ++epoch;++requestId;exam=value;questions=[];question=null;versions=[];version=rubric=null;dirty=busy=loading=loaded=uncertain=false;view='';failure=notice=renderKey='';profile=null;
+    suggestion=null;suggesting=false;aiFields={};assistError='';manualCriteria=false;dismissedHints.clear();
     MisraAnswerKeys.reset();MisraMaterials.reset();$('native-authoring').hidden=true;$('native-library').hidden=true;
+    $('rubric-workspace').after($('author-foundations'));
+    $('builder-save-slot').replaceChildren();$('author-state').replaceChildren();
     $('author-question').innerHTML='';$('rubric-workspace').innerHTML='';$('answer-key-panel').innerHTML='';$('question-material-host').innerHTML='';$('library-material-host').innerHTML='';
   }
   function normalize(raw,max) {
     const value=clone(raw || {});value.schema_version=2;value.max_score=Number(value.max_score ?? max);
-    value.criteria=(value.criteria || []).map(c=>({...c,id:c.id || 'criterion_'+crypto.randomUUID().replaceAll('-','').slice(0,12),title:c.title || c.description || 'Criterion',description:c.description || '',points:Number(c.points),scoring_type:c.scoring_type || 'scaled',partial_credit_allowed:c.scoring_type==='binary' ? false : c.partial_credit_allowed!==false,performance_levels:c.performance_levels || [],common_errors:c.common_errors || [],alternative_methods:c.alternative_methods || [],required_evidence:c.required_evidence || []}));
+    value.criteria=(value.criteria || []).map(c=>({...c,id:c.id || 'criterion_'+crypto.randomUUID().replaceAll('-','').slice(0,12),title:c.title || c.description || 'Criterion',description:c.description || '',points:Number(c.points),scoring_type:c.scoring_type==='binary'||c.partial_credit_allowed===false?'binary':'scaled',partial_credit_allowed:c.scoring_type==='binary' ? false : c.partial_credit_allowed!==false,performance_levels:c.performance_levels || [],common_errors:c.common_errors || [],alternative_methods:c.alternative_methods || [],required_evidence:c.required_evidence || []}));
     value.policy={...Object.fromEntries(Object.entries(policyChoices).map(([key,[,options]])=>[key,options[0][0]])),alternative_methods_allowed:true,rounding_tolerance_percent:null,custom_instructions:null,...value.policy};
     value.policy.grading_approach=raw?.policy?.grading_approach || raw?.grading_approach || 'balanced';return value;
   }
   function field(id,label,control) {return `<div class="field"><label for="${id}">${label}</label>${control}</div>`;}
-  function input(id,value,attrs='') {return `<input id="${id}" value="${esc(value)}" ${attrs}>`;}
+  function input(id,value,attrs='') {return `<input id="${id}" value="${esc(Number.isNaN(value)?'':value)}" ${attrs}>`;}
   function select(id,value,options,attrs='') {return `<select id="${id}" ${attrs}>${options.map(([key,title])=>`<option value="${esc(key)}" ${key===value ? 'selected' : ''}>${esc(title)}</option>`).join('')}</select>`;}
   function textarea(id,value,attrs='') {return `<textarea id="${id}" dir="auto" rows="3" ${attrs}>${esc(value)}</textarea>`;}
-  function creditDetails(c,i) {
-    return `<details class="author-credit-details"><summary>Detailed credit &amp; common mistakes</summary>
-      <div class="author-grid">${field(`ac-${i}-scoring`,'Scoring',select(`ac-${i}-scoring`,c.scoring_type,[['scaled','Scaled — partial credit'],['binary','Binary — full or zero']],'data-rubric-edit data-criterion-field="scoring_type"'))}${field(`ac-${i}-evidence`,'Required evidence (one per line)',textarea(`ac-${i}-evidence`,c.required_evidence.join('\n'),'data-rubric-edit data-criterion-field="required_evidence"'))}</div>
-      ${field(`ac-${i}-partial`,'Partial credit allowed',select(`ac-${i}-partial`,String(c.partial_credit_allowed),[['true','Yes'],['false','No']],'data-rubric-edit data-criterion-field="partial_credit_allowed"'))}
-      <h4>Credit levels</h4>${c.performance_levels.map((level,j)=>`<div class="author-credit-row" data-credit-level><div class="author-grid">${field(`al-${i}-${j}-label`,'Level name',input(`al-${i}-${j}-label`,level.label,'data-rubric-edit data-level-field="label" maxlength="100"'))}${field(`al-${i}-${j}-points`,'Marks at this level',input(`al-${i}-${j}-points`,level.points_earned,'data-rubric-edit data-level-field="points_earned" type="number" min="0" step="any"'))}</div>${field(`al-${i}-${j}-description`,'Work that earns this level',textarea(`al-${i}-${j}-description`,level.description,'data-rubric-edit data-level-field="description"'))}${editable() ? `<button type="button" data-detail-remove="performance_levels" data-detail-index="${j}">Remove credit level ${j+1}</button>` : ''}</div>`).join('')}
-      ${editable() ? '<button type="button" data-detail-add="performance_levels">Add credit level</button>' : ''}
+  const hundredths=value=>Number.isFinite(value)&&Math.abs(value*100-Math.round(value*100))<1e-8 ? Math.round(value*100) : NaN;
+  const mark=value=>Number.isFinite(value)?String(Number(value.toFixed(2))):'—';
+  function creditLevels(c,i) {
+    const binary=c.scoring_type==='binary';
+    return field('ac-'+i+'-scoring','Scoring rule',select('ac-'+i+'-scoring',c.scoring_type,[['binary','Full or zero'],['scaled','Defined credit levels']],'data-rubric-edit data-criterion-field="scoring_type" aria-label="Scoring rule for criterion '+(i+1)+'"'))+
+      (binary?'<p class="rubric-level-summary" data-binary-marks>'+mark(c.points)+' or 0 marks</p>':'');
+  }
+  function creditLevelEditor(c,i) {
+    if(c.scoring_type==='binary')return '';
+    return '<div class="rubric-levels-row" data-credit-row="'+i+'">'+
+        '<details class="rubric-levels" data-criterion-details="levels" data-criterion-id="'+esc(c.id)+'"><summary><span data-i18n>Credit levels</span> <span data-level-marks></span></summary>'+
+        '<p class="muted">Describe what earns zero, full credit and each intermediate mark.</p>'+
+        c.performance_levels.map((level,j)=>
+          '<div class="rubric-level-row" data-credit-level>'+
+          field('al-'+i+'-'+j+'-points','Exact marks',input('al-'+i+'-'+j+'-points',level.points_earned,'data-rubric-edit data-level-field="points_earned" type="number" min="0" step="0.01"'))+
+          field('al-'+i+'-'+j+'-description','Observable work',textarea('al-'+i+'-'+j+'-description',level.description,'data-rubric-edit data-level-field="description"'))+
+          (editable()?'<button type="button" data-detail-remove="performance_levels" data-detail-index="'+j+'">Remove level '+(j+1)+'</button>':'')+'</div>').join('')+
+        (editable()?'<button type="button" data-detail-add="performance_levels">Add credit level</button>':'')+'</details></div>';
+  }
+  function creditDetails(c,i){
+    return `<details class="author-credit-details" data-criterion-details="evidence"><summary>Evidence and common mistakes</summary>
+      ${field('ac-'+i+'-evidence','Required evidence (one per line)',textarea('ac-'+i+'-evidence',c.required_evidence.join('\n'),'data-rubric-edit data-criterion-field="required_evidence"'))}
       <h4>Common mistakes</h4>${c.common_errors.map((error,j)=>`<div class="author-credit-row" data-common-error>${field(`ae-${i}-${j}-description`,'Mistake to look for',textarea(`ae-${i}-${j}-description`,error.description,'data-rubric-edit data-error-field="description"'))}${field(`ae-${i}-${j}-guidance`,'How it affects credit',textarea(`ae-${i}-${j}-guidance`,error.guidance,'data-rubric-edit data-error-field="guidance"'))}${editable() ? `<button type="button" data-detail-remove="common_errors" data-detail-index="${j}">Remove common mistake ${j+1}</button>` : ''}</div>`).join('')}
       ${editable() ? '<button type="button" data-detail-add="common_errors">Add common mistake</button>' : ''}
       ${field(`ac-${i}-alternatives`,'Alternative methods (one per line)',textarea(`ac-${i}-alternatives`,c.alternative_methods.join('\n'),'data-rubric-edit data-criterion-field="alternative_methods"'))}</details>`;
   }
+  function suggestionFor(c) {
+    return suggestion?.criteria.find(row=>row.id===c.id);
+  }
+  function invalidateSuggestion(){
+    contextRevision++;
+    if(!suggestion)return;
+    suggestion=null;dismissedHints.clear();
+    const host=$('rubric-workspace');
+    host.querySelector('.builder-suggestions')?.remove();
+    const empty=host.querySelector('.builder-empty');
+    if(empty)empty.hidden=false;
+    host.querySelectorAll('[data-hint-for]').forEach(hint=>hint.remove());
+    $('author-ai-form')?.querySelector('button[type="submit"]').replaceChildren('Generate AI draft');
+    $('author-assist-status')?.replaceChildren('The drafting context changed. Generate a fresh suggestion.');
+  }
+  function fieldHint(c,i,name) {
+    const value=suggestionFor(c)?.[name],id='ac-'+i+'-'+name;
+    if(!editable()||!value||c[name]?.trim()||dismissedHints.has(id))return '';
+    return `<div class="builder-hint" data-hint-for="${id}"><span dir="auto">${esc(value)}</span><button type="button" data-accept-hint="${id}">Use suggestion <kbd>Tab</kbd></button></div>`;
+  }
+  function criterionText(c,i,name,label,control) {
+    return `<div class="builder-suggestible">${field('ac-'+i+'-'+name,label,control)}${fieldHint(c,i,name)}</div>`;
+  }
+  function builderAssist(isNew){
+    if(isNew)return '<aside class="builder-assist"><h4>Assistant</h4><p>Save this question to draft from an answer key.</p></aside>';
+    return `<aside class="builder-assist" aria-label="Rubric assistant">
+      <h4>Assistant</h4>
+      <form id="author-ai-form"><button type="submit" class="primary">${suggesting?'Drafting…':suggestion?'Generate again':assistError?'Retry AI draft':'Generate AI draft'}</button>
+      <p id="author-assist-status" role="status" class="${assistError?'form-error':''}">${esc(assistError || (suggesting?'Reading the question and key…':suggestion?'Suggestions ready in the canvas.':'Draft scoring criteria from the question and answer key.'))}</p>
+      <details data-author-section="ai"><summary>Give AI an instruction</summary>
+      ${field('author-ai-method','Expected method',input('author-ai-method',aiFields.expected_method,'name="expected_method" maxlength="2000"'))}
+      ${field('author-ai-notes','Drafting notes',textarea('author-ai-notes',aiFields.instructor_notes,'name="instructor_notes" maxlength="4000"'))}</details></form>
+    </aside>`;
+  }
+  function builderPreview(){
+    if(!suggestion)return '';
+    const canFill=pendingImport();
+    return `<section class="builder-suggestions" aria-labelledby="builder-proposal-title">
+      <header><div><h4 id="builder-proposal-title">AI proposal</h4><p>${suggestion.criteria.length} criteria · ${mark(suggestion.max_score)} marks</p></div><button type="button" data-dismiss-proposal aria-label="Dismiss AI proposal">Dismiss</button></header>
+      <ol>${suggestion.criteria.map((c,i)=>`<li><div><strong dir="auto">${esc(c.title)}</strong><p dir="auto">${esc(c.description)}</p>
+      ${c.scoring_type==='scaled'?`<details><summary>See exact credit levels</summary><ul>${c.performance_levels.map(level=>`<li><strong>${mark(level.points_earned)}</strong> <span dir="auto">${esc(level.description)}</span></li>`).join('')}</ul></details>`:''}</div><span class="builder-proposal-mark">${mark(c.points)}</span>
+      ${editable()?`<button type="button" data-apply-criterion="${i}">${rubric.criteria.some(row=>row.id===c.id)?'Replace criterion':'Add this criterion'}</button>`:''}</li>`).join('')}</ol>
+      <div class="builder-accept"><button type="button" class="primary" data-apply-rubric ${canFill?'aria-describedby="builder-tab-hint"':''}>Use all suggested criteria</button>${canFill?'<span id="builder-tab-hint"><kbd>Tab</kbd> to accept</span>':''}</div>
+    </section>`;
+  }
+  function builderIndex(){
+    return `<nav class="builder-index" aria-label="Questions"><h4>Questions <span>${questions.length}</span></h4><div>${questions.map(q=>
+      `<button type="button" data-builder-question="${esc(q.id)}" ${q.id===question?.id?'aria-current="step"':''}><span dir="auto">Question ${esc(q.question_number)}</span><small>${esc(q.max_score)} marks</small></button>`).join('')}</div></nav>`;
+  }
+  function criterionRow(c,i){
+    const remove=editable()?'<button class="author-remove" type="button" data-author-remove="'+i+'">Remove criterion '+(i+1)+'</button>':'';
+    return `<article class="builder-criterion" data-author-criterion="${i}" data-criterion-panel="${esc(c.id)}">
+      <div class="builder-criterion-top">
+        ${criterionText(c,i,'title','Criterion',input('ac-'+i+'-title',c.title,'data-rubric-edit data-criterion-field="title" maxlength="160" dir="auto" aria-label="Criterion '+(i+1)+' name"'))}
+        ${field('ac-'+i+'-points','Max marks',input('ac-'+i+'-points',c.points,'data-rubric-edit data-criterion-field="points" type="number" min="0.01" step="0.01" aria-label="Max marks for criterion '+(i+1)+'"'))}
+      </div>
+      ${criterionText(c,i,'description','What earns credit',textarea('ac-'+i+'-description',c.description,'data-rubric-edit data-criterion-field="description" aria-label="What earns credit for criterion '+(i+1)+'"'))}
+      <div class="builder-criterion-rule">${creditLevels(c,i)}</div>
+      ${creditLevelEditor(c,i)}
+      <footer>${creditDetails(c,i)}${remove}</footer>
+    </article>`;
+  }
   function setControls() {
     $('author-foundations').disabled=busy || loading;
     $('author-question').disabled=busy || loading || uncertain || !questions.length;$('author-new-question').disabled=busy || loading || uncertain;$('author-reload').disabled=busy || loading;
+    const saveButton=$('builder-save-slot').querySelector('button');
+    if(saveButton)saveButton.disabled=busy||loading||uncertain;
     $('rubric-workspace').setAttribute('aria-busy',String(busy));
-    $('rubric-workspace').querySelectorAll('button,input,select,textarea').forEach(el=>el.disabled=busy || uncertain || (el.hasAttribute('data-rubric-edit') && !editable()) || (el.hasAttribute('data-author-delete')&&!deletable()));
+    $('rubric-workspace').querySelectorAll('button,input,select,textarea').forEach(el=>{
+      if(!el.closest('#author-foundations'))el.disabled=busy || uncertain || (el.hasAttribute('data-rubric-edit') && !editable()) || (el.hasAttribute('data-author-delete')&&!deletable());
+    });
   }
   function updateState() {
     $('author-state')?.replaceChildren(document.createTextNode(uncertain ? 'Change not confirmed. Reload questions before another write.' : dirty ? 'Unsaved changes — not used for grading' : !question?.id ? 'New question — not saved' : notice || (version?.status==='approved' ? 'Approved version is read-only. Create a draft to change future grading.' : 'Saved draft — not used for grading')));
-    const total=rubric?.criteria?.reduce((sum,c)=>sum+c.points,0);if($('author-total')) $('author-total').textContent=`${Number.isFinite(total) ? Number(total.toFixed(2)) : 'Invalid'} / ${rubric.max_score} marks assigned`;
-    const totalLabel=$('rubric-workspace').querySelector('.author-question-marks');if(totalLabel)totalLabel.textContent=`${Number.isFinite(rubric.max_score) ? rubric.max_score : 'Invalid'} marks`;
-    $('rubric-workspace').querySelectorAll('[data-criterion-panel]').forEach(panel=>{
-      const c=rubric?.criteria.find(c=>c.id===panel.dataset.criterionPanel);if(!c)return;
-      panel.querySelector('[data-criterion-title]').textContent=c.title || 'Untitled criterion';
-      panel.querySelector('[data-criterion-marks]').textContent=`${Number.isFinite(c.points) ? c.points : 'Invalid'} marks`;
-      panel.querySelector('[data-criterion-rule]').textContent=c.scoring_type==='binary' || !c.partial_credit_allowed ? 'Full credit or zero' : 'Partial credit allowed';
+    const total=rubric.criteria.reduce((sum,c)=>sum+hundredths(c.points),0);
+    const assigned=$('author-total'),totalText=`${mark(total/100)} / ${mark(rubric.max_score)} marks assigned`;
+    assigned?.classList.toggle('form-error',total!==hundredths(rubric.max_score));
+    if(assigned&&assigned.textContent!==totalText)assigned.textContent=totalText;
+    $('rubric-workspace').querySelectorAll('[data-binary-marks]').forEach(label=>{
+      const c=rubric.criteria[Number(label.closest('[data-author-criterion]').dataset.authorCriterion)];
+      label.textContent=mark(c.points)+' or 0 marks';
+    });
+    $('rubric-workspace').querySelectorAll('[data-level-marks]').forEach(label=>{
+      const c=rubric.criteria[Number(label.closest('[data-credit-row]').dataset.creditRow)];
+      const marks=c.performance_levels.map(level=>level.points_earned).filter(Number.isFinite).sort((a,b)=>b-a);
+      const text=marks.length?'· '+marks.map(mark).join(', '):'';
+      if(label.textContent!==text)label.textContent=text;
     });
   }
   function render() {
-    const host=$('rubric-workspace');
+    const host=$('rubric-workspace'),foundations=$('author-foundations');
+    host.after(foundations);
+    foundations.hidden=loading||!rubric||!question?.id;
+    $('builder-save-slot').innerHTML=loading||!rubric?'':editable()
+      ?'<button type="button" class="primary" data-author-save>Save draft</button>'
+      :'<button type="button" class="primary" data-author-draft>Create editable draft</button>';
+    if(loading||!rubric)$('author-state').replaceChildren();
     if(loading) {host.innerHTML='<p role="status">Loading approved definitions and drafts…</p>';setControls();return;}
     if(!rubric) {host.innerHTML=`${failure ? `<p role="alert" class="form-error">${esc(failure)}</p>` : reminder()+'<p>Add a question to start your marking guide.</p>'}`;setControls();return;}
     const key=question?.id || 'new';
-    const detailKey=el=>el.dataset.authorSection || (el.dataset.criterionPanel ? 'criterion:'+el.dataset.criterionPanel : el.closest('[data-author-criterion]') ? 'credit:'+rubric.criteria[Number(el.closest('[data-author-criterion]').dataset.authorCriterion)]?.id : el.querySelector('summary')?.textContent.split('·')[0].trim());
+    const detailKey=el=>el.dataset.authorSection || (el.dataset.criterionDetails ? el.dataset.criterionDetails+':'+(el.dataset.criterionId||el.closest('[data-criterion-panel]').dataset.criterionPanel) : el.querySelector('summary')?.textContent.split('·')[0].trim());
     const opened=renderKey===key ? new Map([...host.querySelectorAll('details')].map(el=>[detailKey(el),el.open])) : null;
     renderKey=key;
     const nextCorrection=version&&versions.filter(v=>v.version_number>version.version_number&&v.rubric_json?.question_definition).sort((a,b)=>a.version_number-b.version_number)[0]?.rubric_json.question_definition;
     const isNew=!question?.id,definition=rubric.question_definition||nextCorrection?.previous||{...question,language:question.language||'en'};
-    host.innerHTML=`<header class="author-savebar"><div><h3>${isNew ? 'New question' : `Question ${esc(definition.question_number)} <span class="author-question-marks">${rubric.max_score} marks</span>`}</h3><p id="author-state" role="status" data-i18n></p></div><div class="author-actions">${editable() ? '<button type="button" class="primary" data-author-save>Save draft</button>' : '<button type="button" class="primary" data-author-draft>Create editable draft</button>'}${question?.id||isNew?`<button type="button" class="author-delete" data-author-delete ${!deletable()?'disabled aria-describedby="question-delete-help"':''}>${isNew?'Discard question':'Delete question'}</button>`:''}</div></header>
-      ${!deletable()?'<p id="question-delete-help" class="muted" data-i18n>Only unused draft questions can be deleted.</p>':''}
-      <p id="author-error" role="alert" class="form-error" ${failure ? '' : 'hidden'}>${esc(failure)}</p>
-      ${reminder()}
-      <div class="author-grid">${field('author-number','Question number',input('author-number',definition.question_number,'data-rubric-edit required maxlength="20"'))}${field('author-max','Total marks',input('author-max',rubric.max_score,'data-rubric-edit type="number" min="0.01" step="any" required'))}${field('author-language','Language',select('author-language',definition.language,[['en','English'],['ar','Arabic'],['mixed','Mixed']],'data-rubric-edit'))}</div>
-      ${!isNew ? '<p id="author-max-help" class="muted" data-i18n>Number, wording and marks stay in this draft until the whole guide is approved. Previous results retain their original snapshots.</p>' : ''}
-      <div class="field author-question-stem"><label for="author-question-text">Question students are asked</label>${textarea('author-question-text',definition.question_text,'maxlength="20000" data-rubric-edit required')}</div>
+    const needsDraft=pendingImport();
+    host.innerHTML=`<p id="author-error" role="alert" class="form-error" ${failure ? '' : 'hidden'}>${esc(failure)}</p>
+      <div class="builder-grid">${builderIndex()}<div class="builder-main">
+      <section class="builder-question-card" aria-labelledby="builder-question-title"><h4 id="builder-question-title">Question details</h4>
+      <div class="author-grid">${field('author-number','Question number',input('author-number',definition.question_number,'data-rubric-edit required maxlength="20"'))}${field('author-max','Total marks',input('author-max',rubric.max_score,'data-rubric-edit type="number" min="0.01" step="0.01" max="9999.99" required'))}</div>
+      <div class="field author-question-stem"><label for="author-question-text">Question text</label>${textarea('author-question-text',definition.question_text,'maxlength="20000" data-rubric-edit required')}</div></section>
       ${rubric.question_definition?`<details class="author-section"><summary>Previously used question details</summary><p dir="auto">${esc(rubric.question_definition.previous.question_number)}</p><p dir="auto" style="white-space:pre-wrap">${esc(rubric.question_definition.previous.question_text)}</p></details>`:''}
-      <section class="author-criteria" aria-labelledby="author-criteria-title"><header class="author-criteria-heading"><h4 id="author-criteria-title">Marking criteria</h4><span id="author-total"></span></header>
-      ${rubric.criteria.map((c,i)=>`<details class="author-criterion-panel" data-criterion-panel="${esc(c.id)}" ${i===0 ? 'open' : ''}><summary><span class="author-criterion-index">${i+1}</span><span data-criterion-title dir="auto">${esc(c.title || 'Untitled criterion')}</span><span data-criterion-marks>${esc(c.points)} marks</span></summary><fieldset class="author-criterion" data-author-criterion="${i}" aria-label="Criterion ${i+1}"><div class="author-grid author-credit-basics">${field(`ac-${i}-title`,'Criterion title',input(`ac-${i}-title`,c.title,'data-rubric-edit data-criterion-field="title" maxlength="160" dir="auto"'))}${field(`ac-${i}-points`,'Marks',input(`ac-${i}-points`,c.points,'data-rubric-edit data-criterion-field="points" type="number" min="0.01" step="any"'))}</div>${field(`ac-${i}-description`,'What earns credit',textarea(`ac-${i}-description`,c.description,'data-rubric-edit data-criterion-field="description"'))}<p class="author-credit-rule" data-criterion-rule></p>${creditDetails(c,i)}${editable() ? `<button class="author-remove" type="button" data-author-remove="${i}">Remove criterion ${i+1}</button>` : ''}</fieldset></details>`).join('')}
-      ${editable() ? '<button type="button" data-author-add>Add criterion</button>' : ''}</section>
-      <details class="author-section author-options" data-author-section="options"><summary>Question settings <span>${esc(rubric.policy.grading_approach)} policy${!isNew ? ` · ${versions.length} rubric version(s)` : ''}</span></summary>
+      ${builderPreview()}
+      ${needsDraft?
+        `<section class="builder-empty" ${suggestion?'hidden':''}><h4>Scoring criteria</h4><p>Draft from the answer key, then review the marks here.</p><button type="button" data-manual-criteria>Edit criteria manually</button></section>`:`
+      <section class="author-criteria" aria-labelledby="author-criteria-title"><header class="author-criteria-heading"><h4 id="author-criteria-title" tabindex="-1">Scoring criteria</h4><output id="author-total"></output></header>
+      <div class="builder-criteria">${rubric.criteria.map(criterionRow).join('')}</div>
+      <div class="rubric-builder-actions">${editable() ? '<button type="button" data-author-add>Add criterion</button>' : ''}</div></section>`}
+      <details class="author-section author-options" data-author-section="options"><summary>Question settings</summary>${field('author-language','Language',select('author-language',definition.language,[['en','English'],['ar','Arabic'],['mixed','Mixed']],'data-rubric-edit'))}
       ${profile && editable() ? `<div class="author-section"><h4>Your saved marking preferences</h4><p>Use your approved profile as a starting point for this draft, then review the scoring rules.</p><button type="button" data-author-profile>Use my approved profile</button></div>` : ''}<details class="author-section" data-author-section="policy"><summary>Scoring policy · ${esc(rubric.policy.grading_approach)}</summary><p>These rules apply to future grading after approval. External practical work is excluded from paper totals.</p><div class="author-grid">${Object.entries(policyChoices).map(([key,[label,options]])=>field('ap-'+key,label,select('ap-'+key,rubric.policy[key],options,`data-rubric-edit data-policy-field="${key}"`))).join('')}${field('ap-alternatives','Allow alternative methods',select('ap-alternatives',String(rubric.policy.alternative_methods_allowed),[['true','Yes'],['false','No']],'data-rubric-edit data-policy-field="alternative_methods_allowed"'))}${field('ap-rounding','Rounding tolerance (%) — optional',input('ap-rounding',rubric.policy.rounding_tolerance_percent,'type="number" min="0" max="100" step="any" data-rubric-edit data-policy-field="rounding_tolerance_percent"'))}</div>${field('ap-custom','Custom instructions',textarea('ap-custom',rubric.policy.custom_instructions,'data-rubric-edit data-policy-field="custom_instructions"'))}</details>
       <details class="author-section"><summary>Retained reference context &amp; notes</summary><p>Legacy reference fields are preserved. Independently approved answer keys are managed below.</p>${['reference_context','notes','acceptable_answers'].map(key=>field('ar-'+key,key.replaceAll('_',' '),textarea('ar-'+key,key==='acceptable_answers' ? (rubric[key] || []).join('\n') : rubric[key],`data-rubric-edit data-reference-field="${key}"`))).join('')}</details>
       ${!isNew ? `<details class="author-section"><summary>Grading input · ${esc(mode.replaceAll('_',' '))}</summary><p>This routing setting is saved separately from rubric approval; historical runs keep their evidence snapshots.</p>${field('author-mode','Evidence source',select('author-mode',mode,[['adaptive','Adaptive'],['image_text_required','Image + text required'],['text_only','Text only']]))}<button type="button" data-author-mode>Save grading input</button></details>
-      <details class="author-section"><summary>Rubric version history · ${versions.length}</summary>${versions.map(v=>`<div class="version-row"><button type="button" data-author-version="${esc(v.id)}">Version ${v.version_number} · ${esc(v.status)}</button><span>${esc(v.change_summary)}</span></div>`).join('')}</details>` : ''}</details>
-      ${!isNew ? `<details class="author-section" data-author-section="ai"><summary>AI rubric suggestion</summary><p>Generate a draft using this question and its saved context, then review the proposed criteria.</p><form id="author-ai-form">${field('author-ai-context','Additional context — not approved authority',textarea('author-ai-context','','name="answer_key"'))}${field('author-ai-method','Expected method',input('author-ai-method','','name="expected_method"'))}${field('author-ai-level','Course level',input('author-ai-level','','name="course_level"'))}${field('author-ai-notes','Instructor notes',input('author-ai-notes','','name="instructor_notes"'))}<button type="submit">Generate AI draft</button></form></details>` : '<p>Save the question to add an answer key and source exceptions.</p>'}`;
+      <details class="author-section"><summary>Rubric version history · ${versions.length}</summary>${versions.map(v=>`<div class="version-row"><button type="button" data-author-version="${esc(v.id)}">Version ${v.version_number} · ${esc(v.status)}</button><span>${esc(v.change_summary)}</span></div>`).join('')}</details>` : ''}
+      <button type="button" class="author-delete" data-author-delete ${!deletable()?'disabled aria-describedby="question-delete-help"':''}>${isNew?'Discard question':'Delete question'}</button>
+      ${!deletable()?'<p id="question-delete-help" class="muted">Only unused draft questions can be deleted.</p>':''}
+      ${reminder()}</details></div>${builderAssist(isNew)}</div>`;
+    host.querySelector('.builder-assist').append(foundations);
     $('author-key-section').hidden=isNew;$('author-question-sources').hidden=isNew;
     if(opened) host.querySelectorAll('details').forEach(el=>{if(opened.has(detailKey(el))) el.open=opened.get(detailKey(el));});
     updateState();setControls();
@@ -117,29 +222,49 @@
     rubric.max_score=$('author-max').value==='' ? NaN : Number($('author-max').value);
     $('rubric-workspace').querySelectorAll('[data-author-criterion]').forEach(row=>{
       const c=rubric.criteria[Number(row.dataset.authorCriterion)];
-      row.querySelectorAll('[data-criterion-field]').forEach(el=>{const key=el.dataset.criterionField;c[key]=key==='points' ? el.value==='' ? NaN : Number(el.value) : key==='partial_credit_allowed' ? el.value==='true' : ['required_evidence','alternative_methods'].includes(key) ? lines(el.value) : el.value;});
-      c.performance_levels=[...row.querySelectorAll('[data-credit-level]')].map(level=>Object.fromEntries([...level.querySelectorAll('[data-level-field]')].map(el=>[el.dataset.levelField,el.dataset.levelField==='points_earned' ? el.value==='' ? NaN : Number(el.value) : el.value.trim()])));
+      row.querySelectorAll('[data-criterion-field]').forEach(el=>{const key=el.dataset.criterionField;c[key]=key==='points' ? el.value==='' ? NaN : Number(el.value) : ['required_evidence','alternative_methods'].includes(key) ? lines(el.value) : el.value;});
+      const levels=row.querySelector('[data-credit-row]');
+      if(levels)c.performance_levels=[...levels.querySelectorAll('[data-credit-level]')].map((level,i)=>{
+        const input=level.querySelector('[data-level-field="points_earned"]'),points=input.value===''?NaN:Number(input.value);
+        return {label:c.performance_levels[i]?.label||'',points_earned:points,description:level.querySelector('[data-level-field="description"]').value.trim()};
+      });
       c.common_errors=[...row.querySelectorAll('[data-common-error]')].map(error=>Object.fromEntries([...error.querySelectorAll('[data-error-field]')].map(el=>[el.dataset.errorField,el.value.trim()])));
-      if(c.scoring_type==='binary') c.partial_credit_allowed=false;
+      c.partial_credit_allowed=c.scoring_type==='scaled';
     });
     $('rubric-workspace').querySelectorAll('[data-policy-field]').forEach(el=>{const key=el.dataset.policyField;rubric.policy[key]=key==='rounding_tolerance_percent' ? el.value==='' ? null : Number(el.value) : key==='alternative_methods_allowed' ? el.value==='true' : el.value || null;});
     $('rubric-workspace').querySelectorAll('[data-reference-field]').forEach(el=>rubric[el.dataset.referenceField]=el.dataset.referenceField==='acceptable_answers' ? lines(el.value) : el.value || null);
   }
   function validate() {
     sync();
-    if(!Number.isFinite(rubric.max_score) || rubric.max_score<=0) throw new Error('Enter a positive total mark.');
-    if(!rubric.criteria.length || rubric.criteria.some(c=>!c.title.trim() || !c.description.trim() || !Number.isFinite(c.points) || c.points<=0)) throw new Error('Each criterion needs a title, credit description and positive marks.');
-    const total=rubric.criteria.reduce((s,c)=>s+c.points,0);if(Math.abs(total-rubric.max_score)>.01) throw new Error(`Criteria total ${total}, but this question is worth ${rubric.max_score}.`);
-    for(const c of rubric.criteria) {
-      const labels=new Set();
-      for(const level of c.performance_levels) {const name=level.label.trim().toLowerCase();if(!name || !level.description.trim() || !Number.isFinite(level.points_earned) || level.points_earned<0 || level.points_earned>c.points || labels.has(name) || c.scoring_type==='binary' && ![0,c.points].includes(level.points_earned)) throw new Error('Credit levels need unique names, descriptions and valid marks within the criterion. Binary levels award zero or full credit.');labels.add(name);}
-      if(c.common_errors.some(e=>!e.description.trim() || !e.guidance.trim())) throw new Error('Every common mistake needs a description and credit guidance.');
+    const maximum=hundredths(rubric.max_score);
+    if(!Number.isFinite(maximum)||maximum<=0||maximum>999999)throw Error('Enter total marks between 0.01 and 9999.99 with up to two decimal places.');
+    if(!rubric.criteria.length||rubric.criteria.some(c=>!c.title.trim()||!c.description.trim()||!(hundredths(c.points)>0)))throw Error('Each criterion needs a title, observable credit description and positive marks with up to two decimal places.');
+    const total=rubric.criteria.reduce((sum,c)=>sum+hundredths(c.points),0);
+    if(total!==maximum)throw Error('Criteria total '+mark(total/100)+', but this question is worth '+mark(rubric.max_score)+'.');
+    for(const c of rubric.criteria){
+      const marks=c.performance_levels.map(level=>hundredths(level.points_earned));
+      if(c.scoring_type==='scaled'&&(marks.length<3||new Set(marks).size!==marks.length||!marks.includes(0)||!marks.includes(hundredths(c.points))||c.performance_levels.some((level,i)=>!level.description.trim()||!(marks[i]>=0&&marks[i]<=hundredths(c.points))))){
+        throw Error('Credit levels for '+c.title+' need zero, full and at least one intermediate mark. Give each level a distinct exact mark and observable description.');
+      }
+      if(c.common_errors.some(e=>!e.description.trim()||!e.guidance.trim()))throw Error('Every common mistake needs a description and credit guidance.');
     }
     if(rubric.policy.grading_approach==='custom' && !rubric.policy.custom_instructions?.trim()) throw new Error('Add instructions for the custom grading policy.');
     if(!($('author-number').value.trim()) || !$('author-question-text').value.trim()) throw new Error('Enter the question number and complete wording.');
   }
+  function saveCriterion(c) {
+    if(c.scoring_type==='binary')return {...c,performance_levels:c.performance_levels.filter(level=>[0,c.points].includes(level.points_earned))};
+    const used=new Set(c.performance_levels.map(level=>level.label?.trim().toLowerCase()).filter(Boolean));
+    return {...c,performance_levels:c.performance_levels.map(level=>{
+      if(level.label?.trim())return level;
+      const base=mark(level.points_earned)+' marks';
+      let label=base,suffix=1;
+      while(used.has(label.toLowerCase()))label=base+' ('+(++suffix)+')';
+      used.add(label.toLowerCase());
+      return {...level,label};
+    })};
+  }
   async function definitions(id) {
-    const current=epoch,sequence=++requestId;loading=true;failure=notice='';render();
+    const current=epoch,sequence=++requestId;loading=true;failure=notice='';suggestion=null;aiFields={};assistError='';manualCriteria=false;dismissedHints.clear();render();
     try {
       const [active,list,routing]=await Promise.all([MisraAPI.rubric(id).catch(e=>{if(e.status===409) return {rubric:{}};throw e;}),MisraAPI.rubricVersions(id),MisraAPI.gradingPolicy(id).catch(e=>{if(e.status===404) return null;throw e;})]);
       if(current!==epoch || sequence!==requestId) return;
@@ -193,21 +318,27 @@
   }
   async function save(approve) {
     if(!editable() || uncertain) return;
+    if(rubric.scoring_contract==='needs_exact_scoring'&&!manualCriteria){
+      window.showToast('Generate scoring criteria or open manual editing before saving this question.','info');return;
+    }
     try {validate();}catch(e) {failure=e.message;$('author-error').hidden=false;$('author-error').textContent=failure;$('author-error').scrollIntoView({block:'center'});window.showToast(e.message,'error');return;}
     if(approve && !await MisraWorkspace.confirm('Approve this rubric and scoring policy for future grading? Historical runs are unchanged. Answer keys and source approvals are separate.')) return;
+    const payloadRubric={...rubric,scoring_contract:'exact',criteria:rubric.criteria.map(saveCriterion)};
     await action(async current=>{
       if(!question.id) {
-        const body={approve_initial_rubric:false,question_number:question.question_number,question_text:question.question_text,max_score:rubric.max_score,language:question.language,criteria:rubric.criteria,policy:rubric.policy,grading_approach:rubric.policy.grading_approach,acceptable_answers:rubric.acceptable_answers,notes:rubric.notes,reference_context:rubric.reference_context};
+        const body={approve_initial_rubric:false,scoring_contract:'exact',question_number:question.question_number,question_text:question.question_text,max_score:rubric.max_score,language:question.language,criteria:payloadRubric.criteria,policy:rubric.policy,grading_approach:rubric.policy.grading_approach,acceptable_answers:rubric.acceptable_answers,notes:rubric.notes,reference_context:rubric.reference_context};
         let result;
         try {result=await MisraAPI.createQuestion(exam.id,body);if(!result?.id && !result?.question?.id) throw new Error('Question response is incomplete.');}
         catch(e) {if(!e.status || e.status>=500) uncertain=true;throw e;}
         if(current!==epoch) return;dirty=false;loaded=false;notice='Question saved as a draft. Approve its marking foundations separately.';busy=false;await load(result.question?.id || result.id);
       } else {
         const expectedDefinition=rubric.question_definition&&clone(rubric.question_definition);
-        if(!version) {version=await MisraAPI.createRubricVersion(question.id,{rubric,source:'manual',change_summary:'Edited in assessment workspace.'});}
-        else version=await MisraAPI.updateRubric(version.id,{rubric,change_summary:'Edited in assessment workspace.'});
-        if(expectedDefinition){const actual=version?.rubric_json?.question_definition,keys=['question_number','question_text','language'];if(!actual||keys.some(key=>actual[key]!==expectedDefinition[key]||actual.previous?.[key]!==expectedDefinition.previous[key]))throw Error('The API did not save the question detail correction. Restart the API with the updated code, then retry. Your edits remain here.');}
-        if(current!==epoch) return;dirty=false;notice='Draft saved — not used for grading.';
+        const saved=version?await MisraAPI.updateRubric(version.id,{rubric:payloadRubric,change_summary:'Edited in assessment workspace.'}):
+          await MisraAPI.createRubricVersion(question.id,{rubric:payloadRubric,source:'manual',change_summary:'Edited in assessment workspace.'});
+        if(current!==epoch)return;
+        if(saved?.rubric_json?.scoring_contract!=='exact')throw Error('The API did not confirm exact scoring. Restart the API before approving the rubric.');
+        if(expectedDefinition){const actual=saved.rubric_json.question_definition,keys=['question_number','question_text','language'];if(!actual||keys.some(key=>actual[key]!==expectedDefinition[key]||actual.previous?.[key]!==expectedDefinition.previous[key]))throw Error('The API did not save the question detail correction. Restart the API with the updated code, then retry. Your edits remain here.');}
+        version=saved;rubric=normalize(version.rubric_json,question.max_score);dirty=false;notice='Draft saved — not used for grading.';
         if(approve) {try {await MisraAPI.approveRubric(version.id);}catch(e) {if(!e.status || e.status>=500) uncertain=true;throw e;}if(current!==epoch) return;version={...version,status:'approved'};notice='Rubric approved for future grading. Historical results are unchanged.';window.dispatchEvent(new CustomEvent('misra:rubric-approved'));}
         const list=await MisraAPI.rubricVersions(question.id);if(current!==epoch) return;versions=list;
       }
@@ -232,12 +363,58 @@
   $('author-question').addEventListener('change',e=>choose(e.target.value));
   $('author-reload').addEventListener('click',async()=>{if(await canLeave()) {MisraMaterials.reset();MisraAnswerKeys.reset();load(question?.id);}});
   $('author-new-question').addEventListener('click',async()=>{
-    if(!await canLeave()) return;if(!preferencesKnown){window.showToast('Reload marking settings before creating a draft.','error');return;}window.dispatchEvent(new CustomEvent('misra:guide-editor-opened'));MisraMaterials.reset();MisraAnswerKeys.reset();question={question_number:String(questions.length+1),question_text:'',language:'en'};version=null;versions=[];rubric=normalize({criteria:[{id:'criterion_'+crypto.randomUUID().replaceAll('-','').slice(0,12),title:'',description:'',points:1}]},1);applyProfile();blankDraft=JSON.stringify({question,rubric});dirty=false;failure='';notice=profile&&usePreferences?'Survey preferences applied. Review before approval.':'';render();$('author-question').value='';$('author-question-text').focus();
+    if(!await canLeave()) return;if(!preferencesKnown){window.showToast('Reload marking settings before creating a draft.','error');return;}window.dispatchEvent(new CustomEvent('misra:guide-editor-opened'));MisraMaterials.reset();MisraAnswerKeys.reset();suggestion=null;aiFields={};dismissedHints.clear();question={question_number:String(questions.length+1),question_text:'',language:'en'};version=null;versions=[];rubric=normalize({criteria:[{id:'criterion_'+crypto.randomUUID().replaceAll('-','').slice(0,12),title:'',description:'',points:1,scoring_type:'binary',partial_credit_allowed:false}]},1);applyProfile();blankDraft=JSON.stringify({question,rubric});dirty=false;failure='';notice=profile&&usePreferences?'Survey preferences applied. Review before approval.':'';render();$('author-question').value='';$('author-question-text').focus();
   });
   $('setup-overview').addEventListener('click',e=>{const b=e.target.closest('[data-author-question]');if(b) show('questions',b.dataset.authorQuestion);});
-  $('rubric-workspace').addEventListener('input',e=>{if(editable() && e.target.matches('[data-rubric-edit]')) {sync();dirty=true;updateState();}});
+  $('rubric-workspace').addEventListener('input',e=>{
+    if(!editable()||!e.target.matches('[data-rubric-edit]'))return;
+    sync();dirty=true;updateState();
+    if(['author-question-text','author-max','author-language'].includes(e.target.id)||e.target.dataset.policyField)invalidateSuggestion();
+    const key=e.target.dataset.criterionField;
+    if(!['title','description'].includes(key))return;
+    const row=e.target.closest('[data-author-criterion]'),i=Number(row.dataset.authorCriterion);
+    const adjacent=e.target.parentElement.nextElementSibling;
+    if(adjacent?.dataset.hintFor===e.target.id)adjacent.remove();
+    if(!e.target.value.trim())e.target.parentElement.insertAdjacentHTML('afterend',fieldHint(rubric.criteria[i],i,key));
+  });
+  $('answer-key-panel').addEventListener('input',invalidateSuggestion);
+  $('answer-key-panel').addEventListener('change',invalidateSuggestion);
+  $('answer-key-panel').addEventListener('misra:key-context-changed',invalidateSuggestion);
+  $('rubric-workspace').addEventListener('change',e=>{
+    if(!editable()||!e.target.matches('[data-criterion-field="scoring_type"]'))return;
+    const i=Number(e.target.closest('[data-author-criterion]').dataset.authorCriterion);
+    sync();
+    const c=rubric.criteria[i];
+    if(c.scoring_type==='scaled'&&!c.performance_levels.length)c.performance_levels=[
+      {label:'Zero',points_earned:0,description:''},{label:'Intermediate',points_earned:NaN,description:''},
+      {label:'Full',points_earned:c.points,description:c.description}
+    ];
+    dirty=true;render();$(`ac-${i}-scoring`).focus();
+    const levels=$('rubric-workspace').querySelector(`[data-credit-row="${i}"] .rubric-levels`);
+    if(levels)levels.open=true;
+  });
+  $('builder-save-slot').addEventListener('click',e=>{
+    const target=e.target.closest('button');
+    if(!target||isBusy())return;
+    if(target.hasAttribute('data-author-save'))save(false);
+    if(target.hasAttribute('data-author-draft'))action(async current=>{
+      if(rubric.question_definition)rubric.question_definition.previous={question_number:question.question_number,question_text:question.question_text||'',language:question.language||'en'};
+      const value=await MisraAPI.createRubricVersion(question.id,{rubric,source:'manual',apply_instructor_preferences:true,change_summary:'Instructor editing draft; saved account preference defaults requested.'});
+      if(current!==epoch)return;
+      version=value;rubric=normalize(value.rubric_json,question.max_score);versions.unshift(value);
+      notice=profile&&usePreferences?'Survey preferences applied. Review before approval.':'Editable draft created. Review before approval.';
+    });
+  });
   $('rubric-workspace').addEventListener('click',async e=>{
     const target=e.target.closest('button');if(!target || isBusy()) return;
+    if(target.dataset.builderQuestion){await choose(target.dataset.builderQuestion);return;}
+    if(target.hasAttribute('data-manual-criteria')){
+      sync();manualCriteria=true;render();$('ac-0-title')?.focus();return;
+    }
+    if(target.dataset.acceptHint){const input=$(target.dataset.acceptHint);if(acceptHint(input.id))input.focus();return;}
+    if(target.hasAttribute('data-dismiss-proposal')){sync();suggestion=null;dismissedHints.clear();render();$('author-ai-form')?.querySelector('button')?.focus();return;}
+    if(target.hasAttribute('data-apply-rubric')){await useSuggestion();return;}
+    if(target.hasAttribute('data-apply-criterion')){await useSuggestion(Number(target.dataset.applyCriterion));return;}
     if(target.hasAttribute('data-author-delete')){await removeQuestion();return;}
     if(target.hasAttribute('data-author-survey-later')){sessionStorage.setItem(reminderKey(),'1');target.closest('.survey-reminder').remove();}
     if(target.hasAttribute('data-author-survey')){
@@ -245,21 +422,152 @@
       if(untouchedNew)dirty=false;
       if(untouchedNew||await saveEdits())location.assign(`marking-survey.html?return_exam_id=${encodeURIComponent(exam.id)}`);
     }
-    if(target.hasAttribute('data-author-save')) save(false);
     if(target.hasAttribute('data-author-approve')) save(true);
-    if(target.hasAttribute('data-author-add')) {sync();rubric.criteria.push(normalize({criteria:[{id:'criterion_'+crypto.randomUUID().replaceAll('-','').slice(0,12),title:'',description:'',points:1}]},1).criteria[0]);dirty=true;render();const added=$('rubric-workspace').querySelectorAll('[data-criterion-panel]')[rubric.criteria.length-1];added.open=true;$(`ac-${rubric.criteria.length-1}-title`).focus();}
-    if(target.hasAttribute('data-author-remove')) {sync();const index=Number(target.dataset.authorRemove);rubric.criteria.splice(index,1);dirty=true;render();const next=$('rubric-workspace').querySelectorAll('[data-criterion-panel]')[Math.min(index,rubric.criteria.length-1)];(next?.querySelector('summary') || $('rubric-workspace').querySelector('[data-author-add]')).focus();}
-    if(target.dataset.detailAdd || target.dataset.detailRemove) {sync();const c=rubric.criteria[Number(target.closest('[data-author-criterion]').dataset.authorCriterion)];if(target.dataset.detailAdd) c[target.dataset.detailAdd].push(target.dataset.detailAdd==='performance_levels' ? {label:'',description:'',points_earned:0} : {description:'',guidance:''});else c[target.dataset.detailRemove].splice(Number(target.dataset.detailIndex),1);dirty=true;render();const panel=$('rubric-workspace').querySelectorAll('[data-author-criterion]')[rubric.criteria.indexOf(c)].querySelector('details');panel.open=true;}
-    if(target.hasAttribute('data-author-draft')) action(async current=>{if(rubric.question_definition)rubric.question_definition.previous={question_number:question.question_number,question_text:question.question_text||'',language:question.language||'en'};const value=await MisraAPI.createRubricVersion(question.id,{rubric,source:'manual',apply_instructor_preferences:true,change_summary:'Instructor editing draft; saved account preference defaults requested.'});if(current!==epoch) return;version=value;rubric=normalize(value.rubric_json,question.max_score);versions.unshift(value);notice=profile&&usePreferences?'Survey preferences applied. Review before approval.':'Editable draft created. Review before approval.';});
-    if(target.dataset.authorVersion) {if(!await canLeave()) return;const selected=versions.find(v=>v.id===target.dataset.authorVersion);if(selected) {version=selected;rubric=normalize(selected.rubric_json,question.max_score);dirty=false;failure=notice='';render();}}
+    if(target.hasAttribute('data-author-add')) {
+      sync();rubric.criteria.push(normalize({criteria:[{title:'',description:'',points:1,scoring_type:'binary',partial_credit_allowed:false}]},1).criteria[0]);dirty=true;render();$(`ac-${rubric.criteria.length-1}-title`).focus();
+    }
+    if(target.hasAttribute('data-author-remove')) {
+      sync();const index=Number(target.dataset.authorRemove);rubric.criteria.splice(index,1);dirty=true;render();
+      ($( `ac-${Math.min(index,rubric.criteria.length-1)}-title`)||$('rubric-workspace').querySelector('[data-author-add]')).focus();
+    }
+    if(target.dataset.detailAdd||target.dataset.detailRemove){
+      const row=target.closest('[data-author-criterion],[data-credit-row]'),i=Number(row.dataset.authorCriterion??row.dataset.creditRow);
+      sync();const c=rubric.criteria[i],key=target.dataset.detailAdd||target.dataset.detailRemove;
+      if(target.dataset.detailAdd)c[key].push(key==='performance_levels'?{label:'',description:'',points_earned:NaN}:{description:'',guidance:''});
+      else c[key].splice(Number(target.dataset.detailIndex),1);
+      dirty=true;render();
+      const panel=$('rubric-workspace').querySelector(key==='performance_levels'?`[data-credit-row="${i}"] .rubric-levels`:`[data-author-criterion="${i}"] .author-credit-details`);
+      panel.open=true;
+      if(target.dataset.detailAdd)(key==='performance_levels'?$(`al-${i}-${c[key].length-1}-points`):$(`ae-${i}-${c[key].length-1}-description`)).focus();
+      else panel.querySelector('summary').focus();
+    }
+    if(target.dataset.authorVersion) {if(!await canLeave()) return;const selected=versions.find(v=>v.id===target.dataset.authorVersion);if(selected) {suggestion=null;manualCriteria=false;dismissedHints.clear();version=selected;rubric=normalize(selected.rubric_json,question.max_score);dirty=false;failure=notice='';render();}}
     if(target.hasAttribute('data-author-profile') && await MisraWorkspace.confirm('Replace this draft’s preference fields with your approved profile? Nothing is saved until you save or approve.')) {sync();for(const key of ['method_credit','alternative_methods_allowed','handwritten_syntax_policy','notation_policy','error_carried_forward','language_quality_policy','arithmetic_error_policy','units_policy','rounding_tolerance_percent','evidence_requirement','illegible_response_policy']) {const value=profile?.derived_proposal?.[key];if(value!=null) rubric.policy[key]=value;}const guidance=profile?.derived_proposal?.custom_instructions;if(guidance&&!rubric.policy.custom_instructions?.includes(guidance))rubric.policy.custom_instructions=[rubric.policy.custom_instructions,guidance].filter(Boolean).join('\n');dirty=true;render();}
     if(target.hasAttribute('data-author-mode')) {const selected=$('author-mode').value;action(async current=>{await MisraAPI.updateGradingPolicy(question.id,{mode:selected});if(current!==epoch) return;mode=selected;notice='Grading input saved separately for future jobs.';});}
   });
-  $('rubric-workspace').addEventListener('submit',async e=>{
-    if(e.target.id!=='author-ai-form') return;e.preventDefault();if(isBusy()) return;
-    if(dirty && !await MisraWorkspace.confirm('Generate an AI draft without saving the current rubric edits?')) return;
-    const body=Object.fromEntries([...new FormData(e.target)].filter(([,v])=>String(v).trim()));body.grading_approach=rubric.policy.grading_approach;body.policy=clone(rubric.policy);
-    action(async current=>{await MisraAPI.suggestRubric(question.id,body);if(current!==epoch) return;dirty=false;busy=false;await definitions(question.id);notice='AI draft created. It is not approved.';});
+  function acceptHint(id){
+    const input=$(id);
+    if(!input||input.disabled||input.value.trim()||!suggestion)return false;
+    const index=Number(input.closest('[data-author-criterion]').dataset.authorCriterion);
+    const value=suggestionFor(rubric.criteria[index])?.[input.dataset.criterionField];
+    if(!value)return false;
+    input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));
+    $('author-assist-status').textContent='Suggestion inserted in this draft.';
+    return true;
+  }
+  $('rubric-workspace').addEventListener('keydown',e=>{
+    const forwardTab=e.key==='Tab'&&!e.shiftKey&&!e.ctrlKey&&!e.altKey&&!e.metaKey&&!e.isComposing;
+    if(forwardTab&&e.target.matches('[data-apply-rubric]')&&suggestion&&pendingImport()&&!isBusy()){
+      e.preventDefault();
+      useSuggestion();
+      return;
+    }
+    const hint=e.target.parentElement?.nextElementSibling;
+    if(!hint?.matches('[data-hint-for]')||hint.dataset.hintFor!==e.target.id)return;
+    if(forwardTab&&acceptHint(e.target.id))e.preventDefault();
+    if(e.key==='Escape'){dismissedHints.add(e.target.id);hint.remove();}
+  });
+  function validSuggestion(result,id,max){
+    const value=result?.rubric;
+    return result?.question_id===id&&value?.scoring_contract==='exact'&&value.max_score===max&&
+      Array.isArray(value.criteria)&&value.criteria.length>0&&value.criteria.length<=32&&
+      value.criteria.every(c=>typeof c.id==='string'&&typeof c.title==='string'&&typeof c.description==='string'&&
+        Number.isFinite(c.points)&&['binary','scaled'].includes(c.scoring_type)&&Array.isArray(c.performance_levels));
+  }
+  async function generateSuggestion(form){
+    if(isBusy()||loading||!question?.id)return;
+    assistError='';
+    aiFields=Object.fromEntries([...new FormData(form)].filter(([,v])=>String(v).trim()));
+    const id=question.id,selectedVersion=version?.id;
+    const keyIssue=MisraAnswerKeys.draftingIssue();
+    const keySaved=!keyIssue&&await MisraAnswerKeys.saveDraft();
+    if(question?.id!==id||version?.id!==selectedVersion||isBusy())return;
+    if(!keySaved){
+      invalidateSuggestion();
+      assistError=keyIssue||MisraAnswerKeys.draftingIssue()||'Save a valid answer key before generating the draft.';
+      const status=$('author-assist-status');
+      status.textContent=assistError;
+      status.classList.add('form-error');
+      $('author-key-section').open=true;
+      return;
+    }
+    sync();
+    const revision=contextRevision,max=rubric.max_score,text=$('author-question-text').value.trim();
+    if(!text||!(hundredths(max)>0)||max>9999.99){
+      window.showToast('Enter the question text and its total marks before generating.','error');return;
+    }
+    const body={...aiFields,grading_approach:rubric.policy.grading_approach,policy:clone(rubric.policy),
+      preview_question:{text,max_score:max,language:$('author-language').value},
+      preview_answer_key:MisraAnswerKeys.draftingSelection(),
+      criterion_cues:rubric.criteria.slice(0,24).map(c=>({id:c.id,title:c.title,description:c.description.slice(0,800)}))};
+    let keyChanged=false;
+    await action(async current=>{
+      suggestion=null;dismissedHints.clear();
+      suggesting=true;render();
+      try{
+        const result=await MisraAPI.previewRubric(id,body);
+        if(current!==epoch||question?.id!==id||version?.id!==selectedVersion)return;
+        if(revision!==contextRevision)throw Error('The question or answer key changed while drafting. Generate a fresh suggestion.');
+        if(!validSuggestion(result,id,max))throw Error('Could not use this suggestion with the current question total. Save any changed marks, then try again.');
+        suggestion=normalize(result.rubric,max);dismissedHints.clear();
+      }catch(error){
+        if(current===epoch){
+          assistError=error.message;
+          keyChanged=error.detail?.code==='answer_key_changed';
+        }
+      }finally{if(current===epoch)suggesting=false;}
+    });
+    if(question?.id===id) {
+      if(keyChanged){
+        $('author-key-section').open=true;
+        MisraAnswerKeys.offerReload(()=>{
+          if(question?.id!==id)return;
+          assistError=MisraAnswerKeys.draftingIssue();
+          render();
+          $('author-ai-form')?.querySelector('button')?.focus();
+        });
+        return;
+      }
+      const target=$('rubric-workspace').querySelector('[data-apply-rubric]')||$('author-ai-form')?.querySelector('button');
+      target?.focus();
+    }
+  }
+  async function useSuggestion(index=null){
+    if(!suggestion||!question?.id||isBusy()||loading)return;
+    sync();
+    const proposal=suggestion,id=question.id, selectedVersion=version?.id;
+    if(proposal.max_score!==rubric.max_score){window.showToast('The question total has changed. Generate a new suggestion.','error');return;}
+    const placeholder=pendingImport();
+    if(index===null&&rubric.criteria.length&&!placeholder&&
+        !await MisraWorkspace.confirm('Replace the criteria for this question with the AI draft? Your answer key and question details stay in place.'))return;
+    if(suggestion!==proposal||question?.id!==id||version?.id!==selectedVersion||isBusy())return;
+    if(!editable()){
+      await action(async current=>{
+        const draft={...rubric,criteria:clone(proposal.criteria),scoring_contract:'exact'};
+        const saved=await MisraAPI.createRubricVersion(id,{rubric:draft,source:'ai',change_summary:'AI draft accepted in Rubric Builder.'});
+        if(current!==epoch)return;
+        version=saved;versions.unshift(saved);rubric=normalize(saved.rubric_json,question.max_score);suggestion=null;
+        notice='AI draft saved. Review it before approving.';
+      });
+      if(!suggestion)window.dispatchEvent(new CustomEvent('misra:ledger-foundations-changed'));
+      $('author-criteria-title')?.focus();
+      return;
+    }
+    if(placeholder)rubric.criteria=[];
+    manualCriteria=true;
+    if(index===null){rubric.criteria=clone(proposal.criteria);suggestion=null;}
+    else{
+      const row=proposal.criteria[index];
+      const match=rubric.criteria.findIndex(c=>c.id===row.id);
+      if(match<0)rubric.criteria.push(clone(row));
+      else rubric.criteria[match]={...rubric.criteria[match],...clone(row)};
+    }
+    dirty=true;failure='';render();
+    $('author-criteria-title')?.focus();
+  }
+  $('rubric-workspace').addEventListener('submit',e=>{
+    if(e.target.id!=='author-ai-form')return;
+    e.preventDefault();generateSuggestion(e.target);
   });
   async function saveEdits(){
     if(isBusy() || uncertain)return false;

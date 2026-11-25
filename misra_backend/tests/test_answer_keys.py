@@ -4,7 +4,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 os.environ.setdefault('GEMINI_API_KEY', 'test-key-not-used')
 from fastapi import HTTPException
@@ -105,6 +105,23 @@ class AnswerKeyTests(unittest.TestCase):
         Path(job.payload['documents'][0]['path']).unlink()
         with self.assertRaisesRegex(ValueError, 'missing'):
             service.resolve_answer_key(self.question, self.db, {})
+
+    def test_rubric_drafting_reports_an_unreadable_selected_key_page(self):
+        pdf = io.BytesIO()
+        image = Image.new('RGB', (30, 30), 'white')
+        image.save(pdf, 'PDF', save_all=True, append_images=[image.copy()])
+        pdf.seek(0)
+        upload = asyncio.run(answer_keys.upload_document('q',
+            UploadFile(filename='mixed-key.pdf', file=pdf), self.db, self.user))
+        ref = dict(job_id=upload['job_id'], page_indices=[0, 1])
+        with patch('pypdf.PdfReader', return_value=Mock(pages=[
+            Mock(extract_text=Mock(return_value='Question and first worked step.')),
+            Mock(extract_text=Mock(return_value='')),
+        ])):
+            with self.assertRaisesRegex(ValueError, 'page 2 has no readable text'):
+                service.rubric_reference_text(self.question, {'document_refs':[ref]}, self.db)
+            self.assertIn('first worked step', service.rubric_reference_text(
+                self.question, {'document_refs':[{**ref, 'page_indices':[0]}]}, self.db))
 
     def test_cross_tenant_and_assessment_references_rejected(self):
         document = self.upload()

@@ -1,5 +1,6 @@
 """Atomic guide approval and content-bound review; synthetic isolated records."""
 import unittest
+import json
 from copy import deepcopy
 from unittest.mock import patch
 
@@ -28,6 +29,60 @@ class AssessmentGuideTests(unittest.TestCase):
     def approve(self, token):
         return approve_assessment_guide('e', AssessmentGuideApprovalRequest(
             review_token=token, confirm_reviewed=True), self.db, self.user)
+
+    def test_rubric_preview_rejects_a_key_changed_in_another_session(self):
+        from sqlalchemy.orm import Session
+        from routers.answer_keys import edit_version
+        from routers.rubric_versions import preview_question_rubric
+        from schemas.answer_keys import AnswerKeyDraftRequest
+        from schemas.rubric_input import ExistingQuestionRubricSuggestionRequest
+        from services.answer_key_service import public_version
+
+        key = AnswerKeyVersion(question_id='q', version_number=1, mode='reference',
+            reference_text='First worked example.', acceptable_answers=[], document_refs=[], status='draft')
+        self.db.add(key)
+        self.db.commit()
+        key_id = key.id
+        request = ExistingQuestionRubricSuggestionRequest(preview_answer_key={
+            'revision': public_version(key)['drafting_revision'],
+        })
+
+        def concurrent_edit(**kwargs):
+            self.assertIn('First worked example.', kwargs['contents'])
+            with Session(self.engine) as other_session:
+                other_session.get(AnswerKeyVersion, key_id).reference_text = 'Updated worked example.'
+                other_session.commit()
+            return json.dumps({'criteria': [
+                {'title': 'Method', 'description': 'Shows a valid solution method.', 'points': 2},
+            ]})
+
+        with patch('services.rubric_service.generate', side_effect=concurrent_edit) as model:
+            for attempt in range(2):
+                with self.assertRaises(HTTPException) as rejected:
+                    preview_question_rubric('q', request, self.db, self.user)
+                self.assertEqual(rejected.exception.status_code, 409)
+                self.assertEqual(rejected.exception.detail['code'], 'answer_key_changed')
+            self.assertEqual(model.call_count, 1)
+        self.assertEqual(self.db.query(RubricVersion).count(), 1)
+        with self.assertRaises(HTTPException) as save_rejected:
+            edit_version('q', key_id, AnswerKeyDraftRequest(
+                reference_text='Unsaved edit from the old editor.',
+                expected_drafting_revision=request.preview_answer_key.revision,
+            ), self.db, self.user)
+        self.assertEqual(save_rejected.exception.detail['code'], 'answer_key_changed')
+        self.assertEqual(self.db.get(AnswerKeyVersion, key_id).reference_text, 'Updated worked example.')
+        previous_revision = public_version(self.db.get(AnswerKeyVersion, key_id))['drafting_revision']
+        self.db.rollback()
+        with Session(self.engine) as other_session:
+            other_session.get(AnswerKeyVersion, key_id).change_summary = 'Updated review summary.'
+            other_session.commit()
+        with self.assertRaises(HTTPException) as metadata_rejected:
+            edit_version('q', key_id, AnswerKeyDraftRequest(
+                reference_text='Updated worked example.',
+                expected_drafting_revision=previous_revision,
+            ), self.db, self.user)
+        self.assertEqual(metadata_rejected.exception.detail['code'], 'answer_key_changed')
+        self.assertEqual(self.db.get(AnswerKeyVersion, key_id).change_summary, 'Updated review summary.')
 
     def test_single_approval_activates_rubric_key_and_sources(self):
         from models import Exam
@@ -267,3 +322,81 @@ class AssessmentGuideTests(unittest.TestCase):
         self.assertEqual(result['rubric_version'].status,'draft')
         self.assertEqual(self.db.get(AssessmentMaterialScopeVersion,scope.id).status,'draft')
         self.assertEqual(self.q.active_rubric_version_id,'r')
+
+    def test_pending_rubric_gets_ai_action_and_preview_keeps_saved_foundations(self):
+        from routers.rubric_versions import draft_missing_question_rubric, preview_question_rubric
+        from schemas.rubric_input import ExistingQuestionRubricSuggestionRequest
+        draft = self.correction()
+        custom_rule = 'Award method credit only when substitution is shown.'
+        draft.rubric_json = {
+            **draft.rubric_json, 'scoring_contract': 'needs_exact_scoring',
+            'policy': {**draft.rubric_json['policy'], 'grading_approach': 'custom', 'custom_instructions': custom_rule},
+        }
+        key = AnswerKeyVersion(question_id='q', version_number=1, mode='reference',
+            reference_text='Use the saved worked example.', acceptable_answers=['Use an equivalent equation.'],
+            document_refs=[], status='draft')
+        self.db.add(key)
+        self.db.commit()
+        guide = review_assessment_guide('e', self.db, self.user)
+        self.assertTrue(guide['questions'][0]['needs_rubric_draft'])
+        self.assertEqual(guide['errors'], [])
+        self.assertFalse(guide['can_approve'])
+        with self.assertRaises(HTTPException):
+            self.approve(guide['review_token'])
+        proposal = deepcopy(draft.rubric_json)
+        proposal['criteria'][0].update(scoring_type='binary', partial_credit_allowed=False)
+        proposal['reference_context'] = 'Do not replace the saved key'
+        compact = dict(proposal['criteria'][0])
+        compact.pop('scoring_type')
+        compact.pop('partial_credit_allowed')
+        compact.pop('performance_levels', None)
+        compact['marks'] = compact.pop('points')
+        compact_reply = '```json\n' + json.dumps({'criteria': [compact], 'policy': {'units_policy': 'do_not_penalize'}}) + '\n```'
+        invalid = json.dumps({'criteria': [{**compact, 'marks': 0.5}]})
+        with patch('services.rubric_service.generate', side_effect=[invalid, compact_reply]) as model:
+            preview = preview_question_rubric(
+                'q', ExistingQuestionRubricSuggestionRequest(
+                    grading_approach='custom', policy=draft.rubric_json['policy'],
+                ), self.db, self.user)
+        self.assertEqual(model.call_count, 2)
+        self.assertIn('Use the saved worked example.', model.call_args.kwargs['contents'])
+        self.assertIn('Use an equivalent equation.', model.call_args.kwargs['contents'])
+        for call in model.call_args_list:
+            self.assertIn(custom_rule, call.kwargs['contents'])
+        self.assertIn('The draft assigned 0.5 of', model.call_args.kwargs['contents'])
+        self.assertEqual(preview['rubric']['criteria'][0]['scoring_type'], 'binary')
+        self.assertEqual(preview['rubric']['policy']['units_policy'], proposal['policy']['units_policy'])
+        self.assertEqual(preview['rubric']['scoring_contract'], 'exact')
+        self.assertIsNone(preview['rubric']['reference_context'])
+        self.assertEqual(review_assessment_guide('e', self.db, self.user)['review_token'], guide['review_token'])
+        with patch('services.rubric_service.generate', return_value=invalid):
+            with self.assertRaises(HTTPException) as invalid_draft:
+                draft_missing_question_rubric('q', self.db, self.user)
+        self.assertEqual(invalid_draft.exception.status_code, 502)
+        self.assertIn('The draft assigned 0.5 of', invalid_draft.exception.detail)
+        self.assertEqual(review_assessment_guide('e', self.db, self.user)['review_token'], guide['review_token'])
+        from services.inference_service import LocalInferenceError
+        with patch('services.rubric_service.generate', side_effect=LocalInferenceError('Cannot reach Ollama.')):
+            with self.assertRaises(HTTPException) as unavailable:
+                draft_missing_question_rubric('q', self.db, self.user)
+        self.assertEqual(unavailable.exception.detail, 'Cannot reach Ollama.')
+        self.assertEqual(review_assessment_guide('e', self.db, self.user)['review_token'], guide['review_token'])
+        with patch('services.rubric_service.generate', return_value=json.dumps(proposal)) as model:
+            result = draft_missing_question_rubric(
+                'q', self.db, self.user)
+            with self.assertRaises(HTTPException) as duplicate:
+                draft_missing_question_rubric(
+                    'q', self.db, self.user)
+            with self.assertRaises(HTTPException) as other:
+                preview_question_rubric(
+                    'q', ExistingQuestionRubricSuggestionRequest(), self.db, self.other)
+        self.assertEqual(model.call_count, 1)
+        self.assertIn(custom_rule, model.call_args.kwargs['contents'])
+        self.assertEqual(duplicate.exception.status_code, 409)
+        self.assertEqual(other.exception.status_code, 404)
+        version = result['rubric_version']
+        self.assertEqual(version.status, 'draft')
+        self.assertEqual(version.rubric_json['question_definition'], draft.rubric_json['question_definition'])
+        self.assertEqual(self.q.active_rubric_version_id, 'r')
+        self.assertEqual(key.reference_text, 'Use the saved worked example.')
+        self.assertTrue(review_assessment_guide('e', self.db, self.user)['can_approve'])

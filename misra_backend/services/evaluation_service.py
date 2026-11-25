@@ -4,7 +4,7 @@ import math
 
 from sqlalchemy.orm import Session
 
-from models import Answer, GradingRun, Question, ReviewLabel, Submission
+from models import Answer, GradingRun, Question, ReviewLabel, RubricVersion, Submission
 from schemas.review_input import PREFERENCE_REASON_VALUES
 from services.grading_scope_service import is_external_question
 
@@ -177,10 +177,15 @@ def build_evaluation_report(
         historical_criterion_maxima = {item["criterion_id"]:float(item["max_points"]) for item in (ai_criteria_items or [])
             if item.get("criterion_id") is not None and item.get("max_points") is not None}
         human_criteria = _criteria_by_id(label.human_criteria_scores)
+        rubric_snapshot = grading_run.rubric_snapshot if grading_run else None
+        criterion_titles = {item.get('id'): item.get('title') or item.get('description')
+                            for item in ((rubric_snapshot or {}).get('criteria') or []) if isinstance(item, dict)}
         for criterion_id in sorted(set(ai_criteria) & set(human_criteria)):
             criterion_records.append({
                 "criterion_id": criterion_id,
+                "criterion_title": criterion_titles.get(criterion_id),
                 "question_id": question.id,
+                "question_number": question.question_number,
                 "rubric_version_id": label.rubric_version_id,
                 "absolute_error": abs(ai_criteria[criterion_id] - human_criteria[criterion_id]),
                 "signed_error": ai_criteria[criterion_id] - human_criteria[criterion_id],
@@ -203,6 +208,15 @@ def build_evaluation_report(
     for record in criterion_records:
         criterion_rows[record["criterion_id"]].append(record)
         definition_criterion_rows[(record["question_id"],record["rubric_version_id"],record["criterion_id"])].append(record)
+
+    version_ids = {rid for _, rid, _ in definition_criterion_rows if rid}
+    rubric_numbers = {}
+    if version_ids:
+        rubric_numbers = {(qid, rid): number for qid, rid, number in db.query(
+            RubricVersion.question_id, RubricVersion.id, RubricVersion.version_number
+        ).join(Question, Question.id == RubricVersion.question_id).filter(
+            RubricVersion.id.in_(version_ids), Question.institution_id == institution_id
+        )}
 
     rubric_schema_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
     prompt_version_rows: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -284,6 +298,8 @@ def build_evaluation_report(
             for criterion_id, rows in sorted(criterion_rows.items())
         },
         "criterion_by_definition": [{"question_id":qid,"rubric_version_id":rid,"criterion_id":cid,
+            "question_number": rows[0]["question_number"], "rubric_version_number": rubric_numbers.get((qid, rid)),
+            "criterion_title": next((row["criterion_title"] for row in rows if row["criterion_title"]), None),
             **_summary(rows)} for (qid,rid,cid),rows in definition_criterion_rows.items()],
         "instructor_error_annotations": {
             "label_count": len(records),

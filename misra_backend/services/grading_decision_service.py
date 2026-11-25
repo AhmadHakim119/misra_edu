@@ -112,6 +112,7 @@ def decision_findings(package, candidate):
     """
     findings = []
     policy = package.get('policy') or {}
+    exact = (package.get('rubric') or {}).get('scoring_contract') == 'exact'
     for c in candidate['criteria_scores']:
         cid = c['criterion_id']
 
@@ -143,7 +144,7 @@ def decision_findings(package, candidate):
                     flag('copy_error_method_conflict', 'A copied given value alone was used to invalidate the physical method; check the relation and directions separately.')
             elif origin in {'physical_relation', 'physical_direction'} and check['error_type'] == 'calculation':
                 flag('physical_error_classification_conflict', 'An independent physical relation/direction error was classified as a calculation under the copying-error rule.')
-        if check['work_status'] == 'unclear' or check['error_type'] == 'unclear':
+        if check['work_status'] == 'unclear' or check['error_type'] == 'unclear' or (exact and c.get('uncertainties')):
             flag('unclear_student_work', 'Check unclear signs, digits or cancelled work on the original page.')
         if check['policy_status'] != 'clear':
             flag('marking_policy_uncertain', 'The criterion and marking policy need an instructor interpretation.')
@@ -158,8 +159,8 @@ def decision_findings(package, candidate):
         if (check['criterion_kind'] == 'result' and check['error_type'] == 'missing_work'
                 and c['points_earned'] > 0):
             flag('missing_result_credit', 'A result mark was awarded although the AI says the required result is missing.')
-        permits_methods = (policy.get('alternative_methods_allowed') is not False
-                           and policy.get('method_credit') != 'none')
+        permits_methods = exact or (policy.get('alternative_methods_allowed') is not False
+                                    and policy.get('method_credit') != 'none')
         if (check['criterion_kind'] == 'method' and deducted and permits_methods
                 and (check['method_status'] == 'valid' or check['alternative_method'] == 'valid_equivalent')):
             flag('valid_method_credit_withheld', 'A valid method was identified but its method mark was withheld.')

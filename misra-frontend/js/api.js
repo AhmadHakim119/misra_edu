@@ -8,8 +8,8 @@
   const sameOriginApi = native || legacy ? `${window.location.origin}/api` : 'http://127.0.0.1:8000/api';
   const API_BASE = (window.MISRA_API_BASE || sameOriginApi).replace(/\/$/, '');
   const inferenceKey = 'misra.inference-profile.v1';
-  const localInference = 'local_qwen_gemini_v1';
-  const inferenceProfiles = new Set([localInference, 'local_qwen_vision_gemini_v1', 'local_qwen_all_v1', 'configured']);
+  const localInference = 'local_qwen_all_v1';
+  const inferenceProfiles = new Set([localInference, 'configured']);
   function inferenceProfile() {
     try {
       const saved = localStorage.getItem(inferenceKey);
@@ -58,7 +58,8 @@
       error.status = response.status;
       error.detail = detail;
       if (response.status === 401 && !originatingPage?.aborted && (native || legacy) && !window.location.pathname.endsWith('/login.html')) {
-        const returnTo = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        const current = window.MisraWorkspace?.currentURL() || window.location;
+        const returnTo = current.pathname + current.search + current.hash;
         window.location.replace(`${authRoot}login.html?next=${encodeURIComponent(returnTo)}`);
       }
       if (response.status === 403 && !originatingPage?.aborted && detail?.code === 'password_change_required' && !window.location.pathname.endsWith('/account.html')) {
@@ -114,7 +115,7 @@
     adminHealth: () => request('/admin/operations/health'),
     recoverOrphanedJobs: () => request('/admin/operations/jobs/recover', { method: 'POST', body: '{}' }),
     courses: () => request('/courses'),
-    courseMaterials: (courseId) => request(`/courses/${encodeURIComponent(courseId)}/materials${queryString({exam_id:native ? new URLSearchParams(window.location.search).get('exam_id') : null})}`),
+    courseMaterials: (courseId) => request(`/courses/${encodeURIComponent(courseId)}/materials${queryString({exam_id:native ? window.MisraWorkspace?.currentURL().searchParams.get('exam_id') : null})}`),
     courseLibrary: (courseId, examId) => request(`/courses/${encodeURIComponent(courseId)}/library${queryString({exam_id:examId})}`),
     materialChapters: (materialId, versionId) => request(`/materials/${encodeURIComponent(materialId)}/versions/${encodeURIComponent(versionId)}/chapters`),
     saveMaterialChapters: (materialId, versionId, body) => request(`/materials/${encodeURIComponent(materialId)}/versions/${encodeURIComponent(versionId)}/chapters`, {method:'POST',body:JSON.stringify(body)}),
@@ -158,6 +159,8 @@
     rubricVersions: (questionId) => request(`/questions/${encodeURIComponent(questionId)}/rubric-versions`),
     createRubricVersion: (questionId, body) => request(`/questions/${encodeURIComponent(questionId)}/rubric-versions`, { method: 'POST', body: JSON.stringify(body) }),
     suggestRubric: (questionId, body) => request(`/questions/${encodeURIComponent(questionId)}/suggest-rubric-version`, { method: 'POST', body: JSON.stringify(body) }),
+    previewRubric: (questionId, body) => request(`/questions/${encodeURIComponent(questionId)}/rubric-preview`, { method: 'POST', body: JSON.stringify(body) }),
+    draftMissingRubric: questionId => request(`/questions/${encodeURIComponent(questionId)}/draft-missing-rubric`, { method: 'POST' }),
     updateRubric: (versionId, body) => request(`/rubric-versions/${encodeURIComponent(versionId)}`, { method: 'PUT', body: JSON.stringify(body) }),
     approveRubric: (versionId) => request(`/rubric-versions/${encodeURIComponent(versionId)}/approve`, { method: 'POST', body: '{}' }),
     assessmentGuide: (examId) => request(`/exams/${encodeURIComponent(examId)}/marking-guide`),
@@ -203,6 +206,7 @@
     confirmPageRecovery: (submissionId, pageIndex, preview) => request(`/submissions/${encodeURIComponent(submissionId)}/pages/${pageIndex}/confirm-reextract`, { method: 'POST', body: JSON.stringify({ question_numbers: preview.question_numbers, segments: preview.segments, preview_signature: preview.preview_signature }) }),
     gradeAnswer: (answerId, mode = 'auto') => request(`/grade/${encodeURIComponent(answerId)}`, { method: 'POST', body: JSON.stringify({ mode }) }),
     gradeSubmission: (submissionId, mode = 'auto') => request(`/submissions/${encodeURIComponent(submissionId)}/grade`, { method: 'POST', body: JSON.stringify({ mode }) }),
+    continueGrading: (submissionId, jobId) => request(`/submissions/${encodeURIComponent(submissionId)}/grade/continue`, { method: 'POST', body: JSON.stringify({from_job_id:jobId}) }),
     reviewQueue: (examId) => request(`/review-queue${examId ? `?exam_id=${encodeURIComponent(examId)}` : ''}`),
     resolveReview: (answerId, body) => request(`/answers/${encodeURIComponent(answerId)}/resolve-review`, { method: 'POST', body: JSON.stringify(body) }),
     reopenReview: (answerId, body) => request(`/answers/${encodeURIComponent(answerId)}/reopen-review`, { method: 'POST', body: JSON.stringify(body) }),

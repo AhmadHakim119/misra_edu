@@ -3,12 +3,15 @@
   'use strict';
   const routeScope=MisraWorkspace.page;
   const $=id=>document.getElementById(id),esc=MisraUI.escapeHTML;
-  let exam='',course='',generation=0,catalog=null,failure='',feedback='',loaded=false;
+  let exam='',course='',generation=0,catalog=null,failure='',selectionError='',feedback='',loaded=false;
   const host=document.createElement('section');host.id='assessment-chapters';host.className='assessment-chapters';
-  $('guide-sources-stage').insertBefore(host,$('teaching-tools'));
+  $('assessment-source-catalog').append(host);
   const preferred=m=>m.catalogs.find(c=>c.version.status==='approved')||m.catalogs[0];
   const libraryUrl=(material,version)=>'course-library.html?'+new URLSearchParams({course_id:course,exam_id:exam,...(material?{material_id:material,version_id:version}:{})});
-  function selected(){try{return MisraAssessmentSources.selection();}catch(e){failure=e.message;return null;}}
+  function selected(){
+    selectionError='';
+    try{return MisraAssessmentSources.selection();}catch(e){selectionError=e.message;return null;}
+  }
   function pickable(c,ch){
     return ch.selectable || c.version.status==='draft' && ['ready','needs_transcription'].includes(c.version.ingestion_status) && ch.page_indices.length>0 && (c.boundaries_reviewed||ch.whole_document);
   }
@@ -16,7 +19,7 @@
     const bound=selection?.bindings.find(b=>b.version_id===c.version.id),set=new Set(bound?.page_indices||[]),count=ch.page_indices.filter(n=>set.has(n)).length;
     const ready=pickable(c,ch),pending=!ch.approved;
     const state=pending?count?'Included in guide approval':'Not yet approved':!ch.selectable?'Check chapter boundaries':'Source pages approved';
-    return `<div class="chapter-option"><label class="chapter-choice"><input type="checkbox" data-chapter-key="${esc(ch.key)}" ${count===ch.page_indices.length&&count?'checked':''} ${!ready||!selection?.ready||MisraAssessmentSources.isBusy()?'disabled':''} ${count&&count!==ch.page_indices.length?'data-partial="true"':''}><span><strong>${esc(ch.title)}</strong>${filename?`<small class="chapter-filename">${esc(filename)}</small>`:''}<small>${c.chapter_file?`Full PDF · ${c.version.page_count} pages`:`PDF pages ${ch.start_page}–${ch.end_page}`} · <span data-i18n>${state}</span></small>${!ready?'<small>Finish reading and check the chapter range in the course library.</small>':''}</span></label>${pending||!ch.selectable?`<a class="chapter-review-link" href="${esc(libraryUrl(m.id,c.version.id))}">Preview source pages</a>`:''}</div>`;
+    return `<div class="chapter-option"><label class="chapter-choice"><input type="checkbox" data-chapter-key="${esc(ch.key)}" ${count===ch.page_indices.length&&count?'checked':''} ${!ready||!selection?.ready||MisraAssessmentSources.isBusy()?'disabled':''} ${count&&count!==ch.page_indices.length?'data-partial="true"':''}><span><strong dir="auto">${esc(ch.title)}</strong>${filename&&filename!==ch.title?`<small class="chapter-filename" dir="auto">${esc(filename)}</small>`:''}<small>${c.chapter_file?`Full PDF · ${c.version.page_count} pages`:`PDF pages ${ch.start_page}–${ch.end_page}`} · <span data-i18n>${state}</span></small>${!ready?'<small>Check the chapter boundaries in the course library.</small>':''}</span></label><a class="chapter-review-link" href="${esc(libraryUrl(m.id,c.version.id))}">Preview source pages</a></div>`;
   }
   function groups(selection){
     const files=catalog.items.filter(m=>m.scope!=='assessment'&&preferred(m)?.chapter_file).sort((a,b)=>preferred(a).chapter_number-preferred(b).chapter_number||a.title.localeCompare(b.title,undefined,{numeric:true}));
@@ -36,23 +39,33 @@
   }
   function render(){
     if(!exam)return;
+    const focused=host.contains(document.activeElement)?document.activeElement.dataset.chapterKey:null;
     const selection=selected(),state=summary(selection),changed=MisraAssessmentSources.hasUnsaved(),busy=MisraAssessmentSources.isBusy();
-    const status=feedback||(changed?'Unsaved chapter selection':!state.count?'Select the chapters covered by this assessment, then continue to the marking guide.':state.pending?'Selected source pages will be approved together with the marking guide.':'Your saved chapter selection is shown above.');
-    host.innerHTML=`<header class="workflow-heading"><div><h3>Chapters covered by this assessment</h3><p data-i18n>Tick the chapters covered by this quiz. Each chapter PDF includes its entire file.</p></div><a class="button" href="${esc(libraryUrl())}">Open course library</a></header>${failure?`<p role="alert">${esc(failure)}</p>`:''}${!loaded?'<p role="status">Loading the saved course library…</p>':!catalog?.items.length?'<p>No course material saved yet. Add the book once in the course library.</p>':`<p class="chapter-review-hint" data-i18n>Tick the chapters to include. Your final guide approval also approves their selected source pages.</p>${groups(selection)}`}<div class="material-actions"><button type="button" id="chapter-save-selection" ${!selection?.ready||!changed||busy||failure?'disabled':''}>${busy?'Saving…':'Save chapter selection'}</button><button type="button" id="chapter-refresh-selection" ${busy?'disabled':''}>Refresh saved library</button><button type="button" class="primary" data-guide-step="questions">Continue to marking guide</button></div><p id="chapter-selection-status" role="status">${esc(status)}</p>`;
+    const status=feedback||(changed?'Unsaved source selection':state.pending?'Selected pages are pending whole-guide approval.':'');
+    const error=failure||selectionError;
+    host.innerHTML=`<header class="chapter-toolbar"><div><h3 data-i18n>Chapters covered by this assessment</h3><p data-i18n>Select the material students should be marked against.</p></div><a class="button" href="${esc(libraryUrl())}">Open course library</a></header>
+      ${error?`<p role="alert" class="form-error">${esc(error)}</p>`:''}
+      ${!loaded?'<p role="status">Loading the saved course library…</p>':catalog?.items.length?groups(selection):!failure?'<p data-i18n>Add a book, chapters or notes in the course library to select references here.</p>':''}
+      <footer class="chapter-footer"><div><span data-i18n>Selected sources</span> <strong>${selection?.bindings.length??0}</strong><p id="chapter-selection-status" role="status">${esc(status)}</p></div><div class="inline-actions">
+      <button type="button" id="chapter-refresh-selection" ${busy?'disabled':''}>Refresh saved library</button>
+      <button type="button" id="chapter-save-selection" ${!selection?.ready||!changed||busy||selectionError?'disabled':''}>${busy?'Saving…':'Save chapter selection'}</button>
+      <button type="button" class="primary" data-guide-step="questions">Continue to marking guide</button></div></footer>`;
     host.querySelectorAll('[data-partial]').forEach(input=>input.indeterminate=true);
     host.querySelectorAll('[data-chapter-key]').forEach(input=>input.addEventListener('change',()=>toggle(input)));
     $('chapter-save-selection').addEventListener('click',save);
     $('chapter-refresh-selection').addEventListener('click',()=>load());
+    if(focused)[...host.querySelectorAll('[data-chapter-key]')].find(input=>input.dataset.chapterKey===focused)?.focus({preventScroll:true});
     window.MisraLocale?.apply();
   }
   async function save(){
     if(MisraAssessmentSources.isBusy())return;
     if(!MisraAssessmentSources.hasUnsaved()){feedback='No changes to save. Select a chapter first.';render();return;}
-    const selection=selected();if(!selection?.ready||failure)return;
+    const selection=selected();if(!selection?.ready)return;
     const state=summary(selection),current=exam;
     const saving=MisraAssessmentSources.saveDraft({allowPendingSources:true});feedback='Saving chapter selection…';render();
     const saved=await saving;if(current!==exam)return;
     feedback=!saved?'Selection could not be saved. Your choices remain here; check the source error below.':!selection.bindings.length?'Chapter selection cleared and saved as a draft. Publish the guide to apply this change.':`${state.count} chapter${state.count===1?'':'s'} saved as a draft. Approve it with the whole marking guide.`;
+    if(!saved)$('assessment-sources-host').closest('details').open=true;
     render();if(saved)window.dispatchEvent(new CustomEvent('misra:ledger-foundations-changed'));
   }
   function toggle(input){
@@ -73,6 +86,7 @@
   }
   routeScope.listen(window,'misra:assessment-loaded',e=>{exam=e.detail.examId;course=e.detail.courseId;catalog=null;loaded=false;feedback='';load();});
   routeScope.listen(window,'misra:assessment-sources-loaded',render);
+  routeScope.listen(window,'misra:assessment-sources-changed',()=>{feedback='';render();});
   routeScope.listen(window,'misra:material-approved',()=>load());
   routeScope.listen(window,'misra:assessment-extra-uploaded',async()=>{if(!MisraAssessmentSources.hasUnsaved())await MisraAssessmentSources.reload();await load();});
 })();

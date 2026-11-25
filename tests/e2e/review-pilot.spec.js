@@ -1,5 +1,7 @@
 const {test,expect}=require('@playwright/test');
+const {staticWorkspace}=require('./fixtures/static-workspace');
 async function auth(page){
+  await staticWorkspace(page);
   await page.route('https://fonts.googleapis.com/**',r=>r.abort());
   await page.route('**/api/**',async route=>{
     const p=new URL(route.request().url()).pathname;let body=[];
@@ -91,8 +93,14 @@ async function pilotFixture(page,{failPaper=false}={}){
   const paper={paper_id:'p',label:'Synthetic paper',exam_version:'F23',exam_id:'e',answer_count:1,total:{point_proposal:null,lower:1,upper:4,max_score:4},review};
   const answer={answer_id:'a',question_id:'q',number:'1',score:null,max_score:4,needs_review:true,question_text:'Calculate speed.',
     student_text:'v = -12.8 or 12.88 (unclear)',reasoning:'A digit is obscured; no point grade established.',
-    review_explanation:{status:'needs_review',items:[{title:'Lost credit rests on uncertain evidence',reason:'The final digit is obscured.',action:'Compare the original final-answer crop.',criterion_id:'speed',source:'rule_check'}]},
-    rubric_snapshot:{criteria:[{id:'speed',title:'Speed result',points:4}]},criteria_scores:[],course_evidence:[{title:'Synthetic chapter',page_index:1,text:'v² = u² + 2as.'}],original_policy:{method_credit:'partial'},answer_key:'12.8 m/s'};
+    review_explanation:{status:'needs_review',items:[
+      {code:'uncertain',title:'Lost credit rests on uncertain evidence',reason:'A saved check raised this concern.',action:'Inspect the answer.'},
+      {code:'uncertain',title:'Lost credit rests on uncertain evidence',reason:'The final digit is obscured.',action:'Compare the original final-answer crop.',criterion_id:'speed',source:'rule_check'},
+      {code:'verification',title:'Verification requested review',reason:'The visible minus sign crosses a fold in the paper.',action:'Compare the original final-answer crop.',criterion_id:'speed',source:'verification'},
+    ]},
+    rubric_snapshot:{criteria:[{id:'speed',title:'Speed result',points:4}]},criteria_scores:[],course_evidence:[
+      {title:'Synthetic chapter',page_index:1,text:'v² = u² + 2as.'},{source_id:'synthetic:retained-passage'}
+    ],original_policy:{method_credit:'partial'},answer_key:'12.8 m/s'};
   await page.route('**/api/pilot-studies**',async route=>{
     const path=new URL(route.request().url()).pathname;
     if(path.includes('/pages/'))return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="600" height="800"><rect width="600" height="800" fill="white"/><text x="30" y="100">Synthetic original: v = 12.8</text></svg>'});
@@ -104,15 +112,31 @@ async function pilotFixture(page,{failPaper=false}={}){
 
 test('saved pilot preserves unknown marks, explanation, full page and rubric edit link',async({page},info)=>{
   await pilotFixture(page);await page.goto('/app/pilot.html?study_id=pilot');
-  await expect(page.locator('#pilot-status')).toContainText('1 answer slots');
+  await expect(page.locator('#pilot-status')).toContainText('Answer slots 1');
   await expect(page.locator('#pilot-paper-summary')).toContainText('1–4 / 4');
   await expect(page.locator('#pilot-answer')).toContainText('unresolved');
-  await expect(page.getByText('Lost credit rests on uncertain evidence',{exact:false})).toBeVisible();
+  const concern=page.locator('.pilot-concern');
+  await expect(concern).toHaveCount(1);
+  await expect(concern.locator('summary')).toContainText('Speed result');
+  await expect(concern.locator('summary')).toContainText('Lost credit rests on uncertain evidence');
+  await expect(concern.getByText('The final digit is obscured.')).toBeHidden();
+  await expect(page.getByText('A digit is obscured; no point grade established.')).toBeHidden();
   await expect(page.getByRole('link',{name:'View & edit this rubric'})).toHaveAttribute('href','setup.html?exam_id=e&rubric_question=q');
   await expect(page.locator('#pilot-image')).toBeVisible();
+  for(const theme of ['light','dark']){await page.evaluate(theme=>MisraTheme.set(theme),theme);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'.impeccable/review/saved-pilot-'+theme+'-'+info.project.name+'.png',fullPage:true,animations:'disabled'});}
+  if(info.project.use.isMobile){
+    await page.getByRole('link',{name:'See original page'}).click();
+    await expect(page).toHaveURL(/#pilot-evidence$/);
+    await expect(page.locator('#pilot-evidence')).toBeInViewport();
+  }
+  await concern.locator('summary').focus();
+  await page.keyboard.press('Enter');
+  await expect(concern.getByText('The final digit is obscured.')).toBeVisible();
+  await expect(concern.getByText('Compare the original final-answer crop.')).toHaveCount(1);
+  await expect(concern).not.toContainText('A saved check raised this concern.');
   await page.getByText('Course evidence used for this answer',{exact:true}).click();
-  await expect(page.locator('#pilot-answer-detail')).toContainText('v² = u² + 2as.');
-  for(const theme of ['light','dark']){await page.evaluate(theme=>MisraTheme.set(theme),theme);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'.impeccable/review/pilot-'+theme+'-'+info.project.name+'.png',fullPage:true});}
+  await expect(page.getByText('v² = u² + 2as.',{exact:true})).toBeVisible();
+  await expect(page.getByText('synthetic:retained-passage',{exact:true})).toBeVisible();
 });
 
 test('saved paper failure keeps marks unavailable and provides retry',async({page})=>{

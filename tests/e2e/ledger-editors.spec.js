@@ -1,7 +1,7 @@
 const {staticWorkspace}=require('./fixtures/static-workspace');
 const {answerWorkspaceDialog}=require('./fixtures/workspace-dialog');
 const {test,expect}=require('@playwright/test');
-async function fixture(page,{failSave=false,failApprove=false,holdSave=false,holdQuestion=false,failCreate=false,withSources=false,multipleCriteria=false,expandedProfile=null,automaticPreferences=true,initialDraft=false,failDelete=false,holdDelete=false,questionRows=null,holdKey=false,dropDefinition=false}={}) {
+async function fixture(page,{failSave=false,failApprove=false,holdSave=false,holdQuestion=false,failCreate=false,withSources=false,multipleCriteria=false,expandedProfile=null,automaticPreferences=true,initialDraft=false,failDelete=false,holdDelete=false,questionRows=null,holdKey=false,dropDefinition=false,setupRoute=false,pendingRubric=false}={}) {
   await staticWorkspace(page);
   const writes=[];let releaseSave,releaseQuestion,releaseDelete,releaseKey;
   const saveGate=new Promise(r=>releaseSave=r),questionGate=new Promise(r=>releaseQuestion=r),deleteGate=new Promise(r=>releaseDelete=r),keyGate=new Promise(r=>releaseKey=r);
@@ -9,6 +9,7 @@ async function fixture(page,{failSave=false,failApprove=false,holdSave=false,hol
   let qs=[{id:'q',question_number:'1',question_text:'Calculate work for 82 N acting through 3 m.',max_score:2}],vs=[{id:'r',version_number:1,status:'approved',rubric_json:base}],keys=[],materials=[];
   if(questionRows)qs=questionRows;
   if(initialDraft)vs[0].status='draft';
+  if(pendingRubric)base.scoring_contract='needs_exact_scoring';
   if(multipleCriteria) {
     base.criteria[0].points=1;base.criteria[0].performance_levels[0].points_earned=1;
     base.criteria.push({id:'units',title:'الوحدة الصحيحة — Correct units',description:'State the result in joules.',points:1,scoring_type:'binary',partial_credit_allowed:false,required_evidence:['Joules'],performance_levels:[],common_errors:[],alternative_methods:[]});
@@ -42,7 +43,12 @@ async function fixture(page,{failSave=false,failApprove=false,holdSave=false,hol
       if(holdSave && method==='PUT') await saveGate;
       if(p.endsWith('/approve')) {writes.push({kind:'approve'});if(failApprove) return route.fulfill({status:503,json:{detail:'Synthetic approval outage'}});vs[0].status='approved';body={message:'Approved'};}
       else {writes.push({kind:'save',body:req.postDataJSON()});if(failSave) return route.fulfill({status:422,json:{detail:'Synthetic validation rejection'}});vs[0].rubric_json=req.postDataJSON().rubric;if(dropDefinition)delete vs[0].rubric_json.question_definition;body=vs[0];}
-    } else if(p.endsWith('/suggest-rubric-version')) {writes.push({kind:'suggest',body:req.postDataJSON()});body={id:'ai',version_number:2,status:'draft',rubric_json:base};vs=[body,...vs];}
+    } else if(p.endsWith('/rubric-preview')) {
+      writes.push({kind:'suggest',body:req.postDataJSON()});
+      const proposed={...base,scoring_contract:'exact',criteria:base.criteria.map(c=>({...c,
+        scoring_type:'binary',partial_credit_allowed:false,description:'Shows the force-distance product.'}))};
+      body={question_id:p.split('/')[2],rubric:proposed};
+    }
     else if(p.endsWith('/grading-policy')) {if(method==='PUT') writes.push({kind:'routing',body:req.postDataJSON()});body={mode:'adaptive'};}
     else if(p.includes('/answer-key-versions')) {
       if(method==='GET') {if(holdKey)await keyGate;body=keys;}
@@ -57,9 +63,18 @@ async function fixture(page,{failSave=false,failApprove=false,holdSave=false,hol
     else if(p.endsWith('/effective-material-scope')) body={origin:'none'};
     await route.fulfill({json:body});
   });
-  await page.goto('/app/index.html?exam_id=e');await expect(page.locator('#exam-title')).toHaveText('Synthetic physics pilot');await page.locator('#sources-link').click();
+  await page.goto(`/app/${setupRoute?'setup':'index'}.html?exam_id=e`);
+  await expect(page.locator('#exam-title')).toHaveText('Synthetic physics pilot');
+  if(setupRoute)await expect(page.locator('#guide-outline')).toBeVisible();
+  else await page.locator('#sources-link').click();
   return {writes,releaseSave,releaseQuestion,releaseDelete,releaseKey};
 }
+async function questionDeleteAction(page) {
+  const action=page.locator('[data-author-delete]');
+  if(!await action.isVisible())await page.locator('[data-author-section=options]>summary').click();
+  return action;
+}
+
 async function edit(page) {await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();await expect(page.locator('#ac-0-title')).toHaveValue('Work calculation');await page.getByRole('button',{name:'Create editable draft',exact:true}).click();await expect(page.getByRole('button',{name:'Save draft',exact:true})).toBeVisible();}
 
 test('saved question definition correction stays a draft and preserves the original definition',async({page},info)=>{
@@ -107,7 +122,8 @@ test('guide identifiers and complete mixed-language wording have separate readab
       const row=page.locator('.guide-question-row').nth(index);
       await expect(row.locator('h4')).toHaveText(q.question_text);
       const bounds=await row.evaluate(el=>{const number=el.querySelector('.guide-question-number'),title=el.querySelector('h4');return{number:number.getBoundingClientRect().toJSON(),title:title.getBoundingClientRect().toJSON(),clipped:title.scrollHeight>title.clientHeight};});
-      expect(bounds.number.bottom).toBeLessThanOrEqual(bounds.title.top);
+      expect(bounds.number.bottom<=bounds.title.top||
+        bounds.number.right<=bounds.title.left||bounds.title.right<=bounds.number.left).toBeTruthy();
       expect(bounds.clipped).toBeFalsy();
       await expect(row.getByRole('button',{name:`Edit criteria for question ${q.question_number}`,exact:true})).toBeEnabled();
     }
@@ -158,7 +174,7 @@ test('existing question total can be corrected in its draft without deletion or 
   await page.locator('#rubric-workspace').screenshot({path:`.impeccable/review/draft-total-before-${info.project.name}.png`});
   await expect(page.locator('#author-max')).toHaveValue('2');
   await page.locator('#author-max').fill('4');
-  await expect(page.locator('.author-question-marks')).toHaveText('4 marks');
+  await expect(page.locator('#author-total')).toHaveText('2 / 4 marks assigned');
   await page.getByRole('button',{name:'Save draft',exact:true}).click();
   await expect(page.locator('#author-error')).toContainText('Criteria total 2, but this question is worth 4.');
   expect(state.writes.filter(w=>w.kind==='save')).toHaveLength(0);
@@ -189,9 +205,9 @@ test('failed draft total save retains the corrected value and pending saves lock
 test('delete question cancels without losing edits, then removes only the chosen draft',async({page})=>{
   const state=await fixture(page,{withSources:true});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
   await page.locator('#ac-0-title').fill('Unsaved selected question edit');
-  await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'cancel');
+  await (await questionDeleteAction(page)).click();await answerWorkspaceDialog(page,'cancel');
   await expect(page.locator('#ac-0-title')).toHaveValue('Unsaved selected question edit');expect(state.writes).toHaveLength(0);
-  await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
+  await (await questionDeleteAction(page)).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#guide-outline')).toBeVisible();await expect(page.locator('[data-guide-question="q"]')).toHaveCount(0);
   await expect(page.locator('#guide-outline [data-guide-question="q-other"]')).toBeVisible();await expect(page.locator('#guide-total')).toContainText('1 questions · 2 marks');
   expect(state.writes).toEqual([{kind:'delete',id:'q'}]);await expect(page.locator('#author-new-question')).toBeFocused();
@@ -200,21 +216,21 @@ test('delete question cancels without losing edits, then removes only the chosen
 
 test('deleting the last draft question leaves an actionable empty guide',async({page})=>{
   const state=await fixture(page,{initialDraft:true});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
-  await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
+  await (await questionDeleteAction(page)).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#guide-outline')).toContainText('Add an exam question');await expect(page.locator('#guide-total')).toContainText('0 questions · 0 marks');
   expect(state.writes).toEqual([{kind:'delete',id:'q'}]);await expect(page.locator('#author-new-question')).toBeEnabled();
 });
 
 test('rejected deletion keeps the draft, unsaved criterion and original key text',async({page})=>{
   const state=await fixture(page,{withSources:true,failDelete:true});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
-  await page.locator('#ac-0-title').fill('Keep this unsaved criterion');await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
+  await page.locator('#ac-0-title').fill('Keep this unsaved criterion');await (await questionDeleteAction(page)).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#author-error')).toContainText('Papers already exist');await expect(page.locator('#ac-0-title')).toHaveValue('Keep this unsaved criterion');
   await expect(page.locator('#native-authoring')).toBeVisible();await expect(page.locator('#author-state')).toContainText('Unsaved');expect(state.writes).toEqual([{kind:'delete',id:'q'}]);
 });
 
 test('unconfirmed question deletion requires a reload before another write',async({page})=>{
   const state=await fixture(page,{initialDraft:true,failDelete:'uncertain'});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
-  await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
+  await (await questionDeleteAction(page)).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('#author-error')).toContainText('Synthetic deletion interruption');await expect(page.locator('#author-state')).toContainText('Change not confirmed');
   await expect(page.locator('[data-author-delete]')).toBeDisabled();await expect(page.locator('#author-new-question')).toBeDisabled();await expect(page.locator('#author-reload')).toBeEnabled();
   expect(state.writes).toEqual([{kind:'delete',id:'q'}]);await page.locator('#author-reload').click();await expect(page.locator('[data-author-delete]')).toBeEnabled();
@@ -222,19 +238,19 @@ test('unconfirmed question deletion requires a reload before another write',asyn
 
 test('discard question removes an unsaved addition without an API write',async({page})=>{
   const state=await fixture(page);await edit(page);const before=state.writes.length;await page.locator('#author-new-question').click();await page.locator('#author-question-text').fill('Accidental unsaved question');
-  await page.getByRole('button',{name:'Discard question',exact:true}).click();await answerWorkspaceDialog(page,'cancel');await expect(page.locator('#author-question-text')).toHaveValue('Accidental unsaved question');
-  await page.getByRole('button',{name:'Discard question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');await expect(page.locator('#guide-outline')).toBeVisible();
+  await (await questionDeleteAction(page)).click();await answerWorkspaceDialog(page,'cancel');await expect(page.locator('#author-question-text')).toHaveValue('Accidental unsaved question');
+  await (await questionDeleteAction(page)).click();await answerWorkspaceDialog(page,'confirm');await expect(page.locator('#guide-outline')).toBeVisible();
   expect(state.writes.length).toBe(before);await expect(page.locator('#guide-total')).toContainText('1 questions · 2 marks');
 });
 
 test('approved question history disables deletion and explains why',async({page})=>{
-  await fixture(page);await edit(page);await expect(page.getByRole('button',{name:'Delete question',exact:true})).toBeDisabled();
+  await fixture(page);await edit(page);await expect(await questionDeleteAction(page)).toBeDisabled();
   await expect(page.locator('#question-delete-help')).toHaveText('Only unused draft questions can be deleted.');
 });
 
 test('pending question deletion locks duplicate actions and navigation',async({page})=>{
   const state=await fixture(page,{initialDraft:true,holdDelete:true});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();
-  await page.getByRole('button',{name:'Delete question',exact:true}).click();await answerWorkspaceDialog(page,'confirm');
+  await (await questionDeleteAction(page)).click();await answerWorkspaceDialog(page,'confirm');
   await expect(page.locator('[data-author-delete]')).toBeDisabled();await expect(page.locator('#author-new-question')).toBeDisabled();
   await page.locator('#author-back').click();await expect(page.locator('#native-authoring')).toBeVisible();expect(state.writes.filter(w=>w.kind==='delete')).toHaveLength(1);
   state.releaseDelete();await expect(page.locator('#guide-outline')).toBeVisible();
@@ -276,6 +292,7 @@ test('opting out keeps standard rules in newly created drafts',async({page})=>{
 
 test('optional survey reminder does not block rubric work and stays dismissed for the session',async({page},info)=>{
   const state=await fixture(page);await edit(page);
+  await page.locator('[data-author-section=options]>summary').click();
   await expect(page.locator('.survey-reminder')).toContainText('Personalize your marking rules · Optional');
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:'.impeccable/review/rubric-survey-optional-'+info.project.name+'.png',fullPage:true,animations:'disabled'});
   await page.getByRole('button',{name:'Not now',exact:true}).click();await expect(page.locator('.survey-reminder')).toHaveCount(0);
@@ -286,6 +303,7 @@ test('optional survey reminder does not block rubric work and stays dismissed fo
 
 test('taking the survey saves an edited rubric first and stays on failed save',async({page})=>{
   const state=await fixture(page,{failSave:true});await edit(page);await page.locator('#ac-0-title').fill('Unsaved synthetic criterion');
+  await page.locator('[data-author-section=options]>summary').click();
   await page.getByRole('button',{name:'Take survey',exact:true}).click();
   await expect(page.locator('#author-error')).toContainText('Synthetic validation rejection');await expect(page.locator('#ac-0-title')).toHaveValue('Unsaved synthetic criterion');
   await expect(page).not.toHaveURL(/marking-survey.html/);expect(state.writes.some(w=>w.kind==='save')).toBeTruthy();
@@ -293,14 +311,16 @@ test('taking the survey saves an edited rubric first and stays on failed save',a
 
 test('taking the survey saves valid edits and returns to the same assessment',async({page})=>{
   const state=await fixture(page);await edit(page);await page.locator('#ac-0-title').fill('Saved before survey');
-  await page.getByRole('button',{name:'Take survey',exact:true}).click();await expect(page).toHaveURL(/marking-survey.html\?return_exam_id=e/);
+  await page.locator('[data-author-section=options]>summary').click();
+  await page.getByRole('button',{name:'Take survey',exact:true}).click();await expect(page).toHaveURL(/marking-survey\.html$/);
   expect(state.writes.filter(w=>w.kind==='save').at(-1).body.rubric.criteria[0].title).toBe('Saved before survey');
   await expect(page.locator('#survey-continue')).toHaveAttribute('href','setup.html?exam_id=e');
 });
 
 test('a new untouched question can open the optional survey without a blank-question validation error',async({page})=>{
   const state=await fixture(page);await edit(page);await page.locator('#author-new-question').click();
-  await page.getByRole('button',{name:'Take survey',exact:true}).click();await expect(page).toHaveURL(/marking-survey.html\?return_exam_id=e/);
+  await page.locator('[data-author-section=options]>summary').click();
+  await page.getByRole('button',{name:'Take survey',exact:true}).click();await expect(page).toHaveURL(/marking-survey\.html$/);
   expect(state.writes.filter(w=>w.kind==='question')).toHaveLength(0);
 });
 
@@ -355,19 +375,16 @@ test('failed return to whole guide retains the focused question and its edits',a
   expect(state.writes.some(w=>w.kind==='approve')).toBeFalsy();
 });
 
-test('collapsed criteria retain credit rules and add/remove restores keyboard focus',async({page})=>{
+test('criterion rows retain rules and add/remove restores keyboard focus',async({page})=>{
   const state=await fixture(page,{multipleCriteria:true});await edit(page);
-  const second=page.locator('[data-criterion-panel="units"]');
-  await expect(second).not.toHaveAttribute('open','');
-  await second.locator(':scope > summary').focus();await page.keyboard.press('Enter');
-  await expect(second).toHaveAttribute('open','');
+  await expect(page.getByRole('region',{name:'Scoring criteria'})).toBeVisible();
+  await expect(page.locator('#ac-1-scoring')).toHaveValue('binary');
   await page.locator('#ac-1-description').fill('Award this mark for joules (J).');
-  await second.locator(':scope > summary').click();
   await page.getByRole('button',{name:'Add criterion',exact:true}).click();
   await expect(page.locator('#ac-2-title')).toBeFocused();
   await page.locator('#ac-2-title').fill('Temporary criterion');
   await page.locator('[data-author-remove="2"]').click();
-  await expect(second.locator(':scope > summary')).toBeFocused();
+  await expect(page.locator('#ac-1-title')).toBeFocused();
   await page.getByRole('button',{name:'Save draft',exact:true}).click();
   await expect(page.locator('#author-state')).toContainText('Draft saved');
   const saved=state.writes.find(w=>w.kind==='save').body.rubric;
@@ -419,11 +436,242 @@ test('native authoring is responsive in both themes',async({page},info)=>{
 test('pending question read cannot overwrite the course-library task',async({page})=>{
   const state=await fixture(page,{holdQuestion:true});await page.locator('#author-rubrics').click();await page.locator('#guide-sources-tab').click();await page.locator('#manage-course-library').click();await expect(page.locator('#native-library')).toBeVisible();state.releaseQuestion();await expect(page.locator('#native-authoring')).toBeHidden();await page.locator('.material-add>summary').click();await page.locator('#material-title').fill('Retained library draft');await page.locator('#manage-course-library').click();await expect(page.locator('#material-title')).toHaveValue('Retained library draft');await expect(page.locator('#library-material-host')).not.toContainText('Sources for this question');
 });
-test('plain-language detailed credit controls preserve and validate scoring levels',async({page})=>{
-  const state=await fixture(page);await edit(page);await page.locator('[data-author-criterion] details>summary').click();await page.locator('#al-0-0-points').fill('3');await page.getByRole('button',{name:'Save draft',exact:true}).click();await expect(page.locator('#author-error')).toContainText('Credit levels');expect(state.writes.some(w=>w.kind==='save')).toBeFalsy();await page.locator('#al-0-0-points').fill('2');await page.getByRole('button',{name:'Add common mistake',exact:true}).click();await page.locator('#ae-0-1-description').fill('Missing units');await page.locator('#ae-0-1-guidance').fill('Follow the units policy');await page.getByRole('button',{name:'Save draft',exact:true}).click();await expect(page.locator('#author-state')).toContainText('Draft saved');expect(state.writes.find(w=>w.kind==='save').body.rubric.criteria[0].common_errors).toHaveLength(2);
+test('defined credit levels require exact unique marks and observable work',async({page},info)=>{
+  const state=await fixture(page);await edit(page);
+  await expect(page.locator('#ac-0-scoring')).toHaveValue('binary');
+  await page.locator('#ac-0-scoring').selectOption('scaled');
+  const levels=page.locator('.rubric-levels');
+  await expect(levels).toHaveAttribute('open','');
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();
+  await expect(page.locator('#author-error')).toContainText('Credit levels');
+  expect(state.writes.filter(w=>w.kind==='save')).toHaveLength(0);
+  for(const [i,points,description] of [[0,'2','Correct relationship, substitution and units.'],[1,'0.75','Correct relationship with missing substitution.'],[2,'0','No valid relationship is visible.']]){
+    if(i>0)await levels.getByRole('button',{name:'Add credit level'}).click();
+    await page.locator('#al-0-'+i+'-points').fill(points);
+    await page.locator('#al-0-'+i+'-description').fill(description);
+  }
+  await page.locator('#al-0-2-points').fill('0.75');
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();
+  await expect(page.locator('#author-error')).toContainText('distinct exact mark');
+  expect(state.writes.filter(w=>w.kind==='save')).toHaveLength(0);
+  await page.locator('#al-0-2-points').fill('0');
+  await page.locator('#ac-0-points').fill('1.99');
+  await expect(page.locator('#author-total')).toHaveText('1.99 / 2 marks assigned');
+  await page.locator('#guide-review-tab').click();
+  await expect(page.locator('#guide-review')).toBeHidden();
+  await expect(page.locator('#author-error')).toContainText('Criteria total 1.99');
+  await page.locator('#ac-0-points').fill('2');
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();
+  await expect(page.locator('#author-state')).toContainText('Draft saved');
+  const saved=state.writes.find(w=>w.kind==='save').body.rubric;
+  expect(saved.scoring_contract).toBe('exact');
+  expect(saved.criteria[0].performance_levels.map(l=>l.points_earned)).toEqual([2,.75,0]);
+  expect(saved.criteria[0].performance_levels.map(l=>l.label)).toEqual(['Correct','0.75 marks','0 marks']);
+  expect(saved.criteria[0].common_errors).toHaveLength(1);
+  await page.evaluate(()=>window.scrollTo(0,0));
+  for(const theme of ['light','dark']){
+    await page.evaluate(value=>MisraTheme.set(value),theme);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+    await page.screenshot({path:`.impeccable/review/exact-rubric-${theme}-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  }
 });
-test('AI proposal is a draft, never automatic approval or policy relaxation',async({page})=>{
-  const state=await fixture(page);await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();await expect(page.locator('#ac-0-title')).toBeVisible();await page.getByText('AI rubric suggestion',{exact:true}).click();await page.locator('#author-ai-method').fill('Use W = Fd');await page.getByRole('button',{name:'Generate AI draft',exact:true}).click();await expect(page.locator('#author-state')).toContainText('AI draft created');expect(state.writes.find(w=>w.kind==='suggest').body.policy.units_policy).toBe('required');expect(state.writes.some(w=>w.kind==='approve')).toBeFalsy();
+test('AI preview preserves edits and Tab accepts only a visible field suggestion',async({page},info)=>{
+  const state=await fixture(page);await edit(page);
+  const description=page.locator('#ac-0-description');
+  await description.fill('');
+  await page.getByText('Give AI an instruction',{exact:true}).click();
+  await page.locator('#author-ai-method').fill('Use W = Fd');
+  await page.getByRole('button',{name:'Generate AI draft',exact:true}).click();
+  await expect(page.locator('#author-assist-status')).toContainText('Suggestions ready');
+  const apply=page.getByRole('button',{name:'Use all suggested criteria',exact:true});
+  await expect(apply).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(apply).not.toBeFocused();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(description).toHaveValue('');
+  await expect(page.locator('[data-hint-for="ac-0-description"]')).toContainText('Shows the force-distance product.');
+  await page.getByText('Give AI an instruction',{exact:true}).click();
+  for(const theme of ['light','dark']){
+    await page.evaluate(theme=>MisraTheme.set(theme),theme);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+    await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));
+    await page.screenshot({path:`.impeccable/review/rubric-ai-${theme}-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  }
+  await description.focus();await page.keyboard.press('Tab');
+  await expect(description).toHaveValue('Shows the force-distance product.');
+  await expect(description).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(description).not.toBeFocused();
+  expect(state.writes.find(w=>w.kind==='suggest').body).toMatchObject({policy:{units_policy:'required'}});
+  expect(state.writes.some(w=>['save','approve'].includes(w.kind))).toBeFalsy();
+  await page.locator('#author-question-text').fill('Calculate the work and show its direction.');
+  await expect(page.locator('#author-assist-status')).toContainText('drafting context changed');
+  await expect(page.getByRole('button',{name:'Use all suggested criteria'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Generate AI draft',exact:true}).click();
+  await page.getByRole('button',{name:'Use all suggested criteria'}).click();
+  await answerWorkspaceDialog(page,'confirm');
+  await expect(page.locator('#author-total')).toHaveText('2 / 2 marks assigned');
+  await page.getByRole('button',{name:'Save draft',exact:true}).click();
+  await expect(page.locator('#author-state')).toContainText('Draft saved');
+  expect(state.writes.find(w=>w.kind==='save').body.rubric.scoring_contract).toBe('exact');
+  expect(state.writes.some(w=>w.kind==='approve')).toBeFalsy();
+});
+
+test('generate missing rubrics keeps successful drafts and retries only unfinished questions',async({page})=>{
+  const state=await fixture(page);
+  const pending=new Set(['q','q-other']), requests=[];
+  const correct={scoring_contract:'exact',criteria:[{id:'method',title:'Method',description:'Shows a valid method.',points:2,scoring_type:'binary'}],policy:{}};
+  const rows=()=>['q','q-other'].map((id,i)=>({question_id:id,question_number:String(i+1),question_text:'Synthetic question '+(i+1),
+    max_score:2,rubric_status:'draft',rubric:pending.has(id)?{...correct,scoring_contract:'needs_exact_scoring'}:correct,
+    needs_rubric_draft:pending.has(id),errors:[],warnings:[],answer_key:{mode:'reference',reference_text:'Synthetic key'},sources:null}));
+  await page.route('**/api/exams/e/marking-guide',route=>route.fulfill({json:{exam_id:'e',review_token:'a'.repeat(64),
+    can_approve:!pending.size,pending_count:2,total_marks:4,errors:[],warnings:[],questions:rows()}}));
+  await page.route('**/api/questions/*/draft-missing-rubric',route=>{
+    const id=new URL(route.request().url()).pathname.split('/')[3];
+    expect(route.request().postData()).toBeNull();
+    requests.push(id);
+    if(id==='q-other'&&requests.length===2)return route.fulfill({status:502,json:{detail:'Synthetic drafting interruption'}});
+    pending.delete(id);
+    return route.fulfill({json:{rubric_version:{question_id:id,status:'draft',rubric_json:correct}}});
+  });
+  await page.locator('#guide-review-tab').click();
+  const review=page.locator('#guide-review');
+  await expect(review).not.toContainText('Resolve before approval');
+  await review.getByRole('button',{name:'Generate missing rubrics'}).click();
+  await expect(review).toContainText('Still to check: 2');
+  await expect(review.locator('[data-guide-draft-failures]')).toContainText('Synthetic drafting interruption');
+  await expect(review.getByRole('button',{name:'Open question 2',exact:true})).toBeVisible();
+  await expect(page.locator('#guide-approve')).toBeDisabled();
+  await review.getByRole('button',{name:'Generate missing rubrics'}).click();
+  await expect(review.getByRole('button',{name:'Generate missing rubrics'})).toHaveCount(0);
+  await page.locator('#guide-confirm').check();
+  await expect(page.locator('#guide-approve')).toBeEnabled();
+  expect(requests).toEqual(['q','q-other','q-other']);
+  expect(state.writes.some(w=>w.kind==='approve')).toBeFalsy();
+});
+
+test('the rubric assistant uses the current key and drops previews when key history changes',async({page})=>{
+  const state=await fixture(page,{initialDraft:true});
+  const key={version_number:2,mode:'reference',reference_text:'Current worked answer.',
+    acceptable_answers:[],document_refs:[],status:'approved',id:'key-current',drafting_revision:'a'.repeat(64)};
+  await page.route('**/api/questions/q/answer-key-versions',route=>route.fulfill({json:[
+    key,{...key,id:'key-old',version_number:1,status:'superseded',reference_text:'Older answer.'},
+  ]}));
+  await page.locator('#author-rubrics').click();
+  await page.locator('#guide-outline [data-guide-question="q"]').click();
+  await page.locator('#author-key-section>summary').click();
+  await page.locator('.key-history>summary').click();
+  await page.getByRole('button',{name:'Version 1 · superseded',exact:true}).click();
+  await expect(page.locator('#key-reference')).toHaveValue('Older answer.');
+  await page.getByRole('button',{name:'Generate AI draft',exact:true}).click();
+  await expect(page.locator('#author-assist-status')).toContainText('Open the current answer-key version');
+  expect(state.writes).toHaveLength(0);
+  await page.locator('.key-history>summary').click();
+  await page.getByRole('button',{name:'Version 2 · approved',exact:true}).click();
+  await page.getByRole('button',{name:'Generate AI draft',exact:true}).click();
+  await expect(page.getByRole('region',{name:'AI proposal'})).toBeVisible();
+  await page.locator('.key-history>summary').click();
+  await page.getByRole('button',{name:'Version 1 · superseded',exact:true}).click();
+  await expect(page.getByRole('region',{name:'AI proposal'})).toHaveCount(0);
+  expect(state.writes.map(write=>write.kind)).toEqual(['suggest']);
+  expect(state.writes[0].body.preview_answer_key).toEqual({revision:'a'.repeat(64)});
+});
+
+test('a key changed in another tab can reload without losing rubric edits',async({page})=>{
+  await fixture(page,{initialDraft:true});
+  let revision='a'.repeat(64);
+  let previews=0;
+  await page.route('**/api/questions/q/answer-key-versions',route=>route.fulfill({json:[
+    {id:'key-draft',version_number:1,mode:'reference',reference_text:revision.startsWith('a')?'Old answer.':'Updated answer.',
+      acceptable_answers:[],document_refs:[],status:'draft',drafting_revision:revision},
+  ]}));
+  await page.route('**/api/questions/q/rubric-preview',route=>{
+    previews++;
+    if(route.request().postDataJSON().preview_answer_key.revision!==revision){
+      return route.fulfill({status:409,json:{detail:{code:'answer_key_changed',message:'The saved key changed. Reload the answer key before drafting again.'}}});
+    }
+    return route.fulfill({json:{question_id:'q',rubric:{scoring_contract:'exact',max_score:2,criteria:[
+      {id:'work',title:'Updated method',description:'Checks the current worked answer.',points:2,scoring_type:'binary',performance_levels:[]},
+    ]}}});
+  });
+  await page.locator('#author-rubrics').click();
+  await page.locator('#guide-outline [data-guide-question="q"]').click();
+  await page.locator('#ac-0-description').fill('Keep this unsaved definition.');
+  revision='b'.repeat(64);
+  await page.getByRole('button',{name:'Generate AI draft',exact:true}).click();
+  await expect(page.locator('#author-assist-status')).toContainText('The saved key changed');
+  await expect(page.getByRole('region',{name:'AI proposal'})).toHaveCount(0);
+  await page.getByRole('button',{name:'Reload answer key',exact:true}).click();
+  await expect(page.locator('#key-reference')).toHaveValue('Updated answer.');
+  await expect(page.locator('#ac-0-description')).toHaveValue('Keep this unsaved definition.');
+  await page.getByRole('button',{name:'Generate AI draft',exact:true}).click();
+  await expect(page.getByRole('region',{name:'AI proposal'})).toContainText('Updated method');
+  await page.route('**/api/questions/q/answer-key-versions/key-draft',route=>{
+    expect(route.request().postDataJSON()).toMatchObject({
+      expected_drafting_revision:'b'.repeat(64),reference_text:'Keep this unsaved answer key.',
+    });
+    return route.fulfill({status:409,json:{detail:{code:'answer_key_changed'}}});
+  });
+  await page.locator('#key-reference').fill('Keep this unsaved answer key.');
+  await page.getByRole('button',{name:'Generate AI draft',exact:true}).click();
+  await expect(page.locator('#author-assist-status')).toContainText('Keep a copy of your edits');
+  await expect(page.locator('#key-reference')).toHaveValue('Keep this unsaved answer key.');
+  await expect(page.getByRole('region',{name:'AI proposal'})).toHaveCount(0);
+  expect(previews).toBe(2);
+});
+
+test('a failed draft retries safely and Tab fills an imported question without saving',async({page},info)=>{
+  const state=await fixture(page,{initialDraft:true,setupRoute:true,pendingRubric:true});
+  let requests=0;
+  await page.route('**/api/questions/q/rubric-preview',route=>{
+    if(++requests===2)return route.fulfill({status:502,json:{detail:'The draft assigned 1 of 2 marks.'}});
+    return route.fulfill({json:{question_id:'q',rubric:{scoring_contract:'exact',max_score:2,criteria:[
+      {id:'new-method',title:'Calculation',description:'Shows W = 82 × 3.',points:1,scoring_type:'binary',performance_levels:[]},
+      {id:'new-result',title:'Result and units',description:'States 246 J.',points:1,scoring_type:'binary',performance_levels:[]},
+    ]}}});
+  });
+  await page.locator('#guide-outline [data-guide-question="q"]').click();
+  await page.getByRole('button',{name:'Generate AI draft',exact:true}).click();
+  const accept=page.getByRole('button',{name:'Use all suggested criteria',exact:true});
+  await expect(accept).toBeFocused();
+  await page.getByRole('button',{name:'Generate again',exact:true}).click();
+  await expect(page.locator('#author-assist-status')).toContainText('The draft assigned 1 of 2 marks.');
+  await expect(accept).toHaveCount(0);
+  await expect(page.locator('#author-question-text')).toHaveValue('Calculate work for 82 N acting through 3 m.');
+  await page.getByRole('button',{name:'Retry AI draft',exact:true}).click();
+  await expect(accept).toBeFocused();
+  await expect(page.locator('#builder-tab-hint')).toHaveText('Tab to accept');
+  for(const theme of ['light','dark']){
+    await page.evaluate(value=>MisraTheme.set(value),theme);
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+    await page.evaluate(()=>window.scrollTo({top:0,behavior:'instant'}));
+    await page.screenshot({path:`.impeccable/review/rubric-builder-${theme}-${info.project.name}.png`,animations:'disabled',fullPage:true});
+  }
+  await accept.focus();
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#ac-0-title')).toHaveValue('Calculation');
+  await expect(page.locator('#author-total')).toHaveText('2 / 2 marks assigned');
+  await expect(page.locator('#author-state')).toContainText('Unsaved changes');
+  expect(state.writes).toHaveLength(0);
+});
+
+test('a key change discards a pending AI preview',async({page})=>{
+  await fixture(page);await edit(page);
+  let started=false,release;
+  const gate=new Promise(resolve=>{release=resolve;});
+  await page.route('**/api/questions/q/rubric-preview',async route=>{
+    started=true;await gate;
+    await route.fulfill({json:{question_id:'q',rubric:{scoring_contract:'exact',max_score:2,criteria:[
+      {id:'work',title:'Work calculation',description:'Uses the previous key.',points:2,scoring_type:'binary',performance_levels:[]},
+    ]}}});
+  });
+  await page.getByRole('button',{name:'Generate AI draft'}).click();
+  await expect.poll(()=>started).toBe(true);
+  await page.locator('#answer-key-panel').dispatchEvent('input');
+  release();
+  await expect(page.locator('#author-assist-status')).toContainText('answer key changed while drafting');
+  await expect(page.getByRole('button',{name:'Use all suggested criteria'})).toHaveCount(0);
+  await expect(page.locator('#ac-0-description')).toHaveValue('Use W = Fd with units');
 });
 test('uncertain new-question acceptance blocks duplicate creation until reloaded',async({page})=>{
   const state=await fixture(page,{failCreate:true});await page.locator('#author-rubrics').click();await page.locator('[data-guide-question="q"]').first().click();await expect(page.locator('#ac-0-title')).toBeVisible();await page.locator('#author-new-question').click();await page.locator('#author-question-text').fill('Synthetic new question');await page.locator('#ac-0-title').fill('Work');await page.locator('#ac-0-description').fill('Credit for the result');await page.getByRole('button',{name:'Save draft',exact:true}).click();await expect(page.locator('#author-state')).toContainText('Reload questions');await expect(page.getByRole('button',{name:'Save draft',exact:true})).toBeDisabled();expect(state.writes.filter(w=>w.kind==='question')).toHaveLength(1);
@@ -434,7 +682,7 @@ test('source-led whole guide has one approval and automatically saves edited cre
   await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/assessment-guide-sources-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#theme').click();await page.screenshot({path:`.impeccable/review/assessment-guide-sources-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#theme').click();
   await page.locator('#author-rubrics').click();await expect(page.locator('#guide-outline')).toContainText('equal force-distance');await expect(page.locator('#native-authoring')).toBeHidden();await expect(page.locator('#guide-total')).toContainText('2 questions');await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/assessment-guide-outline-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#theme').click();await page.screenshot({path:`.impeccable/review/assessment-guide-outline-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#theme').click();
   await page.locator('#guide-outline [data-guide-question="q"]').click();await expect(page.locator('[data-author-approve]')).toHaveCount(0);await page.locator('#ac-0-title').fill('Correct method and units');await page.locator('#guide-review-tab').click();await expect(page.locator('#guide-review')).toBeVisible();expect(state.writes.filter(w=>w.kind==='save')).toHaveLength(1);expect(state.writes.filter(w=>w.kind==='approve')).toHaveLength(0);await expect(page.locator('#guide-approve')).toBeDisabled();await page.locator('#guide-expand').click();await expect(page.locator('#guide-expand')).toHaveAttribute('aria-expanded','true');await expect(page.locator('#guide-review-content')).toContainText('Synthetic chapter: work and energy');await expect(page.locator('#guide-review-content')).toContainText('Correct method and units');
-  await page.locator('.guide-credit-review>summary').filter({hasText:'Detailed credit & evidence'}).first().click();await expect(page.locator('#guide-review-content')).toContainText('Partial credit: Not allowed');await expect(page.locator('#guide-review-content')).toContainText('Arithmetic error');await expect(page.locator('#guide-review-content')).toContainText('Equivalent rearrangement');await page.locator('.guide-credit-review>summary').filter({hasText:'Retained rubric references & notes'}).first().click();await expect(page.locator('#guide-review-content')).toContainText('Synthetic instructor note');await expect(page.locator('#guide-review-content')).toContainText('Equivalent force-distance product');await expect(page.locator('#guide-review-content')).toContainText('image text required');expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/assessment-guide-review-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#theme').click();await page.screenshot({path:`.impeccable/review/assessment-guide-review-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  await page.locator('.guide-credit-review>summary').filter({hasText:'Evidence and common mistakes'}).first().click();await expect(page.locator('#guide-review-content')).toContainText('Full or zero');await expect(page.locator('#guide-review-content')).toContainText('Arithmetic error');await expect(page.locator('#guide-review-content')).toContainText('Equivalent rearrangement');await page.locator('.guide-credit-review>summary').filter({hasText:'Retained rubric references & notes'}).first().click();await expect(page.locator('#guide-review-content')).toContainText('Synthetic instructor note');await expect(page.locator('#guide-review-content')).toContainText('Equivalent force-distance product');await expect(page.locator('#guide-review-content')).toContainText('image text required');expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/assessment-guide-review-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#theme').click();await page.screenshot({path:`.impeccable/review/assessment-guide-review-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
   await page.locator('#guide-confirm').check();await page.locator('#guide-approve').click();await expect(page.locator('#guide-approval-state')).toContainText('approved');expect(state.writes.filter(w=>w.kind==='approve')).toHaveLength(1);expect(state.writes.filter(w=>w.kind==='key-approve')).toHaveLength(0);
 });
 

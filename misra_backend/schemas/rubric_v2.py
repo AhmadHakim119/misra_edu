@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from decimal import Decimal
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -18,7 +19,7 @@ def new_criterion_id() -> str:
 class PerformanceLevel(BaseModel):
     label: str = Field(min_length=1, max_length=100)
     description: str = Field(min_length=1)
-    points_earned: float = Field(ge=0)
+    points_earned: float = Field(ge=0, allow_inf_nan=False)
 
 
 class CommonError(BaseModel):
@@ -33,7 +34,7 @@ class RubricCriterionV2(BaseModel):
     id: str = Field(default_factory=new_criterion_id, min_length=1, max_length=100)
     title: str = Field(min_length=1, max_length=160)
     description: str = Field(min_length=1)
-    points: float = Field(gt=0)
+    points: float = Field(gt=0, allow_inf_nan=False)
     scoring_type: ScoringType = "scaled"
     partial_credit_allowed: bool = True
     performance_levels: list[PerformanceLevel] = Field(default_factory=list)
@@ -111,7 +112,8 @@ class RubricPolicy(BaseModel):
 
 class RubricV2(BaseModel):
     schema_version: Literal[2] = 2
-    max_score: float = Field(gt=0)
+    scoring_contract: Literal["exact", "needs_exact_scoring"] | None = None
+    max_score: float = Field(gt=0, allow_inf_nan=False)
     criteria: list[RubricCriterionV2] = Field(min_length=1)
     policy: RubricPolicy = Field(default_factory=RubricPolicy)
     acceptable_answers: list[str] | None = None
@@ -129,4 +131,40 @@ class RubricV2(BaseModel):
         criterion_ids = [criterion.id for criterion in self.criteria]
         if len(criterion_ids) != len(set(criterion_ids)):
             raise ValueError("criterion ids must be unique within a rubric")
+        if self.scoring_contract == "exact":
+            maximum = mark_hundredths(self.max_score)
+            if self.max_score > 9999.99:
+                raise ValueError("Question marks cannot exceed 9999.99")
+            if sum(mark_hundredths(c.points) for c in self.criteria) != maximum:
+                raise ValueError("Criterion marks must add up exactly to the question total")
+            for criterion in self.criteria:
+                validate_exact_criterion(criterion)
         return self
+
+
+def mark_hundredths(value: float) -> int:
+    hundredths = Decimal(str(value)) * 100
+    if not hundredths.is_finite() or hundredths != hundredths.to_integral_value():
+        raise ValueError("Use at most two decimal places for marks")
+    return int(hundredths)
+
+
+def validate_exact_criterion(criterion: RubricCriterionV2) -> None:
+    if not criterion.title.strip() or not criterion.description.strip():
+        raise ValueError("Each criterion needs a title and an observable credit description")
+    if criterion.scoring_type == "binary":
+        return
+    if not criterion.partial_credit_allowed:
+        raise ValueError("Choose Full or zero for a criterion without intermediate credit")
+    marks = [mark_hundredths(level.points_earned) for level in criterion.performance_levels]
+    if (len(marks) < 3 or len(set(marks)) != len(marks)
+            or 0 not in marks or mark_hundredths(criterion.points) not in marks):
+        raise ValueError("Defined credit levels must give distinct marks for zero, full and at least one intermediate level")
+    if any(not level.label.strip() or not level.description.strip() for level in criterion.performance_levels):
+        raise ValueError("Describe the observable work for every credit level")
+
+
+def exact_credit_marks(criterion: dict) -> set[float]:
+    if criterion["scoring_type"] == "binary":
+        return {0.0, float(criterion["points"])}
+    return {float(level["points_earned"]) for level in criterion["performance_levels"]}

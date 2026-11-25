@@ -7,7 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from database import Base
-from models import Answer, GradingRun, Question, ReviewLabel, Submission, User
+from models import Answer, GradingRun, Question, ReviewLabel, RubricVersion, Submission, User
 from routers.review_resolution import resolve_review
 from schemas.review_input import ReviewResolutionRequest
 from services.evaluation_service import build_evaluation_report
@@ -116,6 +116,24 @@ class ReviewReasonTests(unittest.TestCase):
             was_review_warranted=False,
         )
         self.assertEqual(request.review_reason_codes, [])
+
+    def test_evaluation_labels_use_the_saved_criterion_and_rubric(self):
+        rubric = RubricVersion(question_id=self.question.id, version_number=3, rubric_json={})
+        self.db.add(rubric)
+        self.db.flush()
+        self.run.rubric_version_id = rubric.id
+        self.run.rubric_snapshot = {'criteria': [{'id': 'saved-method', 'title': 'Work formula'}]}
+        self.db.add(ReviewLabel(answer_id=self.answer.id, grading_run_id=self.run.id, rubric_version_id=rubric.id,
+            ai_score_snapshot=2, human_score=3, was_review_warranted=True,
+            ai_criteria_scores_snapshot=[{'criterion_id': 'saved-method', 'points_earned': 2, 'max_points': 3}],
+            human_criteria_scores=[{'criterion_id': 'saved-method', 'points_earned': 3, 'max_points': 3}]))
+        self.db.commit()
+
+        report = build_evaluation_report(self.db, institution_id=self.user.institution_id, exam_id=self.question.exam_id)
+        row, = report['criterion_by_definition']
+        self.assertEqual((row['question_number'], row['rubric_version_number'], row['criterion_title']),
+                         ('1', 3, 'Work formula'))
+        self.assertEqual(row['mean_signed_error'], -1)
 
     def test_client_cannot_choose_a_review_label_source(self):
         with self.assertRaises(ValidationError):

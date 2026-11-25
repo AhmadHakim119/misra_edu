@@ -122,8 +122,8 @@ Do not include question numbers or claim independent source/answer verification.
     from services.account_settings_service import profile_prompt
     prompt += profile_prompt(profile)
     from services.inference_profiles import FULL_LOCAL_PROFILE, active_profile
-    if (active_profile() or {}).get('id') == FULL_LOCAL_PROFILE:
-        from services.inference_service import complete
+    from services.inference_service import complete, configuration
+    if (active_profile() or {}).get('id') == FULL_LOCAL_PROFILE or configuration('setup')['provider'] == 'openrouter_free':
         completion = complete(prompt, task='setup')
     else:
         completion = complete_free(prompt)

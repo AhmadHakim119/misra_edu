@@ -10,11 +10,11 @@ from unittest.mock import patch
 from fastapi import HTTPException
 from PIL import Image
 from models import Answer, AnswerSource, GradingRun, User
-from services.free_model_gateway import FreeCompletion
+from services.free_model_gateway import FreeCompletion, RoutedInferenceError
 from services.inference_service import complete, configuration
 from services.verification_agent import verify
 from services.grading_errors import GradingResponseValidationError
-from services.grading_service import process_grading
+from services.grading_service import process_grading, process_grading_with_policy
 from schemas.source_mapping_input import SourceTextCorrectionRequest
 from schemas.public_results import ResultRecord
 from routers.results import correct_source_text, get_results
@@ -33,7 +33,7 @@ class NativePipelineTests(unittest.TestCase):
     def test_free_ocr_uses_explicit_provider_and_preserves_image(self):
         image=Image.new('RGB',(20,30),'white')
         with patch.dict(os.environ,{'OCR_PROVIDER':'openrouter_free','OCR_MODEL':'synthetic/vision:free'}), \
-             patch('services.inference_service.complete_free',return_value=FreeCompletion('{}',{})) as call:
+             patch('services.inference_service.complete_routed',return_value=FreeCompletion('{}',{})) as call:
             complete(['Extract this synthetic page',image],task='ocr')
         self.assertIs(call.call_args.args[0][1],image)
         self.assertEqual(call.call_args.kwargs['model'],'synthetic/vision:free')
@@ -72,6 +72,44 @@ class NativePipelineTests(unittest.TestCase):
              patch('services.verification_agent.verify',side_effect=ValueError('Invalid verifier response')):
             with self.assertRaises(ValueError): process_grading('a',self.db)
         self.assertIsNone(self.answer.score);self.assertEqual(self.db.query(GradingRun).count(),0)
+
+    def test_hosted_verifier_correction_switches_models_with_the_same_images(self):
+        proposal = FreeCompletion(json.dumps(self.result(evidence_refs=['student:page:1'])),
+                                  {'model': 'primary:free', 'attempted_models': ['primary:free']})
+        first = FreeCompletion('{"criteria":["decision_check"]}',
+                               {'model': 'primary:free', 'attempted_models': ['offline:free', 'primary:free']})
+        second = FreeCompletion(json.dumps({'criteria': [{'criterion_id': 'logic', 'verdict': 'supported',
+            'explanation': 'Synthetic evidence supports the criterion.'}], 'summary': 'Synthetic check.'}),
+            {'model': 'alternate:free', 'attempted_models': ['alternate:free']})
+        image = Image.new('RGB', (2, 2))
+        with patch.dict(os.environ, {'GRADING_PROVIDER': 'openrouter_free', 'GRADING_MODEL': 'primary:free',
+                                     'VERIFICATION_ENABLED': 'true', 'VERIFICATION_PROVIDER': 'openrouter_free',
+                                     'VERIFICATION_MODEL': 'primary:free'}), \
+             patch('services.grading_service._load_answer_source_images', return_value=([image], [0])), \
+             patch('services.inference_service.complete_routed', side_effect=[proposal, first, second]) as routed:
+            answer = process_grading('a', self.db, mode='image_text')
+        grading, initial, correction = routed.call_args_list
+        self.assertEqual(correction.kwargs['exclude_models'], ('offline:free', 'primary:free'))
+        self.assertIs(grading.args[0][2], image)
+        self.assertIs(initial.args[0][1], image)
+        self.assertIs(correction.args[0][1], image)
+        run = self.db.query(GradingRun).one()
+        self.assertEqual(answer.score, 2)
+        self.assertEqual(run.mode, 'image_text')
+        self.assertEqual(run.response_json['verification']['inference']['model'], 'alternate:free')
+
+    def test_adaptive_hosted_failure_reports_why_images_were_used(self):
+        self.db.query(AnswerSource).one().has_math = True
+        self.db.commit()
+        image = Image.new('RGB', (2, 2))
+        with patch.dict(os.environ, {'GRADING_PROVIDER': 'openrouter_free'}), \
+             patch('services.grading_service._load_answer_source_images', return_value=([image], [0])), \
+             patch('services.inference_service.complete_routed', side_effect=RoutedInferenceError(
+                 'No eligible OpenRouter model completed this request for image + text.')) as routed:
+            with self.assertRaisesRegex(RoutedInferenceError, 'Adaptive included images because the extraction flagged math'):
+                process_grading_with_policy('a', self.db)
+        self.assertIs(routed.call_args.args[0][2], image)
+        self.assertEqual(self.db.query(GradingRun).count(), 0)
 
     def test_malformed_verifier_corrects_without_repeating_assessment(self):
         response = {'criteria': [{'criterion_id': 'logic', 'verdict': 'needs_review',
