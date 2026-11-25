@@ -46,8 +46,6 @@
         <form id="inference-settings-form">
           <fieldset id="inference-profile" aria-describedby="inference-summary" disabled>
             <legend>AI setup</legend>
-            <label><input type="radio" name="inference-profile" value="local_qwen_gemini_v1"><span data-i18n>Local Qwen + Gemini page reading</span></label>
-            <label><input type="radio" name="inference-profile" value="local_qwen_vision_gemini_v1"><span data-i18n>Local Qwen Vision + Gemini page reading</span></label>
             <label><input type="radio" name="inference-profile" value="local_qwen_all_v1"><span data-i18n>Fully local Qwen</span></label>
             <label><input type="radio" name="inference-profile" value="configured"><span data-i18n>Server configuration</span></label>
           </fieldset>
@@ -58,11 +56,11 @@
           <section class="settings-models" id="inference-models" aria-labelledby="inference-models-title" hidden>
             <h3 id="inference-models-title">Models in this setup</h3>
             <dl id="native-ai-agents"></dl>
+            <p id="inference-routing" class="settings-help" hidden></p>
           </section>
           <p id="native-ai-status" class="settings-help" role="status" data-i18n>Reading configured AI services…</p>
           <div id="inference-local-notes" hidden>
-            <p id="inference-local-capability" class="settings-help"></p>
-            <p class="settings-help" data-i18n>Every local grading proposal is sent for instructor review. Verification stays on. A local failure does not switch to a hosted grader.</p>
+            <p class="settings-help" data-i18n>All model calls stay local. Every grading proposal goes to instructor review.</p>
             <button id="check-local-model" type="button" disabled>Check local model</button>
             <p id="local-model-status" role="status"></p>
           </div>

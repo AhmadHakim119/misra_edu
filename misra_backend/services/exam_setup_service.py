@@ -76,14 +76,23 @@ class ReviewedQuestion(ExtractedQuestion):
     def require_marking_basis(self):
         if self.multiple_choice and not self.answer_key.strip():
             raise ValueError('Multiple-choice questions need a reference answer.')
-        if not self.marking_guide.strip() and not self.multiple_choice:
-            raise ValueError('Written questions need a marking guide.')
+        if not self.marking_guide.strip() and not self.answer_key.strip():
+            raise ValueError('Provide a worked answer or marking guidance.')
         return self
 
 
 class ConfirmImport(BaseModel):
     questions: list[ReviewedQuestion] = Field(min_length=1, max_length=200)
     grading_approach: Literal['lenient', 'balanced', 'strict'] = 'balanced'
+    exact_scoring: bool = Field(default=False, strict=True)
+
+    @model_validator(mode='after')
+    def require_legacy_marking_guide(self):
+        if not self.exact_scoring and any(
+            not question.multiple_choice and not question.marking_guide.strip() for question in self.questions
+        ):
+            raise ValueError('Written questions need a marking guide or exact-scoring rubric drafting.')
+        return self
 
 
 def owned_exam(db, user, exam_id):
@@ -261,18 +270,21 @@ def confirm_import(job, request, db, user):
             # Explicit instructor selection, never inferred from OCR or missing text.
             # The rule remains a draft until the assessment guide is approved.
             criteria = [dict(title='Correct option',
-                description='Select the correct option recorded in the reference answer.',
+                description='The keyed option is the only final selection. Wrong, blank or multiple uncancelled selections earn zero.',
                 points=reviewed.max_score, scoring_type='binary', partial_credit_allowed=False)]
         else:
-            criteria = [dict(title='Expected answer and reasoning', description=reviewed.marking_guide,
+            criteria = [dict(title='Expected answer and reasoning',
+                             description=reviewed.marking_guide or 'Draft scoring criteria from the saved model answer.',
                              points=reviewed.max_score, partial_credit_allowed=True)]
         if source_originals:
             original = source_originals[index]
             if not answer_key_only and reviewed.marking_guide == original['marking_guide'] and reviewed.max_score == original['max_score']:
                 criteria = [{key:value for key,value in criterion.items() if key != 'citations'}
                             for criterion in original['suggested_criteria']]
+        contract = 'needs_exact_scoring' if request.exact_scoring else None
         rubric = build_rubric(max_score=reviewed.max_score, grading_approach=request.grading_approach,
-            criteria=criteria, reference_context=None if source_originals else reviewed.answer_key or None)
+            criteria=criteria, reference_context=None if source_originals or request.exact_scoring else reviewed.answer_key or None,
+            scoring_contract=contract)
         from services.account_settings_service import apply_to_new_draft
         rubric = apply_to_new_draft(db, user, rubric)
         question = Question(institution_id=user.institution_id, exam_id=payload['exam_id'],
@@ -284,15 +296,16 @@ def confirm_import(job, request, db, user):
         db.add(RubricVersion(question_id=question.id, version_number=1, schema_version=2,
             rubric_json=rubric.model_dump(), grading_approach=request.grading_approach,
             source='ai', status='draft', change_summary='Imported exam/key; instructor review required.', created_by=user.id))
-        if source_originals:
+        if source_originals or (request.exact_scoring and reviewed.answer_key.strip()):
             from models import AnswerKeyVersion
-            from schemas.course_materials import MaterialScopeRequest
-            from services.course_material_service import save_scope
-            from services.source_question_draft_service import draft_scope_bindings
             db.add(AnswerKeyVersion(question_id=question.id, version_number=1, status='draft',
                 mode='reference' if reviewed.answer_key.strip() else 'no_fixed_answer',
                 reference_text=reviewed.answer_key, acceptable_answers=[], document_refs=[], created_by=user.id,
-                change_summary=f'AI source question draft {reviewed.source_draft_id}; verify the solution and approve separately.'))
+                change_summary='Imported model answer. Review before approving the guide.'))
+        if source_originals:
+            from schemas.course_materials import MaterialScopeRequest
+            from services.course_material_service import save_scope
+            from services.source_question_draft_service import draft_scope_bindings
             save_scope(db, question, MaterialScopeRequest(mode='required',
                 bindings=draft_scope_bindings(source_package, source_originals[index])), user, rubric.model_dump())
         ids.append(question.id)

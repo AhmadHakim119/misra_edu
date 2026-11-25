@@ -15,7 +15,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.datastructures import UploadFile
 from database import Base
-from models import Answer, Course, Exam, Institution, ProcessingJob, Question, RubricVersion, Submission, User
+from models import Answer, AnswerKeyVersion, Course, Exam, Institution, ProcessingJob, Question, RubricVersion, Submission, User
 from routers import exam_setup
 from services import exam_setup_service as service
 from services.rubric_version_service import get_effective_rubric
@@ -88,6 +88,32 @@ class ExamSetupTests(unittest.TestCase):
         self.assertNotIn('payload', result['job'])
         self.assertNotIn('path', result['documents'][0])
         self.assertEqual(len(exam_setup.list_imports('e', self.db, self.user)), 1)
+
+    def test_key_only_import_keeps_the_worked_answer_and_requires_a_rubric_draft(self):
+        key = io.BytesIO()
+        Image.new('RGB', (30, 30), 'white').save(key, 'PNG')
+        key.seek(0)
+        upload = asyncio.run(exam_setup.upload_setup('e', None,
+            UploadFile(filename='synthetic-key.png', file=key), self.db, self.user))
+        self.assertEqual(upload['documents'][0]['role'], 'answer_key')
+        job = self.db.get(ProcessingJob, upload['job']['id'])
+        row = dict(question_number='1', question_text='Explain the method.',
+                   max_score=2, answer_key='Use the supplied equation.', marking_guide='')
+        with patch.object(service, 'generate', return_value=json.dumps({'questions':[row], 'warnings':[]})):
+            service.extract_setup_documents(job, self.db, lambda *args: self.db.commit())
+        job.status = 'completed'
+        self.db.commit()
+        with self.assertRaises(ValidationError):
+            service.ConfirmImport(questions=[row])
+        outcome = exam_setup.confirm('e', job.id,
+            service.ConfirmImport(questions=[row], exact_scoring=True), self.db, self.user)
+        question_id = outcome['question_ids'][0]
+        key_version = self.db.query(AnswerKeyVersion).filter_by(question_id=question_id).one()
+        rubric_version = self.db.query(RubricVersion).filter_by(question_id=question_id).one()
+        self.assertEqual(key_version.reference_text, row['answer_key'])
+        self.assertEqual(key_version.status, 'draft')
+        self.assertEqual(rubric_version.rubric_json['scoring_contract'], 'needs_exact_scoring')
+        self.assertIsNone(self.db.get(Question, question_id).active_rubric_version_id)
 
     def test_institution_isolation(self):
         job = self.draft()

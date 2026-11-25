@@ -20,7 +20,7 @@ test('text-only grading failures point to a new job on the paper',async({page})=
   state.error='Local Qwen grades text only. Required images cannot be omitted. Review the original work or choose a configured vision-capable setup.';
   await page.locator('#activity-refresh').click();
   const activity=page.locator('#activity-host');
-  await expect(activity).toContainText('Save Qwen Vision in AI services');
+  await expect(activity).toContainText('Save Fully local Qwen in AI services');
   await expect(activity.getByRole('button',{name:'Retry safely'})).toHaveCount(0);
   await expect(activity.getByRole('link',{name:'Open paper'})).toHaveAttribute('href',/grading\.html\?exam_id=exam&submission_id=paper$/);
   expect(state.writes).toHaveLength(0);
@@ -49,15 +49,32 @@ test('invalid AI citations are not classified as an unavailable model',async({pa
   }
 });
 
-test('automatic grading retries show processing and terminal failures show a useful reason',async({page})=>{
+test('automatic grading retries show their status and terminal failures show a useful reason',async({page})=>{
   const state=await fixture(page),host=page.locator('#activity-host');
-  await expect(host).toContainText('Processing…');await expect(host).not.toContainText('Failed; waiting');await expect(host).not.toContainText('retrying');
+  await expect(host).toContainText('Waiting to retry');await expect(host).not.toContainText('Failed; waiting');
   await expect(host.locator('[data-retry-job]')).toHaveCount(0);expect(state.writes).toHaveLength(0);
   state.status='failed';await page.locator('#activity-refresh').click();
   await expect(host).toContainText('Grading couldn’t finish');await expect(host).toContainText('The grading model is unavailable');
   await expect(host).not.toContainText('Retry limit reached');await expect(host.locator('progress')).toHaveCount(0);
   await host.locator('.job-error-details summary').click();await expect(host.locator('.job-error-details')).toContainText(unavailable);
-  await page.getByRole('button',{name:'Retry safely',exact:true}).click();await expect(host).toContainText('Processing…');expect(state.writes).toEqual(['/jobs/job/retry']);
+  await page.getByRole('button',{name:'Retry safely',exact:true}).click();await expect(host).toContainText('Waiting to retry');expect(state.writes).toEqual(['/jobs/job/retry']);
+});
+
+test('exhausted OpenRouter attempts offer a retry or a local setup',async({page})=>{
+  const state=await fixture(page);
+  state.status='failed';state.error='No eligible OpenRouter model completed this request for image + text. Retry later or use Fully local Qwen.';
+  await page.locator('#activity-refresh').click();
+  const host=page.locator('#activity-host');
+  await expect(host).toContainText('Retry later or use Fully local Qwen.');
+  await expect(host.getByRole('button',{name:'Retry safely'})).toBeVisible();
+  await expect(host.locator('progress')).toHaveCount(0);
+});
+
+test('a shared OpenRouter quota failure identifies the free limit',async({page})=>{
+  const state=await fixture(page);
+  state.status='failed';state.error='No eligible OpenRouter model completed this request for image + text. The OpenRouter account reached its shared free-model limit. Paid fallback is disabled.';
+  await page.locator('#activity-refresh').click();
+  await expect(page.locator('#activity-host')).toContainText('OpenRouter reached its shared free limit. Use Fully local Qwen or retry after the limit resets.');
 });
 
 test('terminal grading failure is never displayed as active processing and translates to Arabic',async({page})=>{

@@ -30,7 +30,7 @@ async function fixture(page,{materials=14,failUpload=false,failGenerate=false,fa
 }
 
 test('one action selects all fourteen approved chapters without approving them',async({page})=>{
-  const writes=await fixture(page);await page.getByRole('button',{name:'Use all currently approved course materials'}).click();await expect(page.locator('[data-default-row]')).toHaveCount(14);await page.getByRole('button',{name:'Save assessment source draft',exact:true}).click();const body=writes.find(w=>w.kind==='scope').body;expect(body.bindings).toHaveLength(14);expect(body.bindings.every(b=>b.page_indices.length===1 && b.page_indices[0]===0)).toBeTruthy();expect(body.mode).toBe('required');
+  const writes=await fixture(page);await page.getByText('Reference requirements and page ranges',{exact:true}).click();await page.getByRole('button',{name:'Use all currently approved course materials'}).click();await expect(page.locator('[data-default-row]')).toHaveCount(14);await page.getByRole('button',{name:'Save assessment source draft',exact:true}).click();const body=writes.find(w=>w.kind==='scope').body;expect(body.bindings).toHaveLength(14);expect(body.bindings.every(b=>b.page_indices.length===1 && b.page_indices[0]===0)).toBeTruthy();expect(body.mode).toBe('required');
 });
 test('lecture proposals show exact quotes then add drafts without approval',async({page})=>{
   const writes=await fixture(page);await page.locator('#quiz-from-lecture summary').click();await page.locator('#lecture-choices input').first().check();await page.locator('#lecture-topic').fill('Work done by a constant force');await page.getByRole('button',{name:'Draft questions from this lecture',exact:true}).click();await expect(page.locator('#teaching-proposals')).toContainText('Calculate work for 10 N');await page.locator('#teaching-proposals summary').click();await expect(page.locator('#teaching-proposals')).toContainText('Work is force times displacement.');await page.getByRole('button',{name:'Add selected questions to the marking guide'}).click();await expect(page.locator('#teaching-status')).toContainText('already added as drafts');expect(writes.find(w=>w.kind==='confirm').body.questions[0].source_draft_id).toBe('proposal');expect(writes.some(w=>w.kind==='approve')).toBeFalsy();
@@ -40,6 +40,21 @@ test('generation failure retains entries and saved-request check is explicit',as
 });
 test('existing quiz import does not request new question generation',async({page})=>{
   const writes=await fixture(page);await page.locator('#import-existing-quiz summary').click();await page.locator('#teaching-import-form [name="exam"]').setInputFiles({name:'ExistingQuiz.pdf',mimeType:'application/pdf',buffer:Buffer.from('synthetic')});await page.getByRole('button',{name:'Read existing quiz & key',exact:true}).click();await expect(page.locator('#teaching-proposals')).toContainText('Calculate work for 10 N');expect(writes.some(w=>w.kind==='generate')).toBeFalsy();expect(writes.some(w=>w.kind==='import')).toBeTruthy();
+});
+test('key-only import can save a worked answer for AI drafting without a manual guide',async({page})=>{
+  const writes=await fixture(page,{questions:[{question_number:'1',question_text:'Explain the method.',max_score:2,
+    answer_key:'A valid method.',marking_guide:''}]});
+  await page.locator('#import-existing-quiz summary').click();
+  await page.locator('#teaching-import-form [name="key"]').setInputFiles({name:'SyntheticKey.pdf',mimeType:'application/pdf',buffer:Buffer.from('synthetic')});
+  await page.getByRole('button',{name:'Read existing quiz & key',exact:true}).click();
+  await expect(page.locator('#teaching-proposals')).toContainText('Review your quiz');
+  const upload=writes.find(w=>w.kind==='import').body;
+  expect(upload).toContain('name="answer_key"');
+  expect(upload).not.toContain('name="exam_file"');
+  await page.getByRole('button',{name:'Add selected questions to the marking guide',exact:true}).click();
+  await expect(page.locator('#teaching-status')).toContainText('already added as drafts');
+  expect(writes.find(w=>w.kind==='confirm').body).toMatchObject({exact_scoring:true,
+    questions:[{answer_key:'A valid method.',marking_guide:''}]});
 });
 test('different imported wording stays visible for review without replacing the chosen stem',async({page})=>{
   const primary='Find inertia about the x axis.',alternative='Find inertia about the y axis.';
@@ -51,7 +66,7 @@ test('different imported wording stays visible for review without replacing the 
   await expect(page.locator('[name=question_text]')).toHaveValue(primary);expect(writes.some(w=>w.kind==='confirm')).toBeFalsy();
 });
 test('missing import fields are explained and collapsed marking guides open on validation',async({page},info)=>{
-  const writes=await fixture(page,{savedImport:true,questions:[{question_number:'1',question_text:'Explain the method.',max_score:2,answer_key:'A valid method.',marking_guide:''}]});
+  const writes=await fixture(page,{savedImport:true,questions:[{question_number:'1',question_text:'Explain the method.',max_score:2,answer_key:'',marking_guide:''}]});
   const row=page.locator('[data-proposal="0"]');
   await expect(row).toBeVisible();
   await page.locator('#teaching-proposals').screenshot({path:`.impeccable/review/import-validation-before-${info.project.name}.png`,style:'.app-bar,.skip-link{visibility:hidden !important;}'});
@@ -122,7 +137,7 @@ test('saved proposals survive reload and do not generate duplicate requests',asy
   const writes=await fixture(page);await page.locator('#quiz-from-lecture summary').click();await page.locator('#lecture-choices input').first().check();await page.locator('#lecture-topic').fill('Work and energy');await page.getByRole('button',{name:'Draft questions from this lecture',exact:true}).click();await expect(page.locator('#teaching-proposals')).toContainText('Calculate work for 10 N');await page.reload();await page.locator('#sources-link').click();await expect(page.locator('#teaching-proposals')).toContainText('Calculate work for 10 N');expect(writes.filter(w=>w.kind==='generate')).toHaveLength(1);
 });
 test('class feedback failure offers an explicit reconnect instead of fake counts',async({page})=>{
-  await fixture(page,{failInsights:true});await page.locator('#insights-link').click();await expect(page.locator('#learning-insights')).toContainText('Synthetic feedback interruption');await expect(page.locator('#learning-insights')).not.toContainText('average 75');await expect(page.locator('#refresh-insights')).toBeVisible();
+  await fixture(page,{failInsights:true});await page.locator('#insights-link').click();await expect(page.locator('#insights-state')).toContainText('Synthetic feedback interruption');await expect(page.locator('.insight-question')).toHaveCount(0);await expect(page.locator('#refresh-insights')).toBeEnabled();
 });
 test('multi-chapter upload preserves each chapter and locks file selection',async({page})=>{
   const writes=await fixture(page);await page.locator('#lecture-upload summary').click();await page.locator('#lecture-files').setInputFiles([{name:'Chapter7.pdf',mimeType:'application/pdf',buffer:Buffer.from('synthetic')},{name:'Lecture8.pdf',mimeType:'application/pdf',buffer:Buffer.from('synthetic')}]);await expect(page.locator('#lecture-files')).toBeDisabled();await page.getByRole('button',{name:'Upload material drafts',exact:true}).click();await expect(page.locator('#lecture-upload-status')).toContainText('2 material drafts accepted');expect(writes.filter(w=>w.kind==='material')).toHaveLength(2);await expect(page.locator('#lecture-files')).toBeEnabled();
@@ -144,5 +159,10 @@ test('adding proposals retains a newly edited generation request',async({page})=
 });
 test('teaching and class feedback render in the inherited themes',async({page},info)=>{
   await fixture(page,{materials:2});await page.locator('#quiz-from-lecture summary').click();await expect(page.locator('#lecture-choices')).toContainText('Synthetic lecture 1');await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/teaching-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#theme').click();await page.screenshot({path:`.impeccable/review/teaching-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});
-  await page.locator('#insights-link').click();await expect(page.locator('#ledger-insights')).toBeVisible();await expect(page.locator('#learning-insights')).toContainText('1 awaiting review');await expect(page.locator('#learning-insights')).toContainText('Correct result');await expect(page.locator('#learning-insights')).toContainText('uncalibrated');expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/insights-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#theme').click();await page.screenshot({path:`.impeccable/review/insights-${info.project.name}.png`,fullPage:true,animations:'disabled'});
+  await page.locator('#insights-link').click();await expect(page.locator('#ledger-insights')).toBeVisible();
+  await expect(page.locator('.insight-question-stats div').filter({hasText:'Awaiting review'}).locator('dd')).toHaveText('1');
+  await expect(page.getByRole('heading',{name:'Correct result'})).toBeVisible();
+  await page.getByText('How these observations are calculated',{exact:true}).click();
+  await expect(page.getByText('Model confidence is uncalibrated.',{exact:true})).toBeVisible();
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();await page.evaluate(()=>window.scrollTo(0,0));await page.screenshot({path:`.impeccable/review/insights-dark-${info.project.name}.png`,fullPage:true,animations:'disabled'});await page.locator('#theme').click();await page.screenshot({path:`.impeccable/review/insights-${info.project.name}.png`,fullPage:true,animations:'disabled'});
 });

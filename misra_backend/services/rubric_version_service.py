@@ -25,6 +25,13 @@ def version_document(raw, rubric):
     return value
 
 
+def requires_exact_scoring(db, question_id):
+    return db.query(RubricVersion.id).filter(
+        RubricVersion.question_id == question_id,
+        RubricVersion.rubric_json["scoring_contract"].as_string().in_(("exact", "needs_exact_scoring")),
+    ).first() is not None
+
+
 def grading_rubric(document):
     # Definition history is local provenance. The current approved question is
     # supplied separately in the grading package, never as rubric instructions.
@@ -114,6 +121,9 @@ def create_rubric_version(
     created_by: str | None = None,
 ) -> RubricVersion:
     rubric = validate_rubric_v2(rubric_json)
+    db.query(Question).filter_by(id=question.id).with_for_update().populate_existing().one()
+    if rubric.scoring_contract != "exact" and requires_exact_scoring(db, question.id):
+        raise ValueError("Save an exact scoring rule for every criterion before creating a replacement draft.")
     document = version_document(rubric_json, rubric)
     if 'question_definition' in document:
         from services.question_definition_service import current_definition
@@ -151,9 +161,13 @@ def update_rubric_version(
     change_summary: str | None,
     db: Session,
 ) -> RubricVersion:
+    db.query(Question).filter_by(id=version.question_id).with_for_update().one()
+    db.refresh(version)
     if version.status != "draft":
         raise ValueError("Only draft rubric versions can be edited")
 
+    if version.rubric_json.get("scoring_contract") in {"exact", "needs_exact_scoring"} and rubric_json.get("scoring_contract") != "exact":
+        raise ValueError("This draft uses exact scoring. Keep its exact scoring rules when editing.")
     rubric = validate_rubric_v2(rubric_json)
     version.rubric_json = version_document(rubric_json, rubric)
     version.grading_approach = rubric.policy.grading_approach
@@ -175,6 +189,10 @@ def approve_rubric_version(
         raise ValueError("Only a draft rubric version can be approved")
 
     rubric = validate_rubric_v2(version.rubric_json)
+    if rubric.scoring_contract != "exact" and requires_exact_scoring(db, version.question_id):
+        raise ValueError("Save an exact scoring rule for every criterion before approving this draft.")
+    if rubric.scoring_contract == "exact" and not definition_batch_validated:
+        raise ValueError("Approve exact scoring rules through whole-assessment guide review.")
     question = db.query(Question).filter(Question.id == version.question_id).first()
     if not question:
         raise ValueError(f"Question {version.question_id} not found")

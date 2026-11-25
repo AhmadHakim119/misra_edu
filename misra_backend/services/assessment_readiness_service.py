@@ -2,6 +2,8 @@
 import math
 import re
 
+PENDING_RUBRIC_MESSAGE = 'Open this imported draft and save an exact scoring rule for every criterion.'
+
 from models import AnswerKeyVersion, Question, QuestionGradingPolicy, RubricVersion
 
 
@@ -25,6 +27,8 @@ def requires_visual_evidence(question_text, rubric):
                 str(criterion.get("title") or ""),
                 str(criterion.get("description") or ""),
                 " ".join(map(str, criterion.get("required_evidence") or [])),
+                " ".join(str(level.get("description") or "") for level in
+                         criterion.get("performance_levels") or [] if isinstance(level, dict)),
             ])
     text = " ".join(searchable).lower()
     return any(re.search(pattern, text) for pattern in VISUAL_EVIDENCE_PATTERNS)
@@ -130,6 +134,14 @@ def definition_errors(question, rubric):
         errors.append('Add the question text and any context students need.')
     if not isinstance(rubric, dict):
         return errors + ['The rubric is not a valid document.']
+    if rubric.get("scoring_contract") == "needs_exact_scoring":
+        errors.append(PENDING_RUBRIC_MESSAGE)
+    if rubric.get("scoring_contract") == "exact":
+        from schemas.rubric_v2 import RubricV2
+        try:
+            RubricV2.model_validate(rubric)
+        except ValueError:
+            errors.append('Check the exact credit levels and criterion totals in the marking guide.')
     try:
         maximum = float(rubric['max_score'])
         question_maximum = float(question.max_score)
@@ -142,7 +154,7 @@ def definition_errors(question, rubric):
             errors.append('Give each criterion a unique identifier.')
         if not all(math.isfinite(v) and v > 0 for v in [maximum, question_maximum, *points]):
             raise ValueError()
-        if abs(maximum - question_maximum) > .01:
+        if abs(maximum - question_maximum) > (0 if rubric.get("scoring_contract") == "exact" else .01):
             errors.append('Question marks and rubric marks do not match.')
         if abs(sum(points) - maximum) > .01:
             errors.append('Criterion marks do not add up to the question total.')

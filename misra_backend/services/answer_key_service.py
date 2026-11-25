@@ -1,8 +1,10 @@
 """Immutable approved answer-key definitions and fail-closed reference resolution."""
 from copy import deepcopy
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 import hashlib
+import json
 
 from sqlalchemy import func
 from models import AnswerKeyVersion, ProcessingJob, Question
@@ -46,10 +48,68 @@ def resolve_document_refs(question, refs, db, *, verify_hash=False):
 
 
 def public_version(version):
-    return {field: deepcopy(getattr(version, field)) for field in (
+    result = {field: deepcopy(getattr(version, field)) for field in (
         'id', 'question_id', 'version_number', 'status', 'mode', 'reference_text',
         'acceptable_answers', 'document_refs', 'change_summary', 'created_by',
         'approved_by', 'created_at', 'approved_at')}
+    result['drafting_revision'] = drafting_revision(result)
+    return result
+
+
+def drafting_version(question_id, db, *, for_update=False):
+    query = db.query(AnswerKeyVersion).filter(
+        AnswerKeyVersion.question_id == question_id,
+        AnswerKeyVersion.status.in_(('draft', 'approved')),
+    ).order_by(AnswerKeyVersion.version_number.desc())
+    if for_update:
+        query = query.populate_existing().with_for_update()
+    versions = query.all()
+    return next((version for version in versions if version.status == 'draft'), None) or next(iter(versions), None)
+
+
+def drafting_revision(reference):
+    if not reference.get('id'):
+        return None
+    snapshot = {field: reference[field] for field in (
+        'id', 'status', 'mode', 'reference_text', 'acceptable_answers', 'change_summary',
+    )}
+    snapshot['document_refs'] = [
+        {field: ref.get(field) for field in ('job_id', 'page_indices')}
+        for ref in reference['document_refs']
+    ]
+    return hashlib.sha256(json.dumps(snapshot, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def rubric_reference_text(question, reference, db):
+    """Read only the selected, assessment-owned PDF pages for rubric drafting."""
+    from pypdf import PdfReader
+    from pypdf.errors import PdfReadError
+
+    documents = resolve_document_refs(question, reference.get("document_refs") or [], db,
+                                      verify_hash=reference.get("status") == "approved")
+    if sum(len(ref["page_indices"]) for ref in documents) > 8:
+        raise ValueError("Select up to eight answer-key pages for this question or paste its worked solution.")
+    budget = 16000
+    excerpts = []
+    for ref in documents:
+        if ref["media_type"] != "application/pdf":
+            raise ValueError("Read image keys through exam import or paste the worked solution into the answer key.")
+        try:
+            contents = Path(ref["path"]).read_bytes()
+            if hashlib.sha256(contents).hexdigest() != ref["sha256"]:
+                raise ValueError("The reference changed. Reload the answer key and retry.")
+            pdf = PdfReader(BytesIO(contents))
+            for page in ref["page_indices"]:
+                value = (pdf.pages[page].extract_text() or "").strip()
+                if not value:
+                    raise ValueError(f"Answer-key page {page + 1} has no readable text. Read scanned keys through exam import or paste the worked solution.")
+                if len(value) > budget:
+                    raise ValueError("Selected answer-key pages are too long for one draft. Select only the pages for this question.")
+                excerpts.append(f"PDF page {page + 1}\n{value}")
+                budget -= len(value)
+        except (PdfReadError, OSError, IndexError):
+            raise ValueError("Could not read the selected key pages. Paste the worked solution and retry.") from None
+    return "\n\n".join(excerpts)
 
 
 def public_snapshot(snapshot):
@@ -64,10 +124,19 @@ def _lock_question(question, db):
         Question.institution_id == question.institution_id).with_for_update().one()
 
 
+class AnswerKeyConflictError(ValueError):
+    """The editor's base revision differs from the currently selected key."""
+
+
 def save_draft(question, request, db, user, version=None):
     _lock_question(question, db)
+    if 'expected_drafting_revision' in request.model_fields_set:
+        selected = drafting_version(question.id, db, for_update=True)
+        actual = public_version(selected)['drafting_revision'] if selected else None
+        if request.expected_drafting_revision != actual:
+            raise AnswerKeyConflictError('The saved key changed. Keep a copy of your edits before reloading.')
     if version is not None:
-        db.refresh(version)
+        db.refresh(version, with_for_update=True)
         if version.question_id != question.id or version.status != 'draft':
             raise ValueError('Approved answer keys are immutable. Create a new draft version.')
     refs = [ref.model_dump() for ref in request.document_refs]

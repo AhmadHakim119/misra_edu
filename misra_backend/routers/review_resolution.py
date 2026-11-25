@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import Answer, GradingRun, ReviewLabel, Submission, User
 from schemas.review_input import PREFERENCE_REASON_CODES, ReviewResolutionRequest, ReopenReviewRequest
+from schemas.rubric_v2 import exact_credit_marks, mark_hundredths
 from services.auth_dependencies import require_instructor
 from services.audit_service import record_audit_event
 from schemas.public_results import ReviewResolutionRecord, ReviewRecord
@@ -195,6 +196,21 @@ def resolve_review(
                 status_code=422,
                 detail="Instructor criterion scores must match the graded rubric criteria.",
             )
+        rubric = (selected_run.rubric_snapshot if selected_run else
+                  ((answer.grading_raw_response or {}).get("grading_package") or {}).get("rubric")) or {}
+        exact = rubric.get("scoring_contract") == "exact"
+        if exact:
+            definitions = {criterion["id"]: criterion for criterion in rubric["criteria"]}
+            if (len(human_criteria_scores) != len(definitions)
+                    or supplied_criteria != {key: float(item["points"]) for key, item in definitions.items()}
+                    or any(item["points_earned"] not in exact_credit_marks(definitions[item["criterion_id"]])
+                           for item in human_criteria_scores)):
+                raise HTTPException(422, "Choose a listed mark for each criterion in the saved rubric.")
+            try:
+                if sum(mark_hundredths(item["points_earned"]) for item in human_criteria_scores) != mark_hundredths(human_score):
+                    raise ValueError()
+            except ValueError:
+                raise HTTPException(422, "The criterion marks must add up exactly to the instructor score.") from None
         if abs(
             sum(float(item["points_earned"]) for item in human_criteria_scores)
             - float(human_score)

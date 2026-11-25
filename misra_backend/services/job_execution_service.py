@@ -15,9 +15,10 @@ from services.grading_scope_service import is_external_question, is_paper_questi
 from services.grading_errors import GradingResponseValidationError
 from services.grading_control import GradingStopped, STAGE_PROGRESS, check_grading_active, grading_checkpoint, grading_stage
 from services.inference_service import LocalInferenceError, LocalInferenceInputError
+from services.free_model_gateway import RoutedInferenceError
 from services.job_queue_service import finish_stopped_job, lock_grading_paper, lock_job, stop_requested
 
-PROFILE_SUPPORT_VERSION = 3
+PROFILE_SUPPORT_VERSION = 4
 logger = logging.getLogger(__name__)
 
 
@@ -54,15 +55,28 @@ def _grade_submission(job: ProcessingJob, db: Session) -> None:
 
     payload = dict(job.payload or {})
     mode = payload.get("mode", "auto")
+    is_continuation = bool(payload.get('continued_from_job_id'))
     completed_answer_ids = set(payload.get("completed_answer_ids") or [])
     saved_runs = db.query(GradingRun).filter_by(processing_job_id=job.id).all()
     saved_answer_ids = {run.answer_id for run in saved_runs}
+    comparison_runs = saved_runs
+    inherited_primary_ids = ({(answer.grading_raw_response or {}).get('grading_run_id') for answer in answers} - {None}
+                             if is_continuation else set())
+    if inherited_primary_ids:
+        answer_ids = [answer.id for answer in answers]
+        inherited_primaries = db.query(GradingRun).filter(GradingRun.id.in_(inherited_primary_ids),
+                                                        GradingRun.answer_id.in_(answer_ids)).all()
+        inherited_job_ids = {run.processing_job_id for run in inherited_primaries} - {None, job.id}
+        comparison_runs = saved_runs + db.query(GradingRun).filter(GradingRun.processing_job_id.in_(inherited_job_ids),
+            GradingRun.answer_id.in_(answer_ids)).all()
     comparison_pairs = {'text_only': set(), 'image_text': set()}
-    for run in saved_runs:
+    for run in comparison_runs:
         package = (run.response_json or {}).get('grading_package') or {}
         routing = package.get('routing') or {}
         pair_id = routing.get('comparison_pair_id')
-        if pair_id and run.mode in comparison_pairs:
+        if pair_id and run.mode in comparison_pairs and (
+            run.processing_job_id == job.id or run.mode == 'image_text' or run.id in inherited_primary_ids
+        ):
             comparison_pairs[run.mode].add((run.answer_id, pair_id))
     incomplete_comparisons = len(comparison_pairs['text_only'] - comparison_pairs['image_text'])
     lock_grading_paper(db, job.job_type, job.submission_id, job.institution_id)
@@ -76,8 +90,10 @@ def _grade_submission(job: ProcessingJob, db: Session) -> None:
         check_grading_active(lock=True)
         # A primary proposal can commit before its optional image comparison or
         # progress checkpoint. Keep that recorded run and any instructor review.
+        if is_continuation:
+            db.refresh(answer, attribute_names=['score', 'teacher_override_score'])
         recorded = answer.score is not None or answer.teacher_override_score is not None
-        saved = answer.id in saved_answer_ids or (recorded and answer.id in completed_answer_ids)
+        saved = answer.id in saved_answer_ids or (recorded and (is_continuation or answer.id in completed_answer_ids))
         if not saved:
             job.payload = {**(job.payload or {}), 'grading_stage': 'preparing', 'grading_stage_progress': STAGE_PROGRESS['preparing']}
             job.progress_message = f"Assessment and verification agents: answer {index + 1} of {len(answers)}"
@@ -238,7 +254,8 @@ def execute_processing_job(processing_job_id: str) -> None:
             safe_error = safe_error_message(error)
             validation_failed = isinstance(error, GradingResponseValidationError)
             local_failed = isinstance(error, (LocalInferenceError, LocalInferenceInputError)) or str(error).startswith(TEXT_ONLY_IMAGE_ERROR)
-            exhausted = validation_failed or local_failed or int(job.attempt_count or 0) >= int(job.max_attempts or 1)
+            routing_failed = isinstance(error, RoutedInferenceError)
+            exhausted = validation_failed or local_failed or routing_failed or int(job.attempt_count or 0) >= int(job.max_attempts or 1)
             if exhausted and rq_job:
                 rq_job.retries_left = 0
             job.status = "failed" if exhausted else "retrying"
@@ -246,6 +263,7 @@ def execute_processing_job(processing_job_id: str) -> None:
             job.progress_message = (
                 "AI response rejected; review or retry grading" if validation_failed
                 else "Local AI needs attention" if local_failed
+                else "OpenRouter needs attention" if routing_failed
                 else "Retry limit reached" if exhausted else "Failed; waiting to retry"
             )
             job.completed_at = datetime.now() if exhausted else None

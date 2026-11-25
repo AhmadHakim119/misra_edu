@@ -16,7 +16,8 @@
     $('pilot-paper').disabled=!rows.length;
     if(rows.some(p=>p.paper_id===wanted))$('pilot-paper').value=wanted;
     const slots=scope.every(p=>Number.isInteger(p.answer_count))?scope.reduce((sum,p)=>sum+p.answer_count,0):'Unknown';
-    $('pilot-status').textContent=`${scope.length} saved papers · ${slots} answer slots · ${scope.filter(p=>p.review.needs_review).length} papers with recorded review concerns. No grades finalized.`;
+    const stats=[['Saved papers',scope.length],['Answer slots',slots],['Flagged papers',scope.filter(p=>p.review.needs_review).length]];
+    $('pilot-status').innerHTML=stats.map(([label,value])=>'<span data-i18n>'+label+'</span> <strong>'+esc(value)+'</strong>').join(' · ');
     if(!rows.length){++request;paper=null;$('pilot-paper-summary').textContent='No papers match these filters.';$('pilot-answer-detail').textContent='';$('pilot-answer').innerHTML='';$('pilot-answer').disabled=true;$('pilot-image').hidden=true;$('pilot-page').disabled=true;$('pilot-page-link').hidden=true;return;}
     loadPaper($('pilot-paper').value);
   }
@@ -34,23 +35,46 @@
     finally{loading=false;$('pilot-refresh').disabled=false;}
   }
   async function loadPaper(id){
+    const selectedAnswer=paper?.paper_id===id?$('pilot-answer').value:null;
     paper=null;imageUrl=null;$('pilot-image').removeAttribute('src');$('pilot-page').disabled=true;$('pilot-paper-summary').textContent='Loading saved paper summary…';
     const current=++request;$('pilot-error').textContent='';$('pilot-answer').disabled=true;$('pilot-image').hidden=true;$('pilot-page-link').hidden=true;$('pilot-answer-detail').textContent='Loading saved answer evidence…';
     try{
       const result=await MisraAPI.pilotPaper(studyId,id);if(current!==request)return;if(result.paper_id!==id||!Array.isArray(result.answers))throw Error('Saved paper response is incomplete.');paper=result;
-      const url=new URL(location.href);url.searchParams.set('study_id',studyId);url.searchParams.set('paper_id',id);history.replaceState(null,'',url);
-      $('pilot-paper-summary').innerHTML=`<div class="pilot-paper-heading"><h2>${esc(paper.label)} · ${paper.review.needs_review?'Needs review':'No recorded issue'}</h2><p>Saved total: ${range(paper.total)}</p></div><p>${paper.review.flagged_answer_count} answers have recorded concerns; ${paper.review.unresolved_answer_count} have unresolved marks. Saved totals include the study’s multiple-choice caps.</p><ul class="pilot-review-reasons">${paper.review.reasons.map(r=>`<li>${esc(reason(r.code))}: ${r.count}</li>`).join('')}</ul><p class="muted">Original proposals and explicit local review adjustments remain separate. Nothing here is an instructor-finalized grade.</p>`;
+      const url=MisraWorkspace.currentURL();url.searchParams.set('study_id',studyId);url.searchParams.set('paper_id',id);MisraWorkspace.replaceRoute(url);
+      const review=paper.review;
+      $('pilot-paper-summary').innerHTML='<div class="pilot-paper-heading"><div><h2 dir="auto">'+esc(paper.label)+'</h2><p><span data-i18n>Answers flagged</span> '+number(review.flagged_answer_count)+' · <span data-i18n>Unresolved</span> '+number(review.unresolved_answer_count)+'</p></div><div class="pilot-question-mark"><span data-i18n>Saved paper total</span><strong>'+range(paper.total)+'</strong><span data-i18n>Includes study multiple-choice caps.</span></div></div>'+
+        (review.reasons.length?'<details class="pilot-paper-flags"><summary data-i18n>All paper flags</summary><ul>'+review.reasons.map(item=>'<li><span dir="auto">'+esc(reason(item.code))+'</span><strong>'+number(item.count)+'</strong></li>').join('')+'</ul></details>':'');
       $('pilot-answer').innerHTML=paper.answers.map(a=>`<option value="${esc(a.answer_id)}">${esc(a.number)} · ${a.score==null?'unresolved':number(a.score)+'/'+number(a.max_score)}${a.needs_review||a.rubric_changed_since_run?' · needs review':''}</option>`).join('');
       $('pilot-answer').disabled=!paper.answers.length;
       $('pilot-page').innerHTML=Array.from({length:paper.page_count},(_,i)=>`<option value="${i}">Page ${i+1} / ${paper.page_count}</option>`).join('');$('pilot-page').disabled=!paper.page_count;
-      const first=paper.answers.find(a=>a.needs_review||a.score==null)||paper.answers[0];if(first){$('pilot-answer').value=first.answer_id;renderAnswer();}
+      const first=paper.answers.find(a=>a.answer_id===selectedAnswer)||paper.answers.find(a=>a.needs_review||a.score==null)||paper.answers[0];if(first){$('pilot-answer').value=first.answer_id;renderAnswer();}
     }catch(e){if(current===request){paper=null;$('pilot-error').textContent=e.message+' Select the paper again to retry.';$('pilot-answer-detail').textContent='Saved answer unavailable.';}}
   }
   function renderAnswer(){
-    const a=paper?.answers.find(r=>r.answer_id===$('pilot-answer').value);if(!a)return;
-    const changed=a.rubric_changed_since_run?'<p class="notice">The active rubric changed since this result. Compare the rubric versions before deciding; the saved grade was not recalculated.</p>':'';
-    $('pilot-answer-detail').innerHTML=`<h3>${esc(a.number)}</h3><p dir="auto">${esc(a.question_text)}</p>${changed}${MisraReview.render(a)}<p><a class="button" href="setup.html?exam_id=${encodeURIComponent(paper.exam_id)}&rubric_question=${encodeURIComponent(a.question_id)}">View & edit this rubric</a></p><details open><summary>Student work used for this proposal</summary><pre class="pilot-text" dir="auto">${esc(a.student_text||'No checked transcription recorded. Read the original page; absence of text is not proof of a blank answer.')}</pre></details><h4>Recorded grading explanation</h4><p dir="auto">${esc(a.reasoning||a.feedback||'No model rationale was saved for this result. The score may come from a checked lookup or separately recorded local review.')}</p>${a.original_score!=null&&a.original_score!==a.score?`<p>Original proposal: ${number(a.original_score)}. Later local proposal: ${number(a.score)}. Authority: ${esc(a.proposal_authority)}.</p>`:''}<div class="table-scroll"><table class="data-table"><thead><tr><th>Rubric criterion used</th><th>Marks</th><th>Recorded explanation</th></tr></thead><tbody>${(a.rubric_snapshot?.criteria||[]).map(c=>{const decision=(a.criteria_scores||[]).find(r=>r.criterion_id===c.id);return `<tr><td>${esc(c.title||c.description)}</td><td>${number(decision?.points_earned)} / ${number(c.points)}</td><td>${esc(decision?.feedback||decision?.basis||'No individual decision recorded; no criterion mark has been invented.')}</td></tr>`;}).join('')}</tbody></table></div><details><summary>Saved key and marking policy</summary><p dir="auto">${esc(a.answer_key)}</p>${Object.entries(a.original_policy||{}).map(([k,v])=>`<p><strong>${esc(reason(k))}:</strong> ${esc(v)}</p>`).join('')}</details><details><summary>Course evidence used for this answer</summary>${(a.course_evidence||[]).map(p=>`<h4>${esc(p.title||p.source_id||'Saved course passage')}${p.page_index!=null?' · PDF page '+(p.page_index+1):''}</h4><p class="pilot-text" dir="auto">${esc(p.text||'Only a source identifier was retained; passage text is not available here.')}</p>`).join('')||'<p>No course passage snapshot was saved for this answer.</p>'}</details>`;
-    showPage(Math.max(0,Math.min(paper.page_count-1,a.page_index||0)));
+    const answer=paper?.answers.find(row=>row.answer_id===$('pilot-answer').value);
+    if(!answer)return;
+    const definitions=answer.rubric_snapshot?.criteria||[];
+    const scores=answer.criteria_scores||[];
+    const title=answer.score==null?'Unresolved marks':number(answer.score)+' / '+number(answer.max_score);
+    const rubricLink='setup.html?'+new URLSearchParams({exam_id:paper.exam_id,rubric_question:answer.question_id});
+    const changed=answer.rubric_changed_since_run?'<p class="notice" data-i18n>The current rubric differs from the guide used for this proposal.</p>':'';
+    const original=answer.original_score!=null&&answer.original_score!==answer.score
+      ? '<p class="pilot-proposal-history"><span data-i18n>Original proposal</span> '+number(answer.original_score)+' · <span data-i18n>Later local proposal</span> '+number(answer.score)+(answer.proposal_authority?' · '+esc(answer.proposal_authority):'')+'</p>' : '';
+    const criteria=definitions.map(definition=>{
+      const score=scores.find(row=>row.criterion_id===definition.id);
+      return '<li><div><strong dir="auto">'+esc(MisraReview.criterionLabel(definition.id,definitions,scores))+'</strong><span class="pilot-criterion-score">'+number(score?.points_earned)+' / '+number(definition.points)+'</span></div><p dir="auto">'+esc(score?.feedback||score?.basis||'No criterion decision recorded.')+'</p></li>';
+    }).join('');
+    const policy=Object.entries(answer.original_policy||{}).map(([key,value])=>'<div><dt>'+esc(reason(key))+'</dt><dd dir="auto">'+esc(value)+'</dd></div>').join('');
+    const sources=(answer.course_evidence||[]).map(passage=>'<li><strong dir="auto">'+esc(passage.title||passage.source_id||'Saved course passage')+(passage.page_index==null?'':' · <span data-i18n>Page</span> '+number(passage.page_index+1))+'</strong><p dir="auto">'+esc(passage.text||'Passage text is unavailable.')+'</p></li>').join('');
+    $('pilot-answer-detail').innerHTML=
+      '<header class="pilot-question-heading"><div><h3><span data-i18n>Question</span> <bdi>'+esc(answer.number)+'</bdi></h3><p dir="auto">'+esc(answer.question_text)+'</p></div><div class="pilot-question-mark"><span data-i18n>Saved proposal</span><strong data-i18n>'+esc(title)+'</strong></div></header>'+
+      changed+original+'<a class="pilot-jump" href="#pilot-evidence" data-i18n>See original page</a>'+MisraReview.renderPilot(answer)+
+      '<section class="pilot-marks"><header><h4 data-i18n>Criterion marks</h4><a href="'+esc(rubricLink)+'" data-i18n>View &amp; edit this rubric</a></header>'+(criteria?'<ul>'+criteria+'</ul>':'<p data-i18n>No criterion marks recorded.</p>')+'</section>'+
+      '<div class="pilot-records"><details><summary data-i18n>Student work used for this proposal</summary><pre class="pilot-text" dir="auto">'+esc(answer.student_text||'Checked transcription unavailable. Inspect the original page.')+'</pre></details>'+
+      '<details><summary data-i18n>Recorded grading explanation</summary><p dir="auto">'+esc(answer.reasoning||answer.feedback||'No model rationale was saved for this result.')+'</p></details>'+
+      '<details><summary data-i18n>Saved key and marking policy</summary><p dir="auto">'+esc(answer.answer_key)+'</p>'+(policy?'<dl>'+policy+'</dl>':'')+'</details>'+
+      '<details><summary data-i18n>Course evidence used for this answer</summary>'+(sources?'<ul>'+sources+'</ul>':'<p data-i18n>No course passage snapshot was saved for this answer.</p>')+'</details></div>';
+    showPage(Math.max(0,Math.min(paper.page_count-1,answer.page_index||0)));
   }
   function showPage(index){if(!paper||index<0)return;const url=MisraAPI.pilotPageUrl(studyId,paper.paper_id,index);imageUrl=url;$('pilot-page').value=String(index);$('pilot-image-status').textContent='Loading original page…';$('pilot-image').hidden=true;$('pilot-page-link').hidden=true;$('pilot-image').src=url;$('pilot-page-link').href=url;}
   $('pilot-image').addEventListener('load',()=>{if(!imageUrl||!paper)return;$('pilot-image').hidden=false;$('pilot-page-link').hidden=false;$('pilot-image-status').textContent='';});

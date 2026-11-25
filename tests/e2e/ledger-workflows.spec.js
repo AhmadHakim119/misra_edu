@@ -46,10 +46,10 @@ test('single upload locks selection, opens the complete extraction and restores 
   await page.locator('#ledger-upload-submit').click();
   await expect(page.locator('#upload-accepted')).toContainText('Extraction job completed');
   await expect(page.locator('#ledger-upload-submit')).toBeDisabled();expect(state.writes.filter(w=>w.kind==='upload')).toHaveLength(1);
-  await page.getByRole('button',{name:'Open extracted paper',exact:true}).click();await expect(page).toHaveURL(/extraction.html\?.*submission_id=s/);
+  await page.getByRole('button',{name:'Open extracted paper',exact:true}).click();await expect(page).toHaveURL(/extraction\.html$/);
   await page.goto('/app/index.html?exam_id=e&view=upload&job_id=j');
   await page.locator('#upload-link').click();await expect(page.locator('#upload-accepted')).toContainText('Extraction job completed');
-  await expect(page).toHaveURL(/view=upload.*job_id=j/);await page.reload();await expect(page.locator('#ledger-upload')).toBeVisible();await expect(page.locator('#upload-accepted')).toContainText('Extraction job completed');await expect(page.locator('#ledger-files')).toBeDisabled();expect(state.writes.filter(w=>w.kind==='upload')).toHaveLength(1);
+  await expect(page).toHaveURL(/view=upload$/);await page.reload();await expect(page.locator('#ledger-upload')).toBeVisible();await expect(page.locator('#upload-accepted')).toContainText('Extraction job completed');await expect(page.locator('#ledger-files')).toBeDisabled();expect(state.writes.filter(w=>w.kind==='upload')).toHaveLength(1);
   await page.locator('#activity-link').click();await expect(page.locator('#ledger-upload')).toBeHidden();await expect(page.locator('#ledger-activity')).toBeVisible();
   await page.locator('#upload-link').click();await expect(page.locator('#upload-accepted')).toContainText('Extraction job completed');
   await page.locator('#upload-another').click();await expect(page.locator('#ledger-files')).toBeEnabled();
@@ -68,7 +68,7 @@ test('a durable OCR job confirms acceptance when the submission record is empty'
   await page.locator('#ledger-files').setInputFiles(file('synthetic.pdf'));await page.locator('#ledger-upload-submit').click();
   await expect(page.locator('#upload-accepted')).toContainText('Extraction job completed');
   await expect(page.locator('#upload-error')).toBeHidden();await expect(page.locator('#ledger-upload-submit')).toBeDisabled();
-  await expect(page).toHaveURL(/job_id=j/);expect(state.writes.filter(w=>w.kind==='upload')).toHaveLength(1);
+  await expect(page).toHaveURL(/view=upload$/);expect(state.writes.filter(w=>w.kind==='upload')).toHaveLength(1);
 });
 
 for(const uploadShape of ['missing','conflict'])test(`unconfirmed ${uploadShape} record blocks duplicate upload`,async({page})=>{

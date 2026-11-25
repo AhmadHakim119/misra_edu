@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from google.genai.errors import APIError as GeminiAPIError
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -10,7 +11,9 @@ from schemas.rubric_input import (
     RubricVersionCreateRequest,
     RubricVersionUpdateRequest,
 )
-from services.rubric_service import suggest_rubric
+from services.inference_service import LocalInferenceError, LocalInferenceInputError
+from services.rubric_service import RubricDraftError, suggest_rubric
+from schemas.rubric_v2 import RubricPolicy, mark_hundredths
 from services.auth_dependencies import require_instructor
 from services.audit_service import record_audit_event
 from services.rubric_version_service import (
@@ -167,10 +170,33 @@ def suggest_existing_question_rubric_version(
             current_rubric = {}
     try:
         from services.assessment_guide_service import review_guide
+        from services.answer_key_service import drafting_revision, drafting_version, public_version, rubric_reference_text
         from services.material_retrieval_service import retrieve_for_question, provider_sources
         from models import QuestionMaterialScopeVersion, AssessmentMaterialScopeVersion
         guide = review_guide(db, exam)
-        guide_row = next(row for row in guide['questions'] if row['question_id'] == question.id)
+        guide_row = next((row for row in guide['questions'] if row['question_id'] == question.id), None)
+        if guide_row is None:
+            raise HTTPException(404, 'Question is unavailable for rubric drafting.')
+        if payload.fill_pending_only and not guide_row['needs_rubric_draft']:
+            raise HTTPException(409, 'This question already has a draft. Refresh the guide.')
+        reference = guide_row['answer_key']
+        key_selection = payload.preview_answer_key if payload.preview_only else None
+        stale_key = {'code':'answer_key_changed',
+                     'message':'The saved key changed. Reload the answer key before drafting again.'}
+        if key_selection is not None and key_selection.revision != drafting_revision(reference):
+            raise HTTPException(409, stale_key)
+        preview = payload.preview_question if payload.preview_only else None
+        if preview:
+            try:
+                mark_hundredths(preview.max_score)
+            except ValueError:
+                raise HTTPException(422, 'Enter question marks with at most two decimal places.') from None
+        answer_text = (None if payload.fill_pending_only else payload.answer_key) or reference['reference_text'] or ''
+        alternatives = '\n'.join(reference.get('acceptable_answers') or [])[:4000]
+        try:
+            pages = rubric_reference_text(question, reference, db) if reference.get('document_refs') else ''
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
         scope_data = guide_row['sources']
         context = None
         if scope_data and scope_data['mode'] != 'disabled':
@@ -179,31 +205,53 @@ def suggest_existing_question_rubric_version(
                 proposal_scope=db.get(model, scope_data['id'])))[0]
         from services.account_settings_service import profile_context
         instructor_profile = profile_context(db, user)
+        saved_policy = current_rubric.get('policy') if payload.fill_pending_only else None
         rubric = suggest_rubric(
-            question_text=question.question_text,
+            question_text=preview.text if preview else guide_row['question_text'],
             subject=exam.title,
-            max_score=float(question.max_score),
-            language=question.language,
-            answer_key=payload.answer_key or guide_row['answer_key']['reference_text'],
+            max_score=preview.max_score if preview else guide_row['max_score'],
+            language=preview.language if preview else guide_row['language'],
+            answer_key=answer_text + ('\nAcceptable alternatives:\n' + alternatives if alternatives else ''),
             course_level=payload.course_level,
             expected_method=payload.expected_method,
             instructor_notes=payload.instructor_notes,
-            grading_approach=payload.grading_approach,
-            policy=payload.policy,
+            grading_approach=(saved_policy or {}).get('grading_approach', payload.grading_approach),
+            policy=RubricPolicy.model_validate(saved_policy) if saved_policy else
+                (None if payload.fill_pending_only else payload.policy),
             current_rubric=current_rubric,
             course_sources=context,
             instructor_context=instructor_profile,
+            exact_scoring=payload.exact_scoring or payload.preview_only or payload.fill_pending_only or bool(current_rubric.get("scoring_contract")),
+            criterion_cues=[cue.model_dump() for cue in payload.criterion_cues],
+            reference_pages=pages,
         )
-    except ValueError as error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Rubric suggestion failed: {error}",
-        ) from error
+    except (RubricDraftError, LocalInferenceError, LocalInferenceInputError) as error:
+        raise HTTPException(502, str(error)) from None
+    except (GeminiAPIError, RuntimeError, OSError, ValueError):
+        raise HTTPException(502, 'AI drafting is temporarily unavailable. Check the selected setup and retry.') from None
 
+    document = rubric.model_dump()
+    if payload.preview_only:
+        qid = question.id
+        if key_selection is not None:
+            db.rollback()
+            key = drafting_version(qid, db)
+            current_revision = public_version(key)['drafting_revision'] if key else None
+            if current_revision != key_selection.revision:
+                raise HTTPException(409, stale_key)
+        return {'question_id': qid, 'rubric': document}
     try:
+        exam_id, institution_id, qid = exam.id, user.institution_id, question.id
+        db.rollback()
+        exam = db.query(Exam).filter_by(id=exam_id, institution_id=institution_id).with_for_update().one_or_none()
+        question = db.query(Question).filter_by(id=qid, exam_id=exam_id, institution_id=institution_id).with_for_update().one_or_none()
+        if not exam or not question or review_guide(db, exam)['review_token'] != guide['review_token']:
+            raise HTTPException(409, 'The question or answer key changed during drafting. Refresh and try again.')
+        if current_rubric.get('question_definition'):
+            document['question_definition'] = current_rubric['question_definition']
         version = create_rubric_version(
             question=question,
-            rubric_json=rubric.model_dump(),
+            rubric_json=document,
             source="ai",
             change_summary=(
                 (payload.change_summary or "AI-generated Rubric V2 draft for instructor review.")
@@ -224,6 +272,20 @@ def suggest_existing_question_rubric_version(
             "to make it active."
         ),
     }
+
+
+@router.post("/questions/{question_id}/rubric-preview")
+def preview_question_rubric(question_id: str, payload: ExistingQuestionRubricSuggestionRequest,
+                            db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    request = payload.model_copy(update={"preview_only": True, "fill_pending_only": False})
+    return suggest_existing_question_rubric_version(question_id, request, db, user)
+
+
+@router.post("/questions/{question_id}/draft-missing-rubric")
+def draft_missing_question_rubric(question_id: str,
+                                  db: Session = Depends(get_db), user: User = Depends(require_instructor)):
+    request = ExistingQuestionRubricSuggestionRequest(fill_pending_only=True)
+    return suggest_existing_question_rubric_version(question_id, request, db, user)
 
 
 @router.get("/questions/{question_id}/rubric")

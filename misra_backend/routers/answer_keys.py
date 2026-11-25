@@ -6,7 +6,9 @@ from database import get_db
 from models import AnswerKeyVersion, ProcessingJob, Question, User
 from schemas.answer_keys import AnswerKeyDraftRequest
 from services.auth_dependencies import require_instructor
-from services.answer_key_service import SETUP_DIR, approve_key, public_snapshot, public_version, resolve_answer_key, save_draft
+from services.answer_key_service import (
+    SETUP_DIR, AnswerKeyConflictError, approve_key, public_snapshot, public_version, resolve_answer_key, save_draft,
+)
 from services.audit_service import record_audit_event
 from services.rubric_version_service import get_effective_rubric
 from services.upload_security_service import UploadValidationError, remove_stored_uploads, store_validated_batch
@@ -62,6 +64,9 @@ def create_version(question_id: str, payload: AnswerKeyDraftRequest, db: Session
     try:
         version = save_draft(question, payload, db, user)
         return finish_change(db, user, version, 'answer_key_draft_created')
+    except AnswerKeyConflictError as error:
+        db.rollback()
+        raise HTTPException(409, {'code':'answer_key_changed', 'message':str(error)}) from None
     except ValueError as error:
         db.rollback()
         raise HTTPException(422, str(error)) from error
@@ -73,6 +78,9 @@ def edit_version(question_id: str, version_id: str, payload: AnswerKeyDraftReque
     version = owned_version(db, question, version_id)
     try:
         return finish_change(db, user, save_draft(question, payload, db, user, version), 'answer_key_draft_updated')
+    except AnswerKeyConflictError as error:
+        db.rollback()
+        raise HTTPException(409, {'code':'answer_key_changed', 'message':str(error)}) from None
     except ValueError as error:
         db.rollback()
         raise HTTPException(409, str(error)) from error

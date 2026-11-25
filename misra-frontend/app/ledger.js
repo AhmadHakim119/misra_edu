@@ -7,7 +7,7 @@
   const number = value => value == null ? '—' : Number.isFinite(Number(value)) ? Number(value).toLocaleString(undefined,{maximumFractionDigits:2}) : '—';
   const score = answer => answer?.teacher_override_score ?? answer?.score ?? null;
   const active = new Set(['queued','processing','retrying','stopping']);
-  const params = new URLSearchParams(location.search);
+  const params = MisraWorkspace.currentURL().searchParams;
   let exams = [], papers = [], jobs = [], examId = '', paperId = '', questionId = '', pageIndex = 0;
   let results = null, extraction = null, epoch = 0, paperEpoch = 0, locationEpoch = 0, timer = null,currentView='papers';
   let dirty = false, busy = false, reviewOnly = false, jobsUnavailable = false, selectedJobSignature = '', lastPaperMarkup = '';
@@ -47,7 +47,7 @@
   function syncURL() {
     const query = new URLSearchParams(); if (examId) query.set('exam_id',examId); if (paperId) query.set('submission_id',paperId); if (questionId) query.set('question_id',questionId);
     if(currentView!=='papers') query.set('view',currentView); const job=window.MisraLedgerWorkflows?.currentJobId();if(job) query.set('job_id',job);
-    history.replaceState(null,'',`${location.pathname}?${query}`);
+    MisraWorkspace.replaceRoute(`${location.pathname}?${query}${location.hash}`);
   }
   function nativeLink(file, values={}) { const context=file==='submission'&&questionId?{question_id:questionId,...(currentRow()?.sources?.[0]?.id?{source_id:currentRow().sources[0].id}:{})}:{};return `${file==='submission'?'extraction':file==='grade-results'?'history':file}.html?${new URLSearchParams({exam_id:examId,...context,...values,submission_id:values.id||paperId})}`; }
   function renderAssessments() {
@@ -189,7 +189,7 @@
     const alternatives=Array.isArray(savedAlternatives) ? savedAlternatives.filter(value=>typeof value==='string' && value) : [];
     const verification=answer?.grading_raw_response?.verification;
     const verificationCriteria=Array.isArray(verification?.criteria) ? verification.criteria : [];
-    const verificationNotes=verificationCriteria.map(c=>`<p><strong>${esc(definitions.get(c.criterion_id)?.title||c.criterion_id)}</strong>: ${esc(c.explanation)}</p>`).join('');
+    const verificationNotes=verificationCriteria.map(c=>`<p><strong>${esc(MisraReview.criterionLabel(c.criterion_id, pack?.rubric?.criteria||[], criteria))}</strong>: ${esc(c.explanation)}</p>`).join('');
     const flaggedVerification=verification?.status==='needs_review';
     const verificationPanel=verification?.summary ? (flaggedVerification
       ? `<section class="verification-finding" aria-labelledby="verification-finding-title"><h3 id="verification-finding-title">Verification findings</h3><p dir="auto">${esc(verification.summary)}</p>${verificationNotes}</section>`
@@ -205,10 +205,10 @@
       <div class="question-more">${policyBrief ? `<div class="rationale-preview"><h3>Scoring policy used</h3><p dir="auto">${excerpt(policyBrief)}</p></div>` : ''}${answer?.score!=null ? `<div class="rationale-preview"><h3>Why the AI awarded these marks</h3><p dir="auto">${excerpt(answer?.reasoning || answer?.feedback) || 'No recorded rationale yet.'}</p></div>` : ''}${row.mapping_flags?.length ? `<p class="notice">${esc(row.mapping_flags.map(f=>f.message).join(' '))} <a href="${nativeLink('submission',{id:paperId})}">Check this answer in Extraction</a></p>` : ''}
       ${extraction.grading_scope?.kind==='paper_only' ? '<p class="notice">Paper component only. External practical questions are excluded—not scored as zero.</p>' : ''}
       <details><summary>Extracted answer</summary><pre dir="auto">${esc(revisions.length?(row.sources||[]).map(source=>source.area_revision?.text??source.extracted_text).join('\n'):answer?.raw_ocr_text || row.answer?.raw_ocr_text || 'No extracted answer recorded.')}</pre></details>
-      ${answer?.score!=null ? `<details><summary>Approved rules &amp; references used</summary>${pack ? `<p>Rubric and policy version ${esc(pack.rubric_version_id || 'legacy')} · ${refs?.scope_origin==='assessment' ? 'Assessment default' : 'Question sources'} ${refs?.scope_version_number ? `revision ${number(refs.scope_version_number)}` : ''}</p>
+      ${answer?.score!=null ? `<details><summary>Approved rules &amp; references used</summary>${pack ? `<p>Saved rubric and scoring policy · ${refs?.scope_origin==='assessment' ? 'Assessment default' : 'Question sources'} ${refs?.scope_version_number ? `revision ${number(refs.scope_version_number)}` : ''}</p>
       ${reference || alternatives.length ? `<h3>Saved answer key</h3>${reference ? `<pre dir="auto">${esc(reference)}</pre>` : ''}${alternatives.length ? `<ul>${alternatives.map(value=>`<li dir="auto">${esc(value)}</li>`).join('')}</ul>` : ''}` : ''}
       ${policyFields.length ? `<h3>Saved scoring policy</h3><dl class="saved-policy">${policyFields.map(([name,value])=>`<div><dt>${esc(policyNames[name] || name.replaceAll('_',' '))}</dt><dd dir="auto">${esc(value)}</dd></div>`).join('')}</dl>` : ''}
-      <details><summary>Complete saved snapshot</summary><pre>${esc(JSON.stringify({answer_key:key,policy:pack.policy},null,2))}</pre></details>` : '<p>This older run has no complete package snapshot. Open history in Exams for retained records.</p>'}</details>
+      ` : '<p>This older run has no complete package snapshot. Open history in Exams for retained records.</p>'}</details>
       <details><summary>AI rationale</summary><p dir="auto">${esc(answer?.reasoning || answer?.feedback || 'No rationale recorded.')}</p></details>
       <a href="${nativeLink('grade-results',{id:paperId})}">Full grading history and review tools</a>` : ''}</div>`;
     window.MisraTeaching?.showEvidence(pack,criteria);
@@ -352,14 +352,16 @@
     let markup='';
     if(active.has(job?.status) || ['failed','stopped'].includes(job?.status)) {
       const running=active.has(job.status);
-      const canStartNew = job.status==='failed' && extraction?.readiness?.bulk_grading_allowed &&
-        Array.isArray(results?.answers) && !results.answers.some(answer=>answer.score!=null || answer.teacher_override_score!=null);
+      const canContinue = !running && job.operation!=='regrade_corrected_answer' &&
+        extraction?.readiness?.bulk_grading_allowed && Array.isArray(results?.answers) &&
+        extraction.questions.some(row=>score(results.answers.find(answer=>answer.question_id===row.question.id))==null);
       const title=job.status==='stopping' ? 'Stopping grading…' : job.status==='stopped' ? 'Grading stopped'
         : job.status==='queued' ? 'AI grading queued' : running ? 'AI grading in progress' : 'Grading couldn’t finish';
       const progress=running ? MisraJobStatus.progress(job) : '';
-      const action=job.status==='stopped'
-        ? `<button type="button" class="primary" data-retry="${esc(job.id)}">Resume grading</button>`
-        : canStartNew ? '<button type="button" class="primary" data-grade data-i18n disabled>Grade with current AI setup</button>' : '';
+      const useCurrent=canContinue ? `<button type="button" class="primary" data-grade data-continue-from="${esc(job.id)}" data-i18n disabled>Continue with current AI setup</button>` : '';
+      const resume=job.status==='stopped'
+        ? `<button type="button" ${useCurrent?'':'class="primary"'} data-retry="${esc(job.id)}" data-i18n>${useCurrent?'Resume grading with original setup':'Resume grading'}</button>` : '';
+      const action=useCurrent+resume;
       markup=`<header><h2 id="grading-run-title" data-i18n>${title}</h2><a href="activity.html" data-i18n>${running || action?'View activity':'Open Activity to retry'}</a></header><p role="status" data-i18n>${esc(MisraJobStatus.message(job))}</p>${progress}${MisraJobStatus.details(job,esc)}${action?`<div class="inline-actions">${action}</div>`:''}`;
     } else if(job?.status==='completed') {
       const saved=results?.answers?.some(a=>score(a)!=null);
@@ -384,10 +386,19 @@
       $('grade-editor').innerHTML='';return;
     }
     const confidence=answer.final_confidence ?? answer.llm_confidence;
+    const exact=answer.grading_raw_response?.grading_package?.rubric?.scoring_contract==='exact';
+    const criterionControls=criteria.map(c=>{
+      const definition=definitions.get(c.criterion_id),value=Number(human.get(c.criterion_id)?.points_earned??c.points_earned);
+      const attributes=`data-criterion="${esc(c.criterion_id)}" data-max="${Number(c.max_points)}" required`;
+      const marks=definition?.scoring_type==='binary'?[0,Number(c.max_points)]:definition?.performance_levels?.map(level=>Number(level.points_earned));
+      const control=exact&&marks?.length?`<select ${attributes}>${[...marks].sort((a,b)=>b-a).map(mark=>`<option value="${mark}" ${mark===value?'selected':''}>${number(mark)}</option>`).join('')}</select>`:
+        `<input type="number" ${attributes} min="0" max="${Number(c.max_points)}" step="0.01" value="${value}">`;
+      return `<label>${esc(definition?.title||definition?.description||'Recorded criterion')} / ${number(c.max_points)}${control}</label>`;
+    }).join('');
     $('grade-editor').innerHTML=`<form id="instructor-grade" class="grade-form"><h3>Instructor grade · Question ${esc(currentRow().question.question_number)}</h3>${answer.grading_raw_response?.grading_package?.selected_answer_areas?.length?'<p>New AI proposal: '+number(answer.score)+' / '+number(answer.max_score)+'. Review before saving your final grade.</p><button type="button" id="use-ai-proposal">Use AI proposal</button>':''}<div class="grade-row"><span class="recorded">${number(score(answer))} / ${number(answer.max_score)}</span><label class="visually-hidden" for="instructor-score">Instructor score</label><input type="number" id="instructor-score" min="0" max="${Number(answer.max_score)}" step="0.01" value="${Number(score(answer))}" required><button class="primary" type="submit">Save instructor grade</button></div>
       <p class="confidence">${confidence==null ? 'Model estimate not recorded' : `Model estimate ${number(confidence)}% · uncalibrated`}. Not a probability that this grade is correct. <strong>${answer.needs_review ? 'Instructor review required.' : 'Not flagged; still check the work.'}</strong></p>
       <label for="decision-reason">Decision reason <small>required for a changed grade</small></label><select id="decision-reason"><option value="">Choose a reason if changing the AI grade</option>${Object.entries(reasons).map(([id,label])=>`<option value="${id}">${label}</option>`).join('')}</select>
-      <details class="criterion-edit"><summary>Adjust criterion marks (optional)</summary>${criteria.map(c=>`<label>${esc(definitions.get(c.criterion_id)?.title || definitions.get(c.criterion_id)?.description || 'Recorded criterion')} / ${number(c.max_points)}<input type="number" data-criterion="${esc(c.criterion_id)}" data-max="${Number(c.max_points)}" min="0" max="${Number(c.max_points)}" step="0.01" value="${Number(human.get(c.criterion_id)?.points_earned ?? c.points_earned)}" required></label>`).join('')}</details>
+      <details class="criterion-edit"><summary>Adjust criterion marks (optional)</summary>${criterionControls}</details>
       <label for="instructor-note">Instructor note (optional)</label><textarea id="instructor-note" maxlength="1000">${esc(answer.teacher_notes || '')}</textarea>
       <label><input type="checkbox" id="review-warranted" ${answer.needs_review ? 'checked' : ''}> This answer needed instructor review</label>
       ${answer.needs_review?'<label><input type="checkbox" id="review-evidence-checked" required> I checked the original work and the flagged criteria before saving this decision</label>':''}
@@ -497,7 +508,8 @@
         jobs=jobs.map(job=>job.id===id?{...job,...resumed}:job);
         renderGradingRun();
       } else {
-        const response=await MisraAPI.gradeSubmission(paperId);
+        const source=button.dataset.continueFrom;
+        const response=source ? await MisraAPI.continueGrading(paperId,source) : await MisraAPI.gradeSubmission(paperId);
         if(!response?.job?.id)throw Error('Grading acceptance is uncertain.');
         const paper=papers.find(p=>p.id===paperId);
         if(paper)paper.latest_grading_job=response.job;

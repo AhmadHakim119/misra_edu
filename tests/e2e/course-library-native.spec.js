@@ -131,7 +131,7 @@ test('unreviewed chapter files can be saved as pending drafts and idle save does
   expect(state.writes[0].body.allow_pending_sources).toBe(true);expect(state.writes[0].body.bindings[0].page_indices).toHaveLength(28);
   expect(state.scopes.e[0].status).toBe('draft');await expect(page.locator('#chapter-save-selection')).toBeDisabled();
   await page.reload();await expect(page.locator('#guide-questions-stage')).toBeVisible();await page.locator('#guide-sources-tab').click();await expect(page.locator('[data-chapter-key="chapter-5-v:1-28"]')).toBeChecked();
-  await expect(page.locator('#chapter-selection-status')).toContainText('approved together with the marking guide');
+  await expect(page.locator('#chapter-selection-status')).toContainText('pending whole-guide approval');
   const geometry=await page.evaluate(()=>{const bar=document.querySelector('.app-bar').getBoundingClientRect(),nav=document.querySelector('#native-exam-navigation').getBoundingClientRect();return {height:bar.height,gap:nav.top-bar.bottom};});
   expect(geometry.height).toBeGreaterThanOrEqual(64);expect(geometry.gap).toBeLessThanOrEqual(12);
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
@@ -144,13 +144,13 @@ test('chapter review link opens that material directly in the library reviewer',
   await fixture(page,{chapterFiles:true});await page.route('**/api/materials/chapter-5/versions/chapter-5-v/pages*',route=>route.fulfill({json:{version:{id:'chapter-5-v',status:'draft',media_type:'application/pdf',page_count:28,ingestion_status:'ready',approved_page_indices:[]},items:[{page_index:0,text:'Synthetic source text',text_sha256:'a'.repeat(64),chunks:[]}]}}));
   await page.goto('/app/setup.html?exam_id=e');await expect(page.locator('#guide-questions-stage')).toBeVisible();await page.locator('#guide-sources-tab').click();
   await page.locator('.chapter-option').filter({has:page.locator('[data-chapter-key="chapter-5-v:1-28"]')}).getByRole('link',{name:'Preview source pages'}).click();
-  await expect(page).toHaveURL(/material_id=chapter-5/);await expect(page.locator('#material-page-text')).toHaveValue('Synthetic source text');
+  await expect(page).toHaveURL(/course-library\.html$/);await expect(page.locator('#material-page-text')).toHaveValue('Synthetic source text');
 });
 
 test('failed chapter selection retains checked boxes and blocks leaving until discard',async({page})=>{
   await fixture(page,{failScope:true});await page.goto('/app/setup.html?exam_id=e');await expect(page.locator('#guide-questions-stage')).toBeVisible();await page.locator('#guide-sources-tab').click();await page.locator('[data-chapter-key]').first().check();await page.locator('#chapter-save-selection').click();
   await expect(page.locator('[data-chapter-key]').first()).toBeChecked();await expect(page.locator('#assessment-sources-host')).toContainText('Synthetic source rejection');
-  await page.locator('#assessment-chapters a').click();await answerWorkspaceDialog(page,'cancel');await expect(page).toHaveURL(/setup.html/);await expect(page.locator('[data-chapter-key]').first()).toBeChecked();
+  await page.locator('#assessment-chapters').getByRole('link',{name:'Open course library'}).click();await answerWorkspaceDialog(page,'cancel');await expect(page).toHaveURL(/setup.html/);await expect(page.locator('[data-chapter-key]').first()).toBeChecked();
 });
 
 test('course library shows the existing book without uploading and supports chapter review',async({page},info)=>{

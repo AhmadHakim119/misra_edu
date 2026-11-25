@@ -15,8 +15,8 @@ from models import (Question, RubricVersion, AnswerKeyVersion, MaterialVersion, 
                     QuestionMaterialScopeVersion, AssessmentMaterialScopeVersion)
 from schemas.answer_keys import AnswerKeyDraftRequest
 from schemas.course_materials import MaterialScopeRequest, AssessmentMaterialScopeRequest, MaterialApprovalRequest
-from services.assessment_readiness_service import definition_errors
-from services.rubric_version_service import approve_rubric_version, validate_rubric_v2
+from services.assessment_readiness_service import PENDING_RUBRIC_MESSAGE, definition_errors
+from services.rubric_version_service import approve_rubric_version, requires_exact_scoring, validate_rubric_v2
 from services.question_definition_service import current_definition, proposed_definition
 from services.grading_scope_service import active_questions, is_removed_question
 from services import answer_key_service as keys
@@ -105,17 +105,23 @@ def review_guide(db, exam):
         draft_errors = []
         if version and version.status == 'draft':
             try:
-                proposed_maximum = validate_rubric_v2(rubric).max_score
+                draft_rubric = validate_rubric_v2(rubric)
+                proposed_maximum = draft_rubric.max_score
                 definition = proposed_definition(question, rubric)
+                if draft_rubric.scoring_contract is None and requires_exact_scoring(db, question.id):
+                    draft_errors.append('This question uses exact scoring. Save exact credit levels for this draft.')
             except ValueError as error:
                 draft_errors.append(str(error))
         # Review the proposed definition without mutating the current question.
         # Existing grading/preflight still compares against the approved total.
         reviewed_question = SimpleNamespace(question_text=definition['question_text'], max_score=proposed_maximum)
         issues = definition_errors(reviewed_question, rubric) + draft_errors
+        needs_rubric_draft = PENDING_RUBRIC_MESSAGE in issues
+        if needs_rubric_draft:
+            issues.remove(PENDING_RUBRIC_MESSAGE)
         if not version and db.query(RubricVersion).filter(RubricVersion.question_id == question.id).first():
             issues.append('No current rubric or draft is available; restore a valid marking definition.')
-        key = _selected(db, AnswerKeyVersion, AnswerKeyVersion.question_id, question.id)
+        key = keys.drafting_version(question.id, db)
         reference = dict(id=key.id, status=key.status, version_number=key.version_number,
             mode=key.mode, reference_text=key.reference_text, acceptable_answers=key.acceptable_answers,
             document_refs=key.document_refs, change_summary=key.change_summary) if key else dict(
@@ -156,7 +162,7 @@ def review_guide(db, exam):
             grading_input=routing.mode if routing else 'adaptive',
             question_text=definition['question_text'], max_score=proposed_maximum, current_max_score=current_maximum,
             rubric_version_id=version.id if version else None, rubric_status=version.status if version else 'legacy',
-            rubric=rubric, answer_key=reference, source_exception=_scope(exception),
+            rubric=rubric, answer_key=reference, needs_rubric_draft=needs_rubric_draft, source_exception=_scope(exception),
             sources=_scope(scope), source_references=_labels(db, scope, exam), errors=issues, warnings=source_warnings))
         errors.extend(f'Question {question.question_number}: {issue}' for issue in issues)
     numbers = {}
@@ -176,7 +182,8 @@ def review_guide(db, exam):
         r['answer_key']['status'] == 'draft' for r in rows) + sum(
         bool(r['source_exception'] and r['source_exception']['status'] == 'draft') for r in rows) + int(bool(default and default.status == 'draft')) + len(source_approvals)
     return dict(**manifest, review_token=token, errors=errors, warnings=warnings,
-        pending_count=pending, can_approve=bool(rows) and not errors, total_marks=sum(r['max_score'] for r in rows),
+        pending_count=pending, can_approve=bool(rows) and not errors and not any(r['needs_rubric_draft'] for r in rows),
+        total_marks=sum(r['max_score'] for r in rows),
         paper_total_marks=sum(r['max_score'] for r in rows if (r['rubric'].get('policy') or {}).get('assessment_scope') != 'external'))
 
 
@@ -205,6 +212,8 @@ def approve_guide(db, exam, user, expected_token, *, approve_selected_sources=Fa
         raise ValueError('The guide changed after review. Refresh and review the current saved definitions before approval.')
     if review['errors']:
         raise ValueError('Resolve the guide checks before approval: ' + ' '.join(review['errors']))
+    if any(row['needs_rubric_draft'] for row in review['questions']):
+        raise ValueError('Generate or complete the remaining question rubrics, then review the guide.')
     if review['source_approvals'] and not approve_selected_sources:
         raise ValueError('Confirm approval of the selected source pages together with the guide.')
     changed = []

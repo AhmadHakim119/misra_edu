@@ -16,6 +16,18 @@
   const canLeave = () => !busy && (!dirty || confirmAction('Discard unsaved assessment-source changes?'));
   let summaryPending = false;
   let sourceDetailsOpen = false;
+  const onSelectionChange = () => {
+    if (native) window.dispatchEvent(new CustomEvent('misra:assessment-sources-changed'));
+  };
+  function pageRanges(indices) {
+    const ranges = [];
+    for (const index of [...indices].sort((a,b)=>a-b)) {
+      const page=index+1,last=ranges.at(-1);
+      if (last && page===last[1]+1) last[1]=page;
+      else ranges.push([page,page]);
+    }
+    return ranges.map(([first,last])=>first===last?String(first):first+'-'+last).join(', ');
+  }
   const summaryRows = () => (data?.questions || []).map(q => `<li>Question ${esc(q.question_number)}: ${q.origin === 'assessment' ? 'uses assessment default' : q.origin === 'question' ? `approved question exception (${esc(q.scope?.mode)})` : q.origin === 'blocked' ? esc(q.error) : 'no approved source scope'}</li>`).join('');
   function updateSaveStatus() {
     const status = host.querySelector('[data-default-save-state]');
@@ -63,7 +75,7 @@
     const draft = data?.versions?.find(v => v.status === 'draft');
     const disabled = busy ? 'disabled' : '';
     host.innerHTML = `${error ? `<div role="alert"><p>${esc(error)}</p><button type="button" class="btn btn-secondary" data-default-reload ${disabled}>Reload saved sources</button></div>` : ''}
-      ${!data ? '' : `<p class="section-copy">Choose approved material once for this assessment. Every question uses it unless it has an approved exception. Sources explain the subject; your rubric still decides marks.</p>
+      ${!data ? '' : `<p class="section-copy">${native?'Set how source pages are used across the assessment. A question can have its own exception.':'Choose approved material once for this assessment. Every question uses it unless it has an approved exception. Sources explain the subject; your rubric still decides marks.'}</p>
       <p class="field-hint">${active ? `Active default${native ? '' : ` v${active.version_number}`} · ${esc(active.mode)}.` : 'No approved assessment default yet.'} Drafts do not affect grading or replace active defaults.</p>
       <button type="button" data-default-all ${busy || !choices().some(({v})=>v.status==='approved'&&v.approved_page_indices?.length) ? 'disabled' : ''}>Use all currently approved course materials</button><p class="field-hint">Copies checked pages into a draft. New material is never silently added. AI retrieves relevant passages per question.</p>
       <label for="assessment-source-mode">How should references be used?</label><select class="input select" id="assessment-source-mode" data-default-mode ${disabled}>
@@ -81,19 +93,29 @@
     const sourceRows = host.querySelector('.source-bindings');
     if (sourceRows && host.closest('#ledger-setup')) {
       const details = document.createElement('details'); details.open = sourceDetailsOpen;
-      const summary = document.createElement('summary'); summary.textContent = `Choose or adjust materials · ${rows.length} selected`;
+      const summary = document.createElement('summary'); summary.textContent = `Edit page ranges · ${rows.length} selected`;
       details.append(summary); sourceRows.before(details); details.append(sourceRows);
       details.addEventListener('toggle',()=>{sourceDetailsOpen=details.open;});
     }
-    host.querySelector('[data-default-mode]')?.addEventListener('change', () => { capture(); dirty = true; notice = ''; if (mode === 'disabled') rows = []; render(); });
-    host.querySelectorAll('input,select').forEach(el => el.addEventListener('input', () => { dirty = true; notice = ''; capture(); updateSaveStatus(); }));
-    host.querySelector('[data-default-add]')?.addEventListener('click', () => { capture(); rows.push({version_id:'',pages:''}); dirty = true; sourceDetailsOpen=true; render(); });
+    host.querySelector('[data-default-mode]')?.addEventListener('change', () => { capture(); dirty = true; notice = ''; if (mode === 'disabled') rows = []; render(); onSelectionChange(); });
+    host.querySelectorAll('[data-default-pages]').forEach(el => el.addEventListener('input', () => { dirty = true; notice = ''; capture(); updateSaveStatus(); onSelectionChange(); }));
+    host.querySelectorAll('[data-default-version]').forEach(el => el.addEventListener('change', () => {
+      if (native) {
+        const version=choices().find(({v})=>v.id===el.value)?.v;
+        el.closest('[data-default-row]').querySelector('[data-default-pages]').value=pageRanges(version?.approved_page_indices||[]);
+      }
+      dirty=true;notice='';capture();updateSaveStatus();onSelectionChange();
+    }));
+    host.querySelector('[data-default-add]')?.addEventListener('click', () => {
+      capture(); rows.push({version_id:'',pages:''}); dirty = true; sourceDetailsOpen=true; render();
+      host.querySelectorAll('[data-default-version]')[rows.length-1]?.focus();onSelectionChange();
+    });
     host.querySelector('[data-default-all]')?.addEventListener('click', () => {
       const latest = materials.map(m => (m.versions || []).filter(v => v.status === 'approved' && v.approved_page_indices?.length).sort((a,b)=>b.version_number-a.version_number)[0]).filter(Boolean);
       if (!latest.length || latest.length > 64) { error = 'Choose up to 64 currently approved materials. Check pages in the course library first.'; render(); return; }
-      mode = 'required'; rows = latest.map(v => ({version_id:v.id,pages:v.approved_page_indices.map(n=>n+1).join(', ')})); dirty = true; sourceDetailsOpen=false; notice = ''; error = ''; render();
+      mode = 'required'; rows = latest.map(v => ({version_id:v.id,pages:pageRanges(v.approved_page_indices)})); dirty = true; sourceDetailsOpen=false; notice = ''; error = ''; render(); onSelectionChange();
     });
-    host.querySelectorAll('[data-default-remove]').forEach(el => el.addEventListener('click', () => { capture(); rows.splice(Number(el.dataset.defaultRemove),1); dirty = true; render(); }));
+    host.querySelectorAll('[data-default-remove]').forEach(el => el.addEventListener('click', () => { capture(); rows.splice(Number(el.dataset.defaultRemove),1); dirty = true; render(); onSelectionChange(); }));
     host.querySelector('[data-default-save]')?.addEventListener('click', () => save(false));
     host.querySelector('[data-default-approve]')?.addEventListener('click', () => save(true));
     host.querySelector('[data-default-reload]')?.addEventListener('click', async () => { if (await canLeave()) load(examId,courseId); });
@@ -109,7 +131,7 @@
       if (!Array.isArray(scope?.versions) || !Array.isArray(scope?.questions) || !Array.isArray(library)) throw new Error('Source response is incomplete. Reload before saving.');
       data = scope; materials = library;
       const selection = data.versions.find(v => v.status === 'draft') || data.versions.find(v => v.status === 'approved');
-      mode = selection?.mode || 'required'; rows = (selection?.bindings || []).map(b => ({version_id:b.version_id,pages:b.page_indices.map(n=>n+1).join(', ')}));
+      mode = selection?.mode || 'required'; rows = (selection?.bindings || []).map(b => ({version_id:b.version_id,pages:pageRanges(b.page_indices)}));
     } catch (failure) { if (current === epoch) error = failure.message; }
     finally { if (current === epoch) { loading = false; render(); window.dispatchEvent(new CustomEvent('misra:assessment-sources-loaded')); } }
   }
@@ -127,7 +149,7 @@
       });
       if (mode !== 'disabled' && !bindings.length) throw new Error('Add approved material or explicitly disable assessment references.');
       body = {mode,bindings,...(!approve && allowPending?{allow_pending_sources:true}:{})};
-    } catch (failure) { error = failure.message; render(); return; }
+    } catch (failure) { error = failure.message; render(); onSelectionChange(); return; }
     if (approve && !await confirmAction('Approve these defaults for future grading of this assessment? Question exceptions remain in force. Existing grades are not changed.')) return;
     const current = epoch, id = examId;
     busy = true; error = ''; render();
@@ -148,7 +170,7 @@
         window.dispatchEvent(new CustomEvent('misra:assessment-sources-approved', {detail:{examId:id}}));
       }
     } catch (failure) { if (current === epoch) error = `${failure.message} ${dirty ? 'Your entries are retained.' : notice}`; }
-    finally { if (current === epoch) { busy = false; render(); if (summaryPending) { summaryPending = false; refreshSummary(); } } }
+    finally { if (current === epoch) { busy = false; render(); onSelectionChange(); if (summaryPending) { summaryPending = false; refreshSummary(); } } }
   }
   function reset() {
     if (busy) return false;
@@ -158,7 +180,7 @@
   routeScope?.guard(() => busy, hasUnsaved);
   window.MisraAssessmentSources = {hasUnsaved, canLeave, isBusy:()=>busy,reload:()=>load(examId,courseId),async saveDraft(options={}){if(dirty && !busy)await save(false,native && options.allowPendingSources===true);return !hasUnsaved();},reset,
     selection(){capture();return {ready:!loading&&Boolean(data),mode,bindings:rows.map(row=>{const choice=choices().find(({v})=>v.id===row.version_id);if(!choice)throw Error('Finish the existing source selection before choosing chapters.');return {version_id:row.version_id,page_indices:pages(row.pages,choice.v,native),criterion_id:null,chunk_ids:[]};})};},
-    chooseChapters(bindings,nextMode){if(loading||busy||!data)return false;rows=bindings.map(b=>({version_id:b.version_id,pages:b.page_indices.map(n=>n+1).join(', ')}));mode=nextMode;dirty=true;notice='';error='';render();return true;}
+    chooseChapters(bindings,nextMode){if(loading||busy||!data)return false;rows=bindings.map(b=>({version_id:b.version_id,pages:pageRanges(b.page_indices)}));mode=nextMode;dirty=true;notice='';error='';render();return true;}
   };
   onWindow('misra:assessment-loaded', event => load(event.detail.examId,event.detail.courseId));
   onWindow('misra:material-approved', () => { if (!hasUnsaved()) load(examId,courseId); });

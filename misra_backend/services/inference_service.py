@@ -11,11 +11,11 @@ from urllib.parse import urlparse
 import urllib.request
 
 from PIL import Image
-from services.free_model_gateway import FreeCompletion, complete_free
+from services.free_model_gateway import DEFAULT_FREE_MODEL, FreeCompletion, complete_routed
 from services.gemini_client import DEFAULT_MODEL, generate as gemini_generate
 from services.openrouter_client import OpenRouterError
 
-PROFILE_SUPPORT_VERSION = 6
+PROFILE_SUPPORT_VERSION = 8
 
 
 class LocalInferenceError(OpenRouterError):
@@ -50,7 +50,7 @@ def configuration(task):
     model = os.getenv(f'{task.upper()}_MODEL')
     if not model:
         model = (os.getenv('LOCAL_AI_MODEL', '') if provider == 'local' else
-                 os.getenv('OPENROUTER_GRADING_MODEL', 'nvidia/nemotron-3-super-120b-a12b:free')
+                 os.getenv('OPENROUTER_GRADING_MODEL', DEFAULT_FREE_MODEL)
                  if provider == 'openrouter_free' else DEFAULT_MODEL)
     return {'provider': provider, 'model': model}
 
@@ -253,18 +253,19 @@ def _local_completion(contents, model):
         'prompt_tokens':usage.get('prompt_tokens'), 'completion_tokens':usage.get('completion_tokens')})
 
 
-def complete(contents, task='grading', json_mode=True, *, response_schema: dict | None = None):
+def complete(contents, task='grading', json_mode=True, *, response_schema: dict | None = None, exclude_models=()):
     from services.grading_control import check_grading_active
     check_grading_active()
-    result = _complete(contents, task, json_mode, response_schema)
+    result = _complete(contents, task, json_mode, response_schema, exclude_models)
     check_grading_active()
     return result
 
 
-def _complete(contents, task, json_mode, response_schema):
+def _complete(contents, task, json_mode, response_schema, exclude_models):
     config = configuration(task)
     if config['provider'] == 'openrouter_free':
-        return complete_free(contents, model=config['model'])
+        return complete_routed(contents, model=config['model'], response_schema=response_schema,
+                               exclude_models=exclude_models)
     if config['provider'] == 'local':
         from services.inference_profiles import FULL_LOCAL_PROFILE, VISION_MODEL, active_profile
         profile = active_profile()
@@ -275,7 +276,8 @@ def _complete(contents, task, json_mode, response_schema):
                     config = profile['tasks']['vision_grading']
             vision = config['model'] == VISION_MODEL
             return _ollama_completion(contents, config['model'], vision=vision,
-                response_schema=response_schema if vision else None, json_mode=json_mode if task=='ocr' else True)
+                response_schema=response_schema if vision or task in {'grading', 'setup'} else None,
+                json_mode=json_mode if task == 'ocr' else True)
         return _local_completion(contents, config['model'])
     if config['provider'] == 'gemini':
         return FreeCompletion(gemini_generate(contents, model=config['model'], json_mode=json_mode), config)
@@ -286,11 +288,11 @@ def generate_ocr(contents, json_mode=False, **kwargs):
     return complete(contents, task='ocr', json_mode=json_mode).text
 
 
-def generate_setup(contents, json_mode=False, **kwargs):
+def generate_setup(contents, json_mode=False, *, response_schema=None, **kwargs):
     from services.inference_profiles import active_profile
     profile = active_profile()
     items = [contents] if isinstance(contents, str) else list(contents)
     if profile and profile['setup_images_use_ocr'] and any(isinstance(item, Image.Image) for item in items):
         # Reading setup page images uses the selected page-reading model.
         return complete(items, task='ocr', json_mode=json_mode).text
-    return complete(items, task='setup', json_mode=json_mode).text
+    return complete(items, task='setup', json_mode=json_mode, response_schema=response_schema).text

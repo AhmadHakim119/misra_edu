@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Optional
 from typing import Literal
 
@@ -25,6 +25,7 @@ class QuestionCreateRequest(BaseModel):
     # Legacy clients explicitly create an approved manual rubric. New authoring
     # clients can save a draft without making it grading authority.
     approve_initial_rubric: bool = True
+    scoring_contract: Literal["exact"] | None = None
     question_number: str
     question_text: str
     max_score: float = Field(gt=0)
@@ -49,14 +50,42 @@ class RubricSuggestionRequest(BaseModel):
     policy: Optional[RubricPolicy] = None
 
 
+class CriterionCue(BaseModel):
+    id: str = Field(max_length=100)
+    title: str = Field(max_length=160)
+    description: str = Field(max_length=800)
+
+
+class RubricPreviewQuestion(BaseModel):
+    text: str = Field(min_length=1, max_length=20000)
+    max_score: float = Field(gt=0, le=9999.99, allow_inf_nan=False)
+    language: Literal["ar", "en", "mixed"]
+
+
+class RubricPreviewAnswerKey(BaseModel):
+    revision: str | None = Field(pattern=r'^[a-f0-9]{64}$')
+
+
 class ExistingQuestionRubricSuggestionRequest(BaseModel):
-    answer_key: Optional[str] = None
-    course_level: Optional[str] = None
-    expected_method: Optional[str] = None
-    instructor_notes: Optional[str] = None
+    exact_scoring: bool = Field(default=False, strict=True)
+    preview_only: bool = Field(default=False, strict=True)
+    fill_pending_only: bool = Field(default=False, strict=True)
+    answer_key: Optional[str] = Field(default=None, max_length=20000)
+    course_level: Optional[str] = Field(default=None, max_length=200)
+    expected_method: Optional[str] = Field(default=None, max_length=2000)
+    instructor_notes: Optional[str] = Field(default=None, max_length=4000)
+    criterion_cues: list[CriterionCue] = Field(default_factory=list, max_length=24)
+    preview_question: RubricPreviewQuestion | None = None
+    preview_answer_key: RubricPreviewAnswerKey | None = None
     grading_approach: GradingApproach = "balanced"
     policy: Optional[RubricPolicy] = None
     change_summary: Optional[str] = None
+
+    @model_validator(mode="after")
+    def exclusive_drafting_actions(self):
+        if self.preview_only and self.fill_pending_only:
+            raise ValueError("Choose either a preview or drafting a missing rubric.")
+        return self
 
 class RubricResolutionRequest(BaseModel):
     action: Literal["accept", "reject"]

@@ -29,8 +29,10 @@
     if (job.status === 'failed') {
       if(job.operation==='locate_answers')return 'Answer location could not finish. Your extracted text and grades are unchanged. Retry when the extraction service is available.';
       const error = job.error_message || '';
-      if (needsVision(job)) return 'This job used text-only Qwen. Save Qwen Vision in AI services and start a new grading job from the paper.';
+      if (needsVision(job)) return 'This job used text-only Qwen. Save Fully local Qwen in AI services, then open the paper to grade it.';
       if (/AI grading response failed validation:|invalid evidence citations/i.test(error)) return 'The AI response failed validation. No grade was saved for this answer. Review the error details, then retry grading.';
+      if (/shared free-model limit/i.test(error)) return 'OpenRouter reached its shared free limit. Use Fully local Qwen or retry after the limit resets.';
+      if (/No eligible OpenRouter model|OpenRouter catalog is unavailable/i.test(error)) return 'OpenRouter models are unavailable. Your work is saved. Retry later or use Fully local Qwen.';
       if (/Selected free model is not in the current catalog|Free model catalog is unavailable|selected (?:free )?model (?:is unavailable|does not accept images)/i.test(error)) return 'The grading model is unavailable. Your paper is saved. Retry after the model settings are fixed.';
       if (/429|quota|rate.limit|resource.exhausted/i.test(error)) return 'The AI service is busy. Your paper is saved. Try again later.';
       if (/queue unavailable|could not reach.*queue/i.test(error)) return 'Processing is unavailable. Your paper is saved. Retry when the service is back.';

@@ -47,16 +47,16 @@ test('workspace navigation keeps one navbar across all primary destinations and 
   await expect(nav.getByRole('link', {name: 'Exams', exact: true})).toHaveAttribute('aria-current', 'location');
   expect(await page.evaluate(() => window.testWorkspaceHeader === document.querySelector('.workspace-header'))).toBe(true);
   await page.locator('#native-exam-navigation').getByRole('link', {name: 'Upload papers'}).click();
-  await expect(page).toHaveURL(/\/app\/upload\.html\?exam_id=exam/);
+  await expect(page).toHaveURL(/\/app\/upload\.html\?view=upload$/);
   await expect(page.locator('#ledger-upload')).toBeVisible();
   await page.evaluate(() => history.back());
-  await expect(page).toHaveURL(/\/app\/grading\.html\?exam_id=exam/);
+  await expect(page).toHaveURL(/\/app\/grading\.html$/);
   await expect(page.locator('#exam-title')).toHaveText('Synthetic exam');
   expect(await page.evaluate(() => window.testWorkspaceHeader === document.querySelector('.workspace-header'))).toBe(true);
   expect(errors).toEqual([]);
   await page.screenshot({path:`.impeccable/review/workspace-navigation-exam-${info.project.name}.png`, fullPage: true, animations: 'disabled'});
   await page.evaluate(() => history.forward());
-  await expect(page).toHaveURL(/\/app\/upload\.html\?exam_id=exam/);
+  await expect(page).toHaveURL(/\/app\/upload\.html\?view=upload$/);
   await expect(page.locator('#ledger-upload')).toBeVisible();
 });
 

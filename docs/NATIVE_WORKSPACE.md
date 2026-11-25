@@ -116,7 +116,9 @@ Required-source grading still fails without applicable course evidence/citations
 
 ## Configured mixed-provider profile
 
-The local, ignored `misra_backend/.env` now selects this profile, as requested:
+**Settings → AI services → Server configuration** uses the providers in
+`misra_backend/.env`. This example keeps Gemini for page reading and uses
+OpenRouter for drafting, grading and verification.
 
 ```dotenv
 MISRA_AI_PROVIDER=openrouter_free
@@ -124,19 +126,19 @@ OCR_PROVIDER=gemini
 SETUP_PROVIDER=openrouter_free
 GRADING_PROVIDER=openrouter_free
 VERIFICATION_PROVIDER=openrouter_free
-SETUP_MODEL=qwen/qwen3.8-27b:free
-GRADING_MODEL=qwen/qwen3.8-27b:free
-VERIFICATION_MODEL=qwen/qwen3.8-27b:free
+OPENROUTER_GRADING_MODEL=nvidia/nemotron-3.5-super-vl:free
+OPENROUTER_ALLOW_PAID_FALLBACK=false
 VERIFICATION_ENABLED=true
 ```
 
-Existing credentials were preserved. No credentials are stored in this document or
-the frontend. Gemini uses the existing `gemini-2.5-flash` extraction default.
-OpenRouter lists the explicit [Qwen free vision endpoint](https://openrouter.ai/qwen/qwen3.8-27b:free)
-as free and image-capable when checked on 14 October 2026. Its capacity/rate limits
-are external constraints. The gateway verifies current zero pricing and image
-support before sending inference, rejects paid/router models, and has no automatic
-paid or cross-provider fallback. Gemini account quota/billing is separate.
+OpenRouter tries the configured free model first, followed by compatible free
+models when it cannot complete the request. The gateway checks catalog prices
+and image support for each candidate and sends the same pages to every attempt.
+When OpenRouter reports a shared free-tier limit, the gateway stops trying free
+models for that request.
+Set `OPENROUTER_ALLOW_PAID_FALLBACK=true` to allow Gemma 4 26B, then DeepSeek V4.1
+Flash, after free routes run out. Paid routes are capped at $0.20/M input and
+$0.70/M output, with zero per-image and per-request fees. Gemini billing is separate.
 
 Restart **both API and RQ worker** to load these settings and code changes. No
 restart or model inference was performed as part of this implementation. Settings
@@ -144,12 +146,11 @@ reports configured providers, not proof that a model is reachable or accurate.
 
 ## Optional local inference
 
-The instructor UI now includes **Settings → AI services → Local Qwen + Gemini
-page reading**. This versioned, request-scoped profile pins new jobs, keeps Gemini
-for page images and runs local text grading plus verification. See
-[Local Qwen with Gemini page reading](LOCAL_HYBRID_INFERENCE.md) for setup,
-review/vision boundaries and recorded checks. The direct environment-based
-adapter described below remains supported by **Server configuration**.
+**Settings → AI services → Fully local Qwen** uses `qwen3-vl:4b-instruct` for
+page reading and image + text grading and verification. `qwen3:4b-instruct`
+handles text-only requests. Use **Check local model** to verify both models are
+installed. New requests from browsers that used an older hybrid selection use
+Fully local Qwen. Previously accepted jobs retain their recorded profile.
 
 The adapter accepts an installed vision model through a loopback OpenAI-compatible
 endpoint, such as `http://127.0.0.1:11434/v1`. Set the desired task providers to

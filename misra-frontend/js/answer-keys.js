@@ -2,14 +2,18 @@
 (function () {
   'use strict';
   const confirmAction = message => window.MisraWorkspace ? MisraWorkspace.confirm(message) : window.confirm(message);
+  const conflict = 'The saved key changed. Keep a copy of your edits before reloading.';
   let host, examId, questionId, versions = [], current, draft, dirty = false, busy = false, loading = false, error = '', generation = 0;
+  let baseRevision;
   const esc = value => MisraUI.escapeHTML(String(value ?? ''));
   const blank = () => ({ mode: 'reference', reference_text: '', acceptable_answers: [], document_refs: [], change_summary: '' });
   const editable = () => !current || current.status === 'draft';
+  const workingVersion = () => versions.find(v => v.status === 'draft') || versions.find(v => v.status === 'approved');
+  const contextChanged = () => host?.dispatchEvent(new Event('misra:key-context-changed', {bubbles:true}));
   const documentIndex = ref => versions.flatMap(v => v.document_refs || [])
     .find(saved => saved.job_id === ref.job_id && Number.isInteger(saved.document_index))?.document_index ?? 0;
   let pageValues = {};
-  function reset() { generation++; host = null; versions = []; current = null; draft = blank(); dirty = false; busy = false; loading = false; error = ''; }
+  function reset() { generation++; host = null; versions = []; current = null; draft = blank(); dirty = false; busy = false; loading = false; error = ''; baseRevision=undefined; }
   function canLeave() {
     if (busy) { window.showToast('Wait for the answer-key operation to finish.', 'info'); return false; }
     return !dirty || confirmAction('Discard unsaved answer-key edits?');
@@ -21,11 +25,11 @@
     draft.acceptable_answers = (host.querySelector('#key-alternatives')?.value || '').split('\n').map(x => x.trim()).filter(Boolean);
     draft.change_summary = host.querySelector('#key-summary')?.value || '';
   }
-  function choose(version) { pageValues = {}; current = version || null; draft = version ? { mode: version.mode, reference_text: version.reference_text || '', acceptable_answers: [...(version.acceptable_answers || [])], document_refs: (version.document_refs || []).map(ref => ({ job_id: ref.job_id, page_indices: [...ref.page_indices] })), change_summary: version.change_summary || '' } : blank(); dirty = false; }
+  function choose(version) { pageValues = {}; current = version || null; baseRevision=version?version.drafting_revision:null; draft = version ? { mode: version.mode, reference_text: version.reference_text || '', acceptable_answers: [...(version.acceptable_answers || [])], document_refs: (version.document_refs || []).map(ref => ({ job_id: ref.job_id, page_indices: [...ref.page_indices] })), change_summary: version.change_summary || '' } : blank(); dirty = false; contextChanged(); }
   async function load(assessmentId, qid) {
     reset(); examId = assessmentId; questionId = qid; loading = true;
     const request = generation;
-    try { const result = await MisraAPI.answerKeyVersions(qid); if (request !== generation) return; versions = Array.isArray(result) ? result : []; choose(versions.find(v => v.status === 'draft') || versions.find(v => v.status === 'approved') || versions[0]); }
+    try { const result = await MisraAPI.answerKeyVersions(qid); if (request !== generation) return; if(!Array.isArray(result))throw Error('Invalid answer-key versions'); versions = result; choose(workingVersion() || versions[0]); }
     catch (_) { if (request === generation) error = 'Could not load answer keys. Retry before editing.'; }
     finally { if (request === generation) { loading = false; render(); } }
   }
@@ -44,18 +48,20 @@
         <div class="field"><label for="key-summary">Change summary</label><input class="input" id="key-summary" maxlength="2000" value="${esc(draft.change_summary)}"></div>
       </fieldset>
       <div class="key-actions">${readOnly ? '<button class="btn btn-secondary" data-key-new type="button">Create answer-key draft</button>' : '<button class="btn btn-secondary" data-key-save type="button">Save answer-key draft</button><button class="btn btn-primary" data-key-approve type="button">Save &amp; approve answer key</button>'}<span class="field-hint" role="status">${busy ? 'Working…' : dirty ? 'Unsaved answer-key changes' : readOnly ? 'This version is read-only.' : 'Approval applies to future grading only.'}</span></div>`}
-      ${versions.length ? `<details class="key-history"><summary>Answer-key version history (${versions.length})</summary>${versions.map(v => `<div class="version-row"><button class="btn btn-ghost" data-key-version="${esc(v.id)}" type="button">Version ${v.version_number} · ${esc(v.status)}</button><span>${esc(v.change_summary)}</span></div>`).join('')}</details>` : ''}`;
+      ${versions.length ? `<details class="key-history"><summary>Answer-key version history (${versions.length})</summary>${versions.map(v => `<div class="version-row"><button class="btn btn-ghost" data-key-version="${esc(v.id)}" type="button">Version ${v.version_number} · ${esc(v.status)}</button><span>${esc(v.change_summary)}</span></div>`).join('')}</details>` : ''}
+      <button type="button" class="btn btn-ghost" data-key-reload hidden>Reload answer key</button>`;
     host.setAttribute('aria-busy', String(busy));
     host.querySelectorAll('[data-key-pages]').forEach(el => { const value = pageValues[draft.document_refs[Number(el.dataset.keyPages)]?.job_id]; if (value !== undefined) el.value = value; });
     if (busy) host.querySelectorAll('button, input, select, textarea').forEach(el => { el.disabled = true; });
     host.querySelector('[data-key-retry]')?.addEventListener('click', () => { const target = host; load(examId, questionId); host = target; render(); });
+    if(error===conflict)offerReload();
     host.querySelectorAll('input, textarea').forEach(el => el.addEventListener('input', () => { dirty = true; const status = host.querySelector('.key-actions [role="status"]'); if (status) status.textContent = 'Unsaved answer-key changes'; }));
     host.querySelector('#key-mode')?.addEventListener('change', event => { sync(); draft.mode = event.target.value; dirty = true; render(); });
-    host.querySelector('[data-key-new]')?.addEventListener('click', () => { current = null; dirty = true; render(); });
+    host.querySelector('[data-key-new]')?.addEventListener('click', () => { current = null; dirty = true; contextChanged(); render(); });
     host.querySelector('[data-key-save]')?.addEventListener('click', () => save(false));
     host.querySelector('[data-key-approve]')?.addEventListener('click', () => save(true));
     host.querySelector('[data-key-upload]')?.addEventListener('click', upload);
-    host.querySelectorAll('[data-key-remove]').forEach(el => el.addEventListener('click', () => { sync(); draft.document_refs.splice(Number(el.dataset.keyRemove), 1); dirty = true; render(); }));
+    host.querySelectorAll('[data-key-remove]').forEach(el => el.addEventListener('click', () => { sync(); draft.document_refs.splice(Number(el.dataset.keyRemove), 1); dirty = true; contextChanged(); render(); }));
     host.querySelectorAll('[data-key-version]').forEach(el => el.addEventListener('click', async () => { if (await canLeave()) { choose(versions.find(v => v.id === el.dataset.keyVersion)); error = ''; render(); } }));
   }
   function payload() {
@@ -75,6 +81,7 @@
     if (busy || !editable()) return;
     let body;
     try { body = payload(); } catch (e) { error = e.message; render(); return; }
+    if(baseRevision!==undefined)body.expected_drafting_revision=baseRevision;
     if (approve && !await confirmAction('Approve this answer key for future grading? Approved versions cannot be edited.')) return;
     const request = generation, qid = questionId; busy = true; error = ''; render();
     try {
@@ -85,7 +92,12 @@
       if (approve) { const approved = await MisraAPI.approveAnswerKey(qid, saved.id); if (request !== generation) return; choose(approved); versions = versions.map(v => v.id === approved.id ? approved : v.status === 'approved' ? { ...v, status: 'superseded' } : v); window.dispatchEvent(new CustomEvent('misra:answer-key-approved')); }
       else choose(saved);
       window.showToast(approve ? 'Answer key approved.' : 'Answer-key draft saved.', 'success');
-    } catch (_) { if (request === generation) error = approve && !dirty ? 'Draft saved, but approval failed. Retry approval.' : 'Could not save the answer key. Your edits are still here; retry when connected.'; }
+    } catch (cause) {
+      if(request===generation){
+        if(cause.detail?.code==='answer_key_changed')error=conflict;
+        else error=approve&&!dirty?'Draft saved, but approval failed. Retry approval.':'Could not save the answer key. Your edits are still here; retry when connected.';
+      }
+    }
     finally { if (request === generation) { busy = false; render(); } }
   }
   async function upload() {
@@ -93,9 +105,34 @@
     const file = host.querySelector('#key-file')?.files[0];
     if (!file) { error = 'Choose a PDF or image first.'; render(); return; }
     sync(); if (draft.document_refs.length >= 5) { error = 'Use no more than five reference documents.'; render(); return; } const request = generation; const data = new FormData(); data.append('file', file); busy = true; error = ''; render();
-    try { const doc = await MisraAPI.uploadAnswerKeyDocument(questionId, data); if (request !== generation) return; draft.document_refs.push({ job_id: doc.job_id, page_indices: [0] }); dirty = true; window.showToast(`Document uploaded (${doc.page_count} pages). Select the pages for this question.`, 'success'); }
+    try { const doc = await MisraAPI.uploadAnswerKeyDocument(questionId, data); if (request !== generation) return; draft.document_refs.push({ job_id: doc.job_id, page_indices: [0] }); dirty = true; contextChanged(); window.showToast(`Document uploaded (${doc.page_count} pages). Select the pages for this question.`, 'success'); }
     catch (_) { if (request === generation) error = 'Document upload failed. Choose the file again and retry.'; }
     finally { if (request === generation) { busy = false; render(); } }
   }
-  window.MisraAnswerKeys = { load, reset, canLeave, isBusy: () => busy, async saveDraft(){if(dirty && !busy)await save(false);return !dirty && !busy;}, discard() { choose(current); error = ''; render(); }, hasUnsaved: () => dirty || busy, mount(element) { sync(); host = element; render(); } };
+  function draftingIssue() {
+    if(loading) return 'Wait for the answer key to load, then generate the draft.';
+    if(error===conflict)return conflict;
+    if(error === 'Could not load answer keys. Retry before editing.') return 'Reload the answer key before generating a draft.';
+    if(current && current.id !== workingVersion()?.id) return 'Open the current answer-key version before generating a draft.';
+    return '';
+  }
+  function draftingSelection() {
+    if(!current)return {revision:null};
+    if(typeof current.drafting_revision==='string')return {revision:current.drafting_revision};
+  }
+  function offerReload(onReload) {
+    const button=host?.querySelector('[data-key-reload]');
+    if(!button)return;
+    button.hidden=false;
+    button.onclick=async()=>{
+      const target=host, request=generation;
+      if(!await canLeave()||request!==generation||target!==host)return;
+      const pending=load(examId,questionId);
+      const loadingRequest=generation;
+      host=target;render();
+      await pending;
+      if(loadingRequest===generation)onReload?.();
+    };
+  }
+  window.MisraAnswerKeys = { load, reset, canLeave, draftingIssue, draftingSelection, offerReload, isBusy: () => busy, async saveDraft(){if(dirty && !busy)await save(false);return !dirty && !busy;}, discard() { choose(current); error = ''; render(); }, hasUnsaved: () => dirty || busy, mount(element) { sync(); host = element; render(); } };
 })();
